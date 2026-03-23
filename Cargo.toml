@@ -7,6 +7,7 @@ description = "SNN sensory encoding pipelines: Poisson spike trains, rate/tempor
 repository = "https://github.com/rmems/spikenaut-encoder"
 keywords = ["snn", "neuromorphic", "spikenaut", "poisson", "encoding"]
 categories = ["science", "simulation"]
+exclude = ["docs/"]
 
 [dependencies]
 rand = "0.8"
