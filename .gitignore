@@ -1,3 +1,15 @@
+# Compiled output
 /target
+
+# Lock file
 Cargo.lock
-*.crate
+
+# General editor and OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Log files
+*.log

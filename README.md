@@ -1,83 +1,63 @@
-<p align="center">
-  <img src="docs/logo.png" width="220" alt="Spikenaut">
-</p>
+# spikenaut-encoder
 
-<h1 align="center">spikenaut-encoder</h1>
-<p align="center">Hardware telemetry → spike train conversion for neuromorphic systems</p>
+**Flexible sensory encoding for spiking neural networks**
 
-<p align="center">
-  <a href="https://crates.io/crates/spikenaut-encoder"><img src="https://img.shields.io/crates/v/spikenaut-encoder" alt="crates.io"></a>
-  <a href="https://docs.rs/spikenaut-encoder"><img src="https://docs.rs/spikenaut-encoder/badge.svg" alt="docs.rs"></a>
-  <img src="https://img.shields.io/badge/license-GPL--3.0-orange" alt="GPL-3.0">
-</p>
-
----
-
-Converts continuous sensor data (temperature, voltage, power, hashrate, or any numeric
-stream) into biologically realistic spike trains using multiple encoding strategies with
-adaptive thresholds and homeostatic normalization.
+Converts continuous telemetry, sensor, or time-series data into biologically plausible spike trains. Designed for cyber-physical systems, crypto mining telemetry, HFT streams, and general neuromorphic research.
 
 ## Features
 
-- `RateEncoder` — Poisson spike generation proportional to signal magnitude
-- `TemporalEncoder` — burst coding triggered by rapid signal changes
-- `PredictiveEncoder` — adaptive EMA threshold; spikes on deviation from expectation (anomaly detection)
-- `PopulationEncoder` — multiple neurons encoding sub-ranges of a single channel
-- `NeuromodSensoryEncoder` — 16-channel Poisson encoder with per-channel gains, biases, and homeostatic adaptation
-- Z-score normalization with rolling mean/variance
+- Rate, Temporal, Predictive (anomaly), Population, and Neuromodulator-driven (16-channel) encoding
+- Homeostatic adaptation and rolling Z-score normalization
+- Standardized `EncodedOutput` for easy integration with any SNN engine
+- Optional embedding output for hybrid SNN-LLM pipelines
 
 ## Installation
 
 ```toml
-spikenaut-encoder = "0.1"
+[dependencies]
+spikenaut-encoder = "0.2"
 ```
 
-## Quick Start
+## Quick Start (Pure SNN)
 
 ```rust
-use spikenaut_encoder::{NeuromodSensoryEncoder, EncoderConfig};
+use spikenaut_encoder::prelude::*;
 
-let mut encoder = NeuromodSensoryEncoder::new(EncoderConfig::default());
+// Example: 2-channel rate encoder
+let mut encoder = RateEncoder::new(5.0, 100.0, (0.0, 100.0));
+let telemetry = [75.0, 25.0];
+let output = encoder.encode(&telemetry);
 
-// Convert 8 telemetry channels to 16 spike channels
-let telemetry = [75.0f32, 1.05, 95.0, 180.0, 2100.0, 900.0, 45.0, 1.0];
-let spikes = encoder.encode(&telemetry);  // [bool; 16]
-```
-
-### Predictive Encoding (Anomaly Detection)
-
-```rust
-use spikenaut_encoder::PredictiveEncoder;
-
-let mut enc = PredictiveEncoder::new(0.1); // EMA alpha
-for sample in stream {
-    let spike = enc.update(sample);  // fires when |x - ema| > threshold
+for spike in output.spikes {
+    println!("Spike on channel {}!", spike.channel);
 }
 ```
 
-## Encoding Strategies
+## Hybrid Usage (with spikenaut-synapse)
 
-| Encoder | Biological Analogue | Use Case |
-|---------|--------------------|-|
-| `RateEncoder` | Rate coding | Slow signals, graded responses |
-| `TemporalEncoder` | Burst coding | Rapid transients, events |
-| `PredictiveEncoder` | Predictive coding | Anomaly detection, novelty |
-| `PopulationEncoder` | Population coding | High-precision single channels |
+```rust
+use spikenaut_encoder::prelude::*;
 
-## Extracted from Production
+let mut encoder = NeuromodSensoryEncoder::new(8, 16);
+let telemetry = [75.0, 1.05, 95.0, 180.0, 2100.0, 900.0, 45.0, 1.0];
+let output = encoder.encode(&telemetry);
 
-Extracted from [Eagle-Lander](https://github.com/rmems/Eagle-Lander), a private
-neuromorphic crypto-mining supervisor. The encoding pipeline was decoupled from
-GPU-specific telemetry paths so it works with any numeric data source.
+if let Some(embedding) = output.embeddings {
+    // Feed to spike-to-expert projector -> OLMoE
+    println!("Generated embedding for hybrid model: {:?}", embedding);
+}
+```
 
-## Part of the Spikenaut Ecosystem
+## Design Philosophy
 
-| Library | Purpose |
-|---------|---------|
-| [spikenaut-reward](https://github.com/rmems/spikenaut-reward) | Homeostatic reward (efferent arm) |
-| [spikenaut-backend](https://github.com/rmems/spikenaut-backend) | SNN backend abstraction |
-| [neuromod](https://crates.io/crates/neuromod) | Neuromodulator dynamics |
+- **Independent & Pluggable**: Designed to be a self-contained, reusable library with a simple, flexible API.
+- **No LLM Dependency**: The core library is pure SNN, with optional outputs for hybrid models, ensuring it remains lightweight.
+- **Extensible**: The `Encoder` trait allows researchers to easily implement their own custom encoding strategies.
 
-## License
+## Integration with Spikenaut Ecosystem
 
-GPL-3.0-or-later
+`spikenaut-encoder` is a core component of the [Spikenaut ecosystem](https://github.com/Spikenaut), designed to provide clean, spike-based data for other Spikenaut libraries like `spikenaut-synapse` and `spikenaut-reward`.
+
+## Contributing
+
+Contributions are welcome! Please feel free to open an issue or submit a pull request.

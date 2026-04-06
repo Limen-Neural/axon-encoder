@@ -1,55 +1,49 @@
-//! Lightweight telemetry types for sensory encoding.
-//!
-//! Decoupled from hardware-collection drivers (NVML, hwmon, powercap).
-//! Populate these from whatever telemetry source you have and pass them
-//! to the encoders.
+//! Standardized types for encoder inputs and outputs.
 
-use serde::{Deserialize, Serialize};
-
-/// Pool events from mining supervisor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PoolEvent {
-    ShareAccepted { latency_ms: u32 },
-    BlockFound { block_hash: String },
-    PoolSwitch { from: String, to: String },
-    ShareRejected { reason: String },
+/// A single spike event.
+#[derive(Clone, Copy, Debug)]
+pub struct SpikeEvent {
+    pub channel: u16,
+    pub timestamp: u64,   // or relative step
+    pub polarity: bool,   // or strength
 }
 
-/// GPU telemetry snapshot.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct GpuTelemetry {
-    pub vddcr_gfx_v: f32,
-    pub gpu_temp_c: f32,
-    pub hashrate_mh: f32,
-    pub power_w: f32,
-    pub gpu_clock_mhz: f32,
-    pub mem_clock_mhz: f32,
-    pub fan_speed_pct: f32,
-    pub ocean_intel: f32,
+/// Optional metadata about the encoding process.
+#[derive(Clone, Debug, Default)]
+pub struct EncodingMetadata {
+    // Add any relevant metadata fields here, e.g.:
+    // pub source_sample_index: u64,
 }
 
-/// Unified system telemetry (CPU + GPU).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SystemTelemetry {
-    // GPU fields
-    pub gpu_temp_c: f32,
-    pub gpu_power_w: f32,
-    pub vddcr_gfx_v: f32,
-    pub fan_speed_pct: f32,
-    pub gpu_clock_mhz: f32,
-    pub mem_clock_mhz: f32,
-    pub mem_util_pct: f32,
+/// The standardized output of an encoder.
+pub struct EncodedOutput {
+    pub spikes: Vec<SpikeEvent>,
+    pub embeddings: Option<Vec<f32>>,
+    pub metadata: Option<EncodingMetadata>,
+}
 
-    // CPU fields
-    pub cpu_tctl_c: f32,
-    pub cpu_ccd1_c: f32,
-    pub cpu_ccd2_c: f32,
-    pub cpu_package_power_w: f32,
+impl EncodedOutput {
+    pub fn new() -> Self {
+        Self {
+            spikes: Vec::new(),
+            embeddings: None,
+            metadata: None,
+        }
+    }
+}
 
-    // Motherboard fields
-    pub vrm_temp_c: f32,
-    pub motherboard_temp_c: f32,
-    pub cpu_fan_rpm: f32,
+/// General-purpose configuration for encoders.
+pub struct EncoderConfig {
+    // Add common configuration options here.
+    // For example:
+    // pub input_channels: usize,
+    // pub output_channels: usize,
+}
 
-    pub timestamp_ms: u64,
+impl Default for EncoderConfig {
+    fn default() -> Self {
+        Self {
+            // Default values
+        }
+    }
 }
