@@ -1,16 +1,6 @@
-//! Poisson spike-train encoder.
-//!
-//! Converts a normalized intensity value (0.0–1.0) into a binary spike train
-//! of length `num_steps` using stochastic Poisson firing.
-//!
-//! # Physics analogy
-//! Acts like a Geiger counter for your data:
-//! high intensity → high click rate (spikes).
-
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct PoissonEncoder {
     pub num_steps: usize,
 }
@@ -20,15 +10,11 @@ impl PoissonEncoder {
         Self { num_steps: steps }
     }
 
-    /// Encode a normalized value (0.0–1.0) into a temporal spike train.
-    ///
-    /// Each timestep independently fires with probability equal to `input`.
-    /// Returns a `Vec<u8>` of 0s and 1s of length `num_steps`.
     pub fn encode(&self, input: f32) -> Vec<u8> {
         let mut rng = rand::thread_rng();
         let probability = input.clamp(0.0, 1.0);
         (0..self.num_steps)
-            .map(|_| if rng.gen::<f32>() < probability { 1 } else { 0 })
+            .map(|_| if rng.gen_range(0.0f32..1.0) < probability { 1 } else { 0 })
             .collect()
     }
 }
