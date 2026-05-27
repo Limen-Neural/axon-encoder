@@ -4,8 +4,8 @@
 #[derive(Clone, Copy, Debug)]
 pub struct SpikeEvent {
     pub channel: u16,
-    pub timestamp: u64,   // or relative step
-    pub polarity: bool,   // or strength
+    pub timestamp: u64, // or relative step
+    pub polarity: bool, // or strength
 }
 
 /// Optional metadata about the encoding process.

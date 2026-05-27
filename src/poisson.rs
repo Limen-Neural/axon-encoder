@@ -1,4 +1,3 @@
-
 #[derive(Clone, Debug)]
 pub struct PoissonEncoder {
     pub num_steps: usize,
@@ -10,9 +9,15 @@ impl PoissonEncoder {
     }
 
     pub fn encode(&self, input: f32) -> Vec<u8> {
-                let probability = input.clamp(0.0, 1.0);
+        let probability = input.clamp(0.0, 1.0);
         (0..self.num_steps)
-            .map(|_| if crate::rng::gen_unit_f32() < probability { 1 } else { 0 })
+            .map(|_| {
+                if crate::rng::gen_unit_f32() < probability {
+                    1
+                } else {
+                    0
+                }
+            })
             .collect()
     }
 }

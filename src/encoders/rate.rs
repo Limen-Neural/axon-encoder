@@ -8,7 +8,11 @@ pub struct RateEncoder {
 
 impl RateEncoder {
     pub fn new(base_rate: f32, max_rate: f32, range: (f32, f32)) -> Self {
-        Self { base_rate, max_rate, range }
+        Self {
+            base_rate,
+            max_rate,
+            range,
+        }
     }
 
     fn normalize(&self, value: f32) -> f32 {
@@ -40,8 +44,7 @@ impl Encoder for RateEncoder {
         output
     }
 
-    fn reset(&mut self) {
-    }
+    fn reset(&mut self) {}
 }
 
 #[cfg(test)]
@@ -53,7 +56,7 @@ mod tests {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 100.0));
         let input = [0.0, 50.0, 100.0];
         let output = encoder.encode(&input);
-        
+
         let num_spikes = output.spikes.len();
         assert!(num_spikes <= 3);
     }

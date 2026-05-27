@@ -9,7 +9,11 @@ pub struct PredictiveEncoder {
 }
 
 impl PredictiveEncoder {
-    pub fn new(history_depth: usize, deviation_thresholds: Vec<(f32, u16)>, num_channels: usize) -> Self {
+    pub fn new(
+        history_depth: usize,
+        deviation_thresholds: Vec<(f32, u16)>,
+        num_channels: usize,
+    ) -> Self {
         Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             thresholds: vec![0.0; num_channels],
@@ -42,7 +46,7 @@ impl Encoder for PredictiveEncoder {
                 if deviation > threshold {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
-                        timestamp: 0, // Simplified
+                        timestamp: 0,   // Simplified
                         polarity: true, // Indicates a deviation spike
                     });
                     break;

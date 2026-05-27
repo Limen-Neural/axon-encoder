@@ -2,7 +2,7 @@ use crate::types::{EncodedOutput, SpikeEvent};
 
 #[derive(Clone, Debug)]
 pub struct EmbeddingEncoderConfig {
-    pub v_th: f32, 
+    pub v_th: f32,
 }
 
 #[derive(Clone)]
@@ -20,7 +20,7 @@ impl EncoderState {
 
 pub struct EmbeddingRateEncoder {
     pub config: EmbeddingEncoderConfig,
-    pub normalized_embeddings: Vec<f32>, 
+    pub normalized_embeddings: Vec<f32>,
 }
 
 impl EmbeddingRateEncoder {
@@ -31,7 +31,8 @@ impl EmbeddingRateEncoder {
         let epsilon = 1e-5f32;
         let safe_range = range + epsilon;
 
-        let normalized: Vec<f32> = embeddings.iter()
+        let normalized: Vec<f32> = embeddings
+            .iter()
             .map(|&x| (x - min_val) / safe_range)
             .collect();
 
@@ -42,23 +43,31 @@ impl EmbeddingRateEncoder {
     }
 
     pub fn forward(&self, prev_state: &EncoderState) -> (EncodedOutput, EncoderState) {
-        let len = self.normalized_embeddings.len();
         let mut new_potentials = prev_state.membrane_potentials.clone();
         let mut output = EncodedOutput::new();
 
-        for i in 0..len {
-            new_potentials[i] += self.normalized_embeddings[i];
+        for (i, (pot, &emb)) in new_potentials
+            .iter_mut()
+            .zip(self.normalized_embeddings.iter())
+            .enumerate()
+        {
+            *pot += emb;
 
-            if new_potentials[i] >= self.config.v_th {
+            if *pot >= self.config.v_th {
                 output.spikes.push(SpikeEvent {
                     channel: i as u16,
                     timestamp: 0,
                     polarity: true,
                 });
-                new_potentials[i] -= self.config.v_th; // Soft reset
+                *pot -= self.config.v_th; // Soft reset
             }
         }
 
-        (output, EncoderState { membrane_potentials: new_potentials })
+        (
+            output,
+            EncoderState {
+                membrane_potentials: new_potentials,
+            },
+        )
     }
 }

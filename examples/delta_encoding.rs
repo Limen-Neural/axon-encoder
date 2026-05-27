@@ -19,11 +19,11 @@ fn main() {
     // Simulated two-channel time series with occasional large jumps.
     let readings: Vec<[f32; 2]> = vec![
         [0.0, 10.0],
-        [1.0, 10.5],   // Small changes — no spikes
-        [5.0, 10.2],   // Channel 0 jumps +5.0 from last encoded (0.0)
-        [5.5, 10.0],   // Small change from 5.0
-        [1.0, 20.0],   // Channel 0 drops -4.5 from 5.0; channel 1 jumps +10.0
-        [1.5, 20.5],   // Small changes
+        [1.0, 10.5], // Small changes — no spikes
+        [5.0, 10.2], // Channel 0 jumps +5.0 from last encoded (0.0)
+        [5.5, 10.0], // Small change from 5.0
+        [1.0, 20.0], // Channel 0 drops -4.5 from 5.0; channel 1 jumps +10.0
+        [1.5, 20.5], // Small changes
     ];
 
     println!("=== Delta Encoding ===");

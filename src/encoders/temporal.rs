@@ -8,7 +8,11 @@ pub struct TemporalEncoder {
 }
 
 impl TemporalEncoder {
-    pub fn new(history_depth: usize, change_thresholds: Vec<(f32, u16)>, num_channels: usize) -> Self {
+    pub fn new(
+        history_depth: usize,
+        change_thresholds: Vec<(f32, u16)>,
+        num_channels: usize,
+    ) -> Self {
         Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             history_depth,
@@ -39,7 +43,7 @@ impl Encoder for TemporalEncoder {
                 if change > threshold {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
-                        timestamp: 0, // Simplified
+                        timestamp: 0,   // Simplified
                         polarity: true, // Or use spike_val to determine polarity/strength
                     });
                     break; // Only fire one spike per channel per step
