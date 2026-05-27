@@ -87,6 +87,14 @@ For instance, to run the delta encoding example:
 cargo run --example delta_encoding
 ```
 
+## A Note for Rust Newcomers
+
+Welcome to Rust! If you're new to the language, some of the syntax in the Quick Start example might seem unfamiliar. Here are a few tips:
+
+- **The Prelude Pattern**: The line `use axon_encoder::prelude::*;` is a common pattern in Rust libraries. The `prelude` is a module that conveniently exports all the most commonly used types and traits, so you can get started with a single `use` statement.
+
+- **Structs and `impl`**: Rust is not a traditional object-oriented language, but it supports similar concepts using `structs` to hold data and `impl` (implementation) blocks to define methods on those structs. In the example, `RateEncoder` is a struct, and its `new` and `encode` methods are defined in an `impl` block.
+
 ## Design Philosophy
 
 - **Simplicity and Focus**: The library is designed to do one thing well: sensory encoding. It is unopinionated about your SNN architecture or simulation environment.
