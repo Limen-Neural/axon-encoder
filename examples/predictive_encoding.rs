@@ -19,11 +19,11 @@ fn main() {
 
     // Simulate a sensor stream: stable baseline, then anomalies.
     let stream: Vec<f32> = vec![
-        5.0, 5.1, 4.9, 5.0, 5.2,   // Stable baseline
-        5.1, 4.8, 5.0, 5.0, 5.1,   // Continued stable
-        15.0,                        // Anomaly: sudden spike
-        5.0, 5.0, 5.1, 4.9,        // Return to normal
-        -5.0,                        // Anomaly: sudden drop
+        5.0, 5.1, 4.9, 5.0, 5.2, // Stable baseline
+        5.1, 4.8, 5.0, 5.0, 5.1,  // Continued stable
+        15.0, // Anomaly: sudden spike
+        5.0, 5.0, 5.1, 4.9,  // Return to normal
+        -5.0, // Anomaly: sudden drop
     ];
 
     println!("=== Predictive (Anomaly) Encoding ===");

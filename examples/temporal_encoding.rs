@@ -18,15 +18,9 @@ fn main() {
     let mut encoder = TemporalEncoder::new(10, vec![(2.0, 1), (5.0, 2)], 2);
 
     // Simulate a stable period followed by sudden change on channel 0.
-    let stable_readings = [
-        [1.0, 5.0],
-        [1.1, 5.1],
-        [1.0, 4.9],
-        [1.2, 5.0],
-        [1.0, 5.2],
-    ];
+    let stable_readings = [[1.0, 5.0], [1.1, 5.1], [1.0, 4.9], [1.2, 5.0], [1.0, 5.2]];
     let spike_readings = [
-        [8.0, 5.0],  // Sudden jump on channel 0
+        [8.0, 5.0], // Sudden jump on channel 0
         [9.0, 5.1],
         [8.5, 12.0], // Sudden jump on channel 1
     ];

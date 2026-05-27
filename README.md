@@ -1,5 +1,7 @@
 # Axon Encoder
 
+[![CI](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml)
+
 **A flexible and easy-to-use sensory encoding library for Spiking Neural Networks (SNNs).**
 
 `axon-encoder` provides a collection of algorithms to convert real-world, continuous data (like sensor readings, telemetry, or control signals) into spikes—the event-based signals that SNNs understand. This process, known as sensory encoding, is the first step in building powerful and efficient neuromorphic systems.
@@ -84,6 +86,14 @@ For instance, to run the delta encoding example:
 ```bash
 cargo run --example delta_encoding
 ```
+
+## A Note for Rust Newcomers
+
+Welcome to Rust! If you're new to the language, some of the syntax in the Quick Start example might seem unfamiliar. Here are a few tips:
+
+- **The Prelude Pattern**: The line `use axon_encoder::prelude::*;` is a common pattern in Rust libraries. The `prelude` is a module that conveniently exports all the most commonly used types and traits, so you can get started with a single `use` statement.
+
+- **Structs and `impl`**: Rust is not a traditional object-oriented language, but it supports similar concepts using `structs` to hold data and `impl` (implementation) blocks to define methods on those structs. In the example, `RateEncoder` is a struct, and its `new` and `encode` methods are defined in an `impl` block.
 
 ## Design Philosophy
 

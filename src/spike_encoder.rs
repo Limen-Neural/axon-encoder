@@ -16,12 +16,14 @@ impl DerivativeEncoder {
 
     pub fn encode_step(&mut self, current_values: &[f32]) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        
+
         for (i, &current_val) in current_values.iter().enumerate() {
-            if i >= self.thresholds.len() { break; }
-            
+            if i >= self.thresholds.len() {
+                break;
+            }
+
             let delta = current_val - self.last_values[i];
-            
+
             // Excitatory spike on positive jump exceeding threshold
             if delta > self.thresholds[i] {
                 output.spikes.push(SpikeEvent {
@@ -38,7 +40,7 @@ impl DerivativeEncoder {
                     polarity: false,
                 });
             }
-            
+
             self.last_values[i] = current_val;
         }
         output
