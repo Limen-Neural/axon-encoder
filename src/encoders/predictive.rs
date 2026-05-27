@@ -1,6 +1,35 @@
 use crate::prelude::*;
 use std::collections::VecDeque;
 
+/// Encodes based on predictive deviation from expected values.
+///
+/// Maintains a running average (threshold) and fires a spike when the input
+/// deviates significantly from this prediction. Useful for detecting anomalies
+/// or unexpected changes in sensor data.
+///
+/// # Mathematical Model
+///
+/// Tracks an exponentially weighted moving average of recent values per channel.
+/// A spike fires when the absolute deviation from this predicted value exceeds
+/// the threshold:
+///
+/// ```text
+/// threshold[i] = 0.9 * threshold[i] + 0.1 * mean(history[-5:])
+/// deviation = |value - threshold[i]|
+/// spike if deviation > threshold
+/// ```
+///
+/// # When to Use
+///
+/// - Anomaly detection in sensor streams
+/// - Learning patterns and detecting deviations
+/// - Adaptive encoding that adjusts to baseline activity
+///
+/// # Parameters
+///
+/// - `history_depth`: Number of past values to track per channel
+/// - `deviation_thresholds`: Vec of (threshold, spike_value) pairs
+/// - `num_channels`: Number of input channels
 pub struct PredictiveEncoder {
     history: Vec<VecDeque<f32>>,
     thresholds: Vec<f32>,
@@ -54,6 +83,15 @@ impl Encoder for PredictiveEncoder {
             }
         }
         output
+    }
+
+    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
+        self.encode(safe_input)
     }
 
     fn reset(&mut self) {
