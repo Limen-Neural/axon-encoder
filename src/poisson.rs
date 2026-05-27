@@ -53,4 +53,46 @@ mod tests {
         let spikes = enc.encode(0.4);
         assert!(spikes.iter().all(|&s| s == 0 || s == 1));
     }
+
+    #[test]
+    fn empty_steps_produces_empty() {
+        let enc = PoissonEncoder::new(0);
+        let spikes = enc.encode(0.5);
+        assert_eq!(spikes.len(), 0);
+    }
+
+    #[test]
+    fn negative_input_clamped_to_zero() {
+        let enc = PoissonEncoder::new(50);
+        let spikes = enc.encode(-0.5);
+        assert!(spikes.iter().all(|&s| s == 0));
+    }
+
+    #[test]
+    fn above_one_input_clamped_to_one() {
+        let enc = PoissonEncoder::new(100);
+        let spikes = enc.encode(1.5);
+        assert!(spikes.iter().all(|&s| s == 1));
+    }
+
+    #[test]
+    fn spike_count_bounded_by_steps() {
+        let enc = PoissonEncoder::new(100);
+        let spikes = enc.encode(0.5);
+        let count = spikes.iter().filter(|&&s| s == 1).count();
+        assert!(count <= 100);
+    }
+
+    #[test]
+    fn never_panics() {
+        let enc = PoissonEncoder::new(50);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| enc.encode(0.5)));
+        assert!(result.is_ok());
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| enc.encode(f32::NAN)));
+        assert!(result.is_ok());
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| enc.encode(f32::INFINITY)));
+        assert!(result.is_ok());
+    }
 }
