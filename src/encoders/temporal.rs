@@ -1,6 +1,33 @@
 use crate::prelude::*;
 use std::collections::VecDeque;
 
+/// Encodes temporal patterns by tracking history of values per channel.
+///
+/// Fires a spike when the rate of change exceeds configurable thresholds.
+/// Useful for detecting sudden changes or motion in sensor signals.
+///
+/// # Mathematical Model
+///
+/// Computes the difference between recent average (last 3 values) and older average
+/// (previous 3 values before that). A spike is generated when this change exceeds
+/// the threshold:
+///
+/// ```text
+/// change = |mean(history[-3:]) - mean(history[-6:-3])|
+/// spike if change > threshold
+/// ```
+///
+/// # When to Use
+///
+/// - Detecting sudden changes in signal (edge detection)
+/// - Motion detection in video or sensor streams
+/// - Event-based encoding where changes are more important than absolute values
+///
+/// # Parameters
+///
+/// - `history_depth`: How many past values to track per channel
+/// - `change_thresholds`: Vec of (threshold, spike_value) pairs - fires when change exceeds threshold
+/// - `num_channels`: Number of input channels
 pub struct TemporalEncoder {
     history: Vec<VecDeque<f32>>,
     history_depth: usize,
@@ -51,6 +78,10 @@ impl Encoder for TemporalEncoder {
             }
         }
         output
+    }
+
+    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode(input)
     }
 
     fn reset(&mut self) {

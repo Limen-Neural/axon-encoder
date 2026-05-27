@@ -1,9 +1,43 @@
 use crate::prelude::*;
 
+/// Encodes analog values as spike rates based on input intensity.
+///
+/// Each input channel is mapped to a firing rate between `base_rate` and `max_rate`.
+/// In batch mode (`encode`), each call generates independent probabilistic spikes.
+/// In streaming mode (`encode_step`), accumulates probability and fires deterministically
+/// when the accumulated value exceeds a threshold per channel.
+///
+/// # Mathematical Model
+///
+/// For batch encoding:
+/// ```text
+/// rate = base_rate + normalized * (max_rate - base_rate)
+/// probability = rate / 10.0
+/// spike if random() < probability
+/// ```
+///
+/// For streaming (`encode_step`):
+/// ```text
+/// accumulator[i] += normalized[i] * (max_rate - base_rate) / 10.0
+/// spike if accumulator[i] >= 1.0 (then accumulator -= 1.0)
+/// ```
+///
+/// # When to Use
+///
+/// - Converting continuous sensor values to spike rates
+/// - Poisson-like spike generation with controllable average rates
+/// - Real-time encoding where spike timing follows input intensity
+///
+/// # Parameters
+///
+/// - `base_rate`: Minimum firing rate (Hz equivalent) when input is at range minimum
+/// - `max_rate`: Maximum firing rate (Hz equivalent) when input is at range maximum
+/// - `range`: Tuple of (min, max) input values
 pub struct RateEncoder {
     base_rate: f32,
     max_rate: f32,
     range: (f32, f32),
+    accumulators: Vec<f32>,
 }
 
 impl RateEncoder {
@@ -12,11 +46,18 @@ impl RateEncoder {
             base_rate,
             max_rate,
             range,
+            accumulators: Vec::new(),
         }
     }
 
     fn normalize(&self, value: f32) -> f32 {
         ((value - self.range.0) / (self.range.1 - self.range.0)).clamp(0.0, 1.0)
+    }
+
+    fn ensure_accumulators(&mut self, num_channels: usize) {
+        if self.accumulators.len() < num_channels {
+            self.accumulators.resize(num_channels, 0.0);
+        }
     }
 }
 
@@ -44,7 +85,37 @@ impl Encoder for RateEncoder {
         output
     }
 
-    fn reset(&mut self) {}
+    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        if input.is_empty() {
+            return output;
+        }
+
+        self.ensure_accumulators(input.len());
+
+        for (i, &value) in input.iter().enumerate() {
+            let normalized = self.normalize(value);
+            let rate_increment = (self.max_rate - self.base_rate) * normalized / 10.0;
+            self.accumulators[i] += rate_increment;
+
+            if self.accumulators[i] >= 1.0 {
+                output.spikes.push(SpikeEvent {
+                    channel: i as u16,
+                    timestamp: 0,
+                    polarity: true,
+                });
+                self.accumulators[i] -= 1.0;
+            }
+        }
+
+        output
+    }
+
+    fn reset(&mut self) {
+        for acc in self.accumulators.iter_mut() {
+            *acc = 0.0;
+        }
+    }
 }
 
 #[cfg(test)]

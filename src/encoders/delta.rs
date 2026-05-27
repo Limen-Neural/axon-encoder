@@ -1,7 +1,28 @@
 use crate::prelude::*;
 
 /// A simple delta-based encoder.
-/// Fires a spike when the absolute difference between the current input and the last encoded value exceeds a threshold.
+///
+/// Fires a spike when the absolute difference between the current input and the last
+/// encoded value exceeds a threshold. This is useful for event-based encoding where
+/// only changes in the input signal are relevant.
+///
+/// # Mathematical Model
+///
+/// ```text
+/// delta = |current_value - last_value|
+/// spike if delta > threshold
+/// ```
+///
+/// # When to Use
+///
+/// - Event-based encoding where changes are more important than absolute values
+/// - Sensor data where baseline can drift but changes are meaningful
+/// - Reducing power consumption by only encoding when changes occur
+///
+/// # Parameters
+///
+/// - `threshold`: Minimum change required to trigger a spike
+/// - `num_channels`: Number of input channels to track
 pub struct DeltaEncoder {
     last_values: Vec<f32>,
     threshold: f32,
@@ -34,6 +55,10 @@ impl Encoder for DeltaEncoder {
             }
         }
         output
+    }
+
+    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode(input)
     }
 
     fn reset(&mut self) {

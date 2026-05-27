@@ -1,3 +1,27 @@
+/// Poisson spike train encoder.
+///
+/// Generates spike trains with Poisson-distributed timing based on input probability.
+/// Each step generates an independent binary spike (0 or 1) based on the input probability.
+///
+/// # Mathematical Model
+///
+/// ```text
+/// probability = clamp(input, 0.0, 1.0)
+/// spike[i] = 1 if random() < probability else 0
+/// ```
+///
+/// # When to Use
+///
+/// - Generating baseline spike trains with controllable average rates
+/// - Poisson-like random spike generation for stochastic encoders
+/// - Creating temporal patterns with controllable firing rates
+///
+/// # Note
+///
+/// This encoder is NOT part of the `Encoder` trait because its output type (`Vec<u8>`)
+/// differs from other encoders (`EncodedOutput`). It operates in a different mode:
+/// the input is a single probability (0.0 to 1.0) and the output is a spike train
+/// over multiple time steps.
 #[derive(Clone, Debug)]
 pub struct PoissonEncoder {
     pub num_steps: usize,
@@ -8,6 +32,10 @@ impl PoissonEncoder {
         Self { num_steps: steps }
     }
 
+    /// Encodes a single probability value into a spike train.
+    ///
+    /// Each of the `num_steps` represents an independent time step where
+    /// a spike occurs with the given probability.
     pub fn encode(&self, input: f32) -> Vec<u8> {
         let probability = input.clamp(0.0, 1.0);
         (0..self.num_steps)
@@ -19,6 +47,18 @@ impl PoissonEncoder {
                 }
             })
             .collect()
+    }
+
+    /// Encodes a single step - returns 1 or 0 based on input probability.
+    ///
+    /// Useful for streaming mode where you want one spike decision at a time.
+    pub fn encode_step(&self, input: f32) -> u8 {
+        let probability = input.clamp(0.0, 1.0);
+        if crate::rng::gen_unit_f32() < probability {
+            1
+        } else {
+            0
+        }
     }
 }
 

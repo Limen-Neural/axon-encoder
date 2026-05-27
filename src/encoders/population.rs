@@ -1,7 +1,34 @@
 use crate::prelude::*;
 
 /// Encodes a single analog value across a population of neurons.
-/// Each neuron is tuned to a preferred value within the input range.
+///
+/// Each neuron in the population is "tuned" to a specific preferred value within
+/// the input range. The neuron fires based on a Gaussian-like tuning curve centered
+/// on its preferred value. This creates a distributed representation where multiple
+/// neurons contribute to encoding a single input value.
+///
+/// # Mathematical Model
+///
+/// Uses a Gaussian tuning curve to determine each neuron's firing rate:
+///
+/// ```text
+/// preferred_value[i] = range_min + (i / num_neurons) * (range_max - range_min)
+/// distance = |input - preferred_value[i]|
+/// rate = exp(-distance² / (2 * tuning_width²))
+/// spike if random() < rate
+/// ```
+///
+/// # When to Use
+///
+/// - Encoding position or continuous values with distributed representation
+/// - When multiple neurons should contribute to representing a single value
+/// - Creating more robust encoding that doesn't rely on a single neuron
+///
+/// # Parameters
+///
+/// - `num_neurons`: Number of neurons in the population per input channel
+/// - `input_range`: Tuple of (min, max) input values
+/// - `tuning_width`: Controls how broadly neurons respond (larger = wider spread)
 pub struct PopulationEncoder {
     num_neurons: usize,
     input_range: (f32, f32),
@@ -47,6 +74,10 @@ impl Encoder for PopulationEncoder {
             }
         }
         output
+    }
+
+    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode(input)
     }
 
     fn reset(&mut self) {
