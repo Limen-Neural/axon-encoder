@@ -95,10 +95,10 @@ impl Encoder for RateEncoder {
 
         for (i, &value) in input.iter().enumerate() {
             let normalized = self.normalize(value);
-            let rate_increment = (self.max_rate - self.base_rate) * normalized / 10.0;
+            let rate_increment = (self.base_rate + normalized * (self.max_rate - self.base_rate)) / 10.0;
             self.accumulators[i] += rate_increment;
 
-            if self.accumulators[i] >= 1.0 {
+            while self.accumulators[i] >= 1.0 {
                 output.spikes.push(SpikeEvent {
                     channel: i as u16,
                     timestamp: 0,

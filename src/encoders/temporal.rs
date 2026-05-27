@@ -81,7 +81,12 @@ impl Encoder for TemporalEncoder {
     }
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
-        self.encode(input)
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
+        self.encode(safe_input)
     }
 
     fn reset(&mut self) {
