@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use rand::Rng;
 
 pub struct RateEncoder {
     base_rate: f32,
@@ -29,7 +28,7 @@ impl Encoder for RateEncoder {
             let rate = self.base_rate + normalized * (self.max_rate - self.base_rate);
             let probability = (rate / 10.0).clamp(0.0, 1.0);
 
-            if rand::thread_rng().gen_range(0.0f32..1.0) < probability {
+            if crate::rng::gen_unit_f32() < probability {
                 output.spikes.push(SpikeEvent {
                     channel: i as u16,
                     timestamp: 0,
