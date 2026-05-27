@@ -1,4 +1,4 @@
-//! # spikenaut-encoder
+//! # axon-encoder
 //! 
 //! Flexible sensory encoding for spiking neural networks.
 
@@ -8,6 +8,7 @@ pub mod poisson;
 pub mod types;
 pub mod spike_encoder;
 pub mod encoder;
+pub mod rng;
 
 pub mod prelude {
     pub use crate::encoders::*;

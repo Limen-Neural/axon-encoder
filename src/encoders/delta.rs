@@ -46,7 +46,7 @@ impl Encoder for DeltaEncoder {
 /// Simplified: delta-based spike generation (per feature)
 /// 
 /// This is a utility function that takes a slice of deltas and returns a boolean spike train.
-/// It can be used to feed the resulting binary/event sequences into Spikenaut LIF/RSNN layers.
+/// It can be used to feed the resulting binary/event sequences into LIF/RSNN layers.
 pub fn encode_deltas_to_spikes(deltas: &[f32], threshold: f32) -> Vec<bool> {
     deltas.iter().map(|&d| d.abs() > threshold).collect()
 }

@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use rand::Rng;
 
 /// Encodes a single analog value across a population of neurons.
 /// Each neuron is tuned to a preferred value within the input range.
@@ -28,13 +27,12 @@ impl PopulationEncoder {
 impl Encoder for PopulationEncoder {
     fn encode(&mut self, input: &[f32]) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        let mut rng = rand::thread_rng();
-
+        
         // This encoder expects a single value in the input slice
         if let Some(&value) = input.first() {
             for i in 0..self.num_neurons {
                 let rate = self.get_rate(value, i);
-                if rng.gen_range(0.0..1.0) < rate {
+                if crate::rng::gen_unit_f32() < rate {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
                         timestamp: 0, // Simplified
