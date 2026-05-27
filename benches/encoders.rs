@@ -8,9 +8,9 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 fn bench_rate_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("RateEncoder::encode");
     for size in [10, 100, 1000, 10000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, size| {
             let mut encoder = RateEncoder::new(5.0, 100.0, (0.0, 1.0));
-            let input: Vec<f32> = (0..*size).map(|i| i as f32 / size as f32).collect();
+            let input: Vec<f32> = (0..*size).map(|i| i as f32 / *size as f32).collect();
             b.iter(|| encoder.encode(black_box(&input)));
         });
     }
@@ -20,9 +20,9 @@ fn bench_rate_encoder(c: &mut Criterion) {
 fn bench_population_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("PopulationEncoder::encode");
     for size in [10, 100, 1000, 10000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
-            let mut encoder = PopulationEncoder::new(size, 50.0, 100.0, 10);
-            let input: Vec<f32> = (0..*size).map(|i| i as f32 / size as f32).collect();
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, size| {
+            let mut encoder = PopulationEncoder::new(*size, (50.0, 100.0), 10.0);
+            let input: Vec<f32> = (0..*size).map(|i| i as f32 / *size as f32).collect();
             b.iter(|| encoder.encode(black_box(&input)));
         });
     }
@@ -32,9 +32,9 @@ fn bench_population_encoder(c: &mut Criterion) {
 fn bench_delta_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("DeltaEncoder::encode");
     for size in [10, 100, 1000, 10000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
-            let mut encoder = DeltaEncoder::new(*size, 0.1);
-            let input: Vec<f32> = (0..*size).map(|i| i as f32 / size as f32 * 10.0).collect();
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, size| {
+            let mut encoder = DeltaEncoder::new(0.1, *size);
+            let input: Vec<f32> = (0..*size).map(|i| i as f32 / *size as f32 * 10.0).collect();
             b.iter(|| encoder.encode(black_box(&input)));
         });
     }
@@ -44,9 +44,9 @@ fn bench_delta_encoder(c: &mut Criterion) {
 fn bench_temporal_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemporalEncoder::encode");
     for size in [10, 100, 1000, 10000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
-            let mut encoder = TemporalEncoder::new(*size, 5, 0.5);
-            let input: Vec<f32> = (0..*size).map(|i| i as f32 / size as f32).collect();
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, size| {
+            let mut encoder = TemporalEncoder::new(5, vec![(0.5, 1)], *size);
+            let input: Vec<f32> = (0..*size).map(|i| i as f32 / *size as f32).collect();
             b.iter(|| encoder.encode(black_box(&input)));
         });
     }
@@ -56,9 +56,9 @@ fn bench_temporal_encoder(c: &mut Criterion) {
 fn bench_predictive_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("PredictiveEncoder::encode");
     for size in [10, 100, 1000, 10000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
-            let mut encoder = PredictiveEncoder::new(*size, 0.5);
-            let input: Vec<f32> = (0..*size).map(|i| i as f32 / size as f32 * 10.0).collect();
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, size| {
+            let mut encoder = PredictiveEncoder::new(5, vec![(0.5, 1)], *size);
+            let input: Vec<f32> = (0..*size).map(|i| i as f32 / *size as f32 * 10.0).collect();
             b.iter(|| encoder.encode(black_box(&input)));
         });
     }
@@ -68,7 +68,7 @@ fn bench_predictive_encoder(c: &mut Criterion) {
 fn bench_poisson_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("PoissonEncoder::encode");
     for steps in [10, 100, 1000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(steps), steps, |b, &steps| {
+        group.bench_with_input(BenchmarkId::from_parameter(steps), steps, |b, steps| {
             let enc = PoissonEncoder::new(*steps);
             b.iter(|| enc.encode(black_box(0.5)));
         });
