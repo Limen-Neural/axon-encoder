@@ -2,7 +2,6 @@ use axon_encoder::encoders::{
     DeltaEncoder, PopulationEncoder, PredictiveEncoder, RateEncoder, TemporalEncoder,
 };
 use axon_encoder::prelude::*;
-use axon_encoder::PoissonEncoder;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn bench_rate_encoder(c: &mut Criterion) {
@@ -22,7 +21,9 @@ fn bench_population_encoder(c: &mut Criterion) {
     for size in [10, 100, 1000, 10000].iter() {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, size| {
             let mut encoder = PopulationEncoder::new(*size, (50.0, 100.0), 10.0);
-            let input: Vec<f32> = (0..*size).map(|i| i as f32 / *size as f32).collect();
+            let input: Vec<f32> = (0..*size)
+                .map(|i| 50.0 + (i as f32 / *size as f32) * 50.0)
+                .collect();
             b.iter(|| encoder.encode(black_box(&input)));
         });
     }

@@ -76,11 +76,15 @@ mod tests {
     }
 
     #[test]
-    fn spike_count_bounded_by_steps() {
+    fn spike_count_produces_mixed_output() {
         let enc = PoissonEncoder::new(100);
         let spikes = enc.encode(0.5);
         let count = spikes.iter().filter(|&&s| s == 1).count();
-        assert!(count <= 100);
+        assert!(
+            count > 0 && count < 100,
+            "p=0.5 should produce mixed output, got {} spikes",
+            count
+        );
     }
 
     #[test]

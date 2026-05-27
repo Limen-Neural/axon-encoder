@@ -80,7 +80,10 @@ mod tests {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 100.0));
         let input = [-50.0, -100.0, -1.0];
         let output = encoder.encode(&input);
-        assert!(output.spikes.is_empty() || output.spikes.len() <= 3);
+        assert!(
+            output.spikes.is_empty(),
+            "Below-min inputs should produce no spikes"
+        );
     }
 
     #[test]
