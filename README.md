@@ -110,8 +110,8 @@ Welcome to Rust! If you're new to the language, some of the syntax in the Quick 
 
 ### Does Not Own
 - **SNN Simulation Engine**: `axon-encoder` does not simulate spiking neural networks, calculate synaptic plasticity (STDP), or manage network topologies. (See [synaptic-mesh](https://github.com/Limen-Neural/synaptic-mesh) and [plasticity-lab](https://github.com/Limen-Neural/plasticity-lab) instead).
-- **Domain-Specific Experiments**: Contains no domain-specific code, financial/trading logic, or mining telemetry.
-- **Hardware Bindings**: Focuses strictly on software implementations, leaving specific FPGA/ASIC/GPU compilation and execution to downstream crates like [silicon-bridge](https://github.com/Limen-Neural/silicon-bridge).
+- **Domain-Specific Experiments**: Contains no application-specific business logic or domain-coupled telemetry.
+- **Hardware Bindings**: Focuses strictly on software implementations, leaving specialized accelerator compilation and execution to downstream crates like [silicon-bridge](https://github.com/Limen-Neural/silicon-bridge).
 
 ## Contributing
 
