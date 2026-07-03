@@ -29,7 +29,7 @@ To use `axon-encoder` in your project, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-axon-encoder = { git = "https://github.com/your-username/axon-encoder.git" }
+axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder.git" }
 ```
 *(Note: Once published to crates.io, this will be `axon-encoder = "0.2.0"`)*
 
@@ -101,6 +101,29 @@ Welcome to Rust! If you're new to the language, some of the syntax in the Quick 
 - **Performance**: The core encoding loops are designed to be efficient with minimal memory allocation.
 - **Accessibility**: We aim to make SNNs more accessible to newcomers by providing clear documentation and easy-to-use tools.
 
+## Purpose and Scope
+
+### Owns
+
+- **Sensory Encoding Algorithms**: Implementation of core mathematical SNN encoding mechanisms (e.g., Rate, Derivative, Temporal, Population, and Delta encoding).
+- **Signal-to-Spike Translation**: Converting continuous real-world streams/vectors into discrete biological/event-driven spike events.
+- **Deterministic and Stochastic Pipelines**: Algorithms for both deterministic value-to-spike mappings and stochastic Poisson-process spike generators.
+
+### Does Not Own
+
+- **SNN Simulation Engine**: `axon-encoder` does not simulate spiking neural networks, calculate synaptic plasticity (STDP), or manage network topologies. (See [synaptic-mesh](https://github.com/Limen-Neural/synaptic-mesh) and [plasticity-lab](https://github.com/Limen-Neural/plasticity-lab) instead).
+- **Domain-Specific Experiments**: Contains no domain-specific code, financial/trading logic, or mining telemetry.
+- **Hardware Bindings**: Focuses strictly on software implementations, leaving specific FPGA/ASIC/GPU compilation and execution to downstream crates like [silicon-bridge](https://github.com/Limen-Neural/silicon-bridge).
+
 ## Contributing
 
 Contributions are welcome! Whether it's a new encoder, a bug fix, or improved documentation, please feel free to open an issue or submit a pull request.
+
+## License
+
+This project is dual-licensed under either:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE-2.0](LICENSE-APACHE-2.0) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT License ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
