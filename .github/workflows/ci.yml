@@ -22,6 +22,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
+          toolchain: stable
           components: clippy, rustfmt
 
       - name: Cache cargo dependencies
