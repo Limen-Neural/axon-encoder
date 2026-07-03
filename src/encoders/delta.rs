@@ -88,14 +88,14 @@ mod tests {
 
         let output = encoder.encode(&[3.5]); // 3.5 - 0.0 = 3.5 > 2.0 -> spike
         assert!(!output.spikes.is_empty());
-        assert_eq!(output.spikes[0].polarity, true);
+        assert!(output.spikes[0].polarity);
 
         let output = encoder.encode(&[4.0]); // 4.0 - 3.5 = 0.5 < 2.0 -> no spike
         assert!(output.spikes.is_empty());
 
         let output = encoder.encode(&[1.0]); // 1.0 - 3.5 = -2.5.abs() = 2.5 > 2.0 -> spike
         assert!(!output.spikes.is_empty());
-        assert_eq!(output.spikes[0].polarity, false);
+        assert!(!output.spikes[0].polarity);
     }
 
     #[test]

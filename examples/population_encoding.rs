@@ -26,7 +26,7 @@ fn main() {
         println!("--- Input value: {} ---", value);
 
         // Run multiple trials to show probabilistic firing.
-        let mut spike_counts = vec![0u32; 20];
+        let mut spike_counts = [0u32; 20];
         let trials = 100;
         for _ in 0..trials {
             let output = encoder.encode(&[value]);
@@ -37,7 +37,7 @@ fn main() {
 
         // Print a simple histogram of spike counts per neuron.
         for (neuron, &count) in spike_counts.iter().enumerate() {
-            let bar: String = std::iter::repeat('#').take(count as usize / 2).collect();
+            let bar = "#".repeat(count as usize / 2);
             if count > 0 {
                 println!("  Neuron {:2}: {:3} spikes  {}", neuron, count, bar);
             }
