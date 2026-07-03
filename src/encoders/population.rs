@@ -44,6 +44,11 @@ impl PopulationEncoder {
         }
     }
 
+    /// Returns the number of neurons in the population.
+    pub fn num_neurons(&self) -> usize {
+        self.num_neurons
+    }
+
     /// Calculates the firing rate for a neuron based on a Gaussian tuning curve.
     fn get_rate(&self, input: f32, neuron_index: usize) -> f32 {
         let range_span = self.input_range.1 - self.input_range.0;

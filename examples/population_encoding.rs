@@ -16,17 +16,21 @@ fn main() {
     //   input_range  = (0.0, 100.0)
     //   tuning_width = 10.0  (standard deviation of Gaussian tuning curves)
     let mut encoder = PopulationEncoder::new(20, (0.0, 100.0), 10.0);
+    let num_neurons = encoder.num_neurons();
 
     let test_values = [10.0, 50.0, 90.0];
 
     println!("=== Population Encoding ===");
-    println!("20 neurons covering range [0, 100], tuning width = 10.0\n");
+    println!(
+        "{} neurons covering range [0, 100], tuning width = 10.0\n",
+        num_neurons
+    );
 
     for &value in &test_values {
         println!("--- Input value: {} ---", value);
 
         // Run multiple trials to show probabilistic firing.
-        let mut spike_counts = [0u32; 20];
+        let mut spike_counts = vec![0u32; num_neurons];
         let trials = 100;
         for _ in 0..trials {
             let output = encoder.encode(&[value]);
