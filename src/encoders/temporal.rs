@@ -29,7 +29,7 @@ use std::collections::VecDeque;
 /// - `change_thresholds`: Vec of (threshold, spike_value) pairs - fires when change exceeds threshold
 /// - `num_channels`: Number of input channels
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TemporalEncoder {
     history: Vec<VecDeque<f32>>,
     history_depth: usize,
@@ -111,5 +111,45 @@ mod tests {
         encoder.encode(&[8.0]);
         let output = encoder.encode(&[8.0]);
         assert!(!output.spikes.is_empty());
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for TemporalEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use std::collections::VecDeque;
+
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            history: Vec<VecDeque<f32>>,
+            history_depth: usize,
+            change_thresholds: Vec<(f32, u16)>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if helper.history_depth < 6 {
+            return Err(serde::de::Error::custom("history_depth must be at least 6"));
+        }
+
+        for (i, deque) in helper.history.iter().enumerate() {
+            if deque.len() > helper.history_depth {
+                return Err(serde::de::Error::custom(format!(
+                    "history channel {} length ({}) exceeds history_depth ({})",
+                    i,
+                    deque.len(),
+                    helper.history_depth
+                )));
+            }
+        }
+
+        Ok(Self {
+            history: helper.history,
+            history_depth: helper.history_depth,
+            change_thresholds: helper.change_thresholds,
+        })
     }
 }

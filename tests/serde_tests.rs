@@ -74,8 +74,40 @@ fn test_serde_encoders_and_state() {
     assert_eq!(pred_encoder, deserialized_pred);
 
     // 10. Test TemporalEncoder
-    let temp_encoder = TemporalEncoder::new(5, vec![(0.5, 1)], 2);
+    let temp_encoder = TemporalEncoder::new(6, vec![(0.5, 1)], 2);
     let serialized_temp = serde_json::to_string(&temp_encoder).unwrap();
     let deserialized_temp: TemporalEncoder = serde_json::from_str(&serialized_temp).unwrap();
     assert_eq!(temp_encoder, deserialized_temp);
+}
+
+#[test]
+fn test_serde_validation_failures() {
+    // 1. Mismatched history and thresholds length in PredictiveEncoder
+    let invalid_pred_json = r#"{
+        "history": [[0.0]],
+        "thresholds": [],
+        "history_depth": 10,
+        "deviation_thresholds": []
+    }"#;
+    let res: Result<PredictiveEncoder, _> = serde_json::from_str(invalid_pred_json);
+    assert!(res.is_err());
+
+    // 2. PredictiveEncoder history_depth too small
+    let invalid_pred_depth_json = r#"{
+        "history": [[0.0]],
+        "thresholds": [0.0],
+        "history_depth": 2,
+        "deviation_thresholds": []
+    }"#;
+    let res: Result<PredictiveEncoder, _> = serde_json::from_str(invalid_pred_depth_json);
+    assert!(res.is_err());
+
+    // 3. TemporalEncoder history_depth too small
+    let invalid_temp_depth_json = r#"{
+        "history": [[0.0]],
+        "history_depth": 3,
+        "change_thresholds": []
+    }"#;
+    let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
+    assert!(res.is_err());
 }

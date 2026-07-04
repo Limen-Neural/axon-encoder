@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 /// - `deviation_thresholds`: Vec of (threshold, spike_value) pairs
 /// - `num_channels`: Number of input channels
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PredictiveEncoder {
     history: Vec<VecDeque<f32>>,
     thresholds: Vec<f32>,
@@ -120,5 +120,55 @@ mod tests {
         encoder.encode(&[1.0]);
         let output = encoder.encode(&[10.0]);
         assert!(!output.spikes.is_empty());
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use std::collections::VecDeque;
+
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            history: Vec<VecDeque<f32>>,
+            thresholds: Vec<f32>,
+            history_depth: usize,
+            deviation_thresholds: Vec<(f32, u16)>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if helper.history.len() != helper.thresholds.len() {
+            return Err(serde::de::Error::custom(format!(
+                "mismatched history length ({}) and thresholds length ({})",
+                helper.history.len(),
+                helper.thresholds.len()
+            )));
+        }
+
+        if helper.history_depth < 5 {
+            return Err(serde::de::Error::custom("history_depth must be at least 5"));
+        }
+
+        for (i, deque) in helper.history.iter().enumerate() {
+            if deque.len() > helper.history_depth {
+                return Err(serde::de::Error::custom(format!(
+                    "history channel {} length ({}) exceeds history_depth ({})",
+                    i,
+                    deque.len(),
+                    helper.history_depth
+                )));
+            }
+        }
+
+        Ok(Self {
+            history: helper.history,
+            thresholds: helper.thresholds,
+            history_depth: helper.history_depth,
+            deviation_thresholds: helper.deviation_thresholds,
+        })
     }
 }
