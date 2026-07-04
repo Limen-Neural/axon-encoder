@@ -10,7 +10,7 @@ pub struct SpikeEvent {
 }
 
 /// Optional metadata about the encoding process.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EncodingMetadata {
     // Add any relevant metadata fields here, e.g.:
