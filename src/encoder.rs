@@ -1,11 +1,13 @@
 use crate::types::{EncodedOutput, SpikeEvent};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EmbeddingEncoderConfig {
     pub v_th: f32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EncoderState {
     pub membrane_potentials: Vec<f32>,
 }

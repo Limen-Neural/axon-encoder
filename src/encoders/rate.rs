@@ -33,6 +33,8 @@ use crate::prelude::*;
 /// - `base_rate`: Minimum firing rate (Hz equivalent) when input is at range minimum
 /// - `max_rate`: Maximum firing rate (Hz equivalent) when input is at range maximum
 /// - `range`: Tuple of (min, max) input values
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RateEncoder {
     base_rate: f32,
     max_rate: f32,

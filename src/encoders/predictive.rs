@@ -30,6 +30,8 @@ use std::collections::VecDeque;
 /// - `history_depth`: Number of past values to track per channel
 /// - `deviation_thresholds`: Vec of (threshold, spike_value) pairs
 /// - `num_channels`: Number of input channels
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PredictiveEncoder {
     history: Vec<VecDeque<f32>>,
     thresholds: Vec<f32>,

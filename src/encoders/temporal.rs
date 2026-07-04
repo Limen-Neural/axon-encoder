@@ -28,6 +28,8 @@ use std::collections::VecDeque;
 /// - `history_depth`: How many past values to track per channel
 /// - `change_thresholds`: Vec of (threshold, spike_value) pairs - fires when change exceeds threshold
 /// - `num_channels`: Number of input channels
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TemporalEncoder {
     history: Vec<VecDeque<f32>>,
     history_depth: usize,
