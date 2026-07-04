@@ -45,7 +45,7 @@ impl PredictiveEncoder {
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Self {
-        assert!(history_depth >= 5, "history_depth must be at least 5");
+        let history_depth = history_depth.max(5);
         Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             thresholds: vec![0.0; num_channels],
