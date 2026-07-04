@@ -1,6 +1,6 @@
 # .codecov.yml configures coverage targets and comment behavior
 codecov:
-  require_ci_to_pass: yes
+  require_ci_to_pass: true
 
 coverage:
   precision: 2
@@ -20,4 +20,4 @@ coverage:
 comment:
   layout: "reach, diff, flags, files"
   behavior: default
-  require_changes: no
+  require_changes: true
