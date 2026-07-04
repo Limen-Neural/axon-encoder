@@ -116,7 +116,9 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        if helper.history_depth < 3 {
+        if helper.history_depth < 6 {
+            return Err(serde::de::Error::custom("history_depth must be at least 6"));
+        }
             return Err(serde::de::Error::custom("history_depth must be at least 3"));
         }
 
