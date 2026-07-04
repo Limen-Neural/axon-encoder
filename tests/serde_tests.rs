@@ -105,7 +105,7 @@ fn test_serde_validation_failures() {
     // 3. TemporalEncoder history_depth too small
     let invalid_temp_depth_json = r#"{
         "history": [[0.0]],
-        "history_depth": 3,
+        "history_depth": 2,
         "change_thresholds": []
     }"#;
     let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
