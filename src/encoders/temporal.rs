@@ -37,12 +37,17 @@ pub struct TemporalEncoder {
 }
 
 impl TemporalEncoder {
+    /// Creates a new `TemporalEncoder`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `history_depth < 6`.
     pub fn new(
         history_depth: usize,
         change_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Self {
-        let history_depth = history_depth.max(3);
+        assert!(history_depth >= 6, "history_depth must be at least 6");
         Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             history_depth,
@@ -116,8 +121,8 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        if helper.history_depth < 3 {
-            return Err(serde::de::Error::custom("history_depth must be at least 3"));
+        if helper.history_depth < 6 {
+            return Err(serde::de::Error::custom("history_depth must be at least 6"));
         }
 
         for (i, deque) in helper.history.iter().enumerate() {

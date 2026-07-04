@@ -40,12 +40,17 @@ pub struct PredictiveEncoder {
 }
 
 impl PredictiveEncoder {
+    /// Creates a new `PredictiveEncoder`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `history_depth < 5`.
     pub fn new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Self {
-        let history_depth = history_depth.max(5);
+        assert!(history_depth >= 5, "history_depth must be at least 5");
         Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             thresholds: vec![0.0; num_channels],
