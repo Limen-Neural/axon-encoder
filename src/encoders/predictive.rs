@@ -64,6 +64,9 @@ impl Encoder for PredictiveEncoder {
     fn encode(&mut self, input: &[f32]) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         for (i, &value) in input.iter().enumerate() {
+            if i >= self.history.len() {
+                break;
+            }
             let channel_history = &mut self.history[i];
             if channel_history.len() == self.history_depth {
                 channel_history.pop_front();

@@ -60,13 +60,16 @@ impl Encoder for TemporalEncoder {
     fn encode(&mut self, input: &[f32]) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         for (i, &value) in input.iter().enumerate() {
+            if i >= self.history.len() {
+                break;
+            }
             let channel_history = &mut self.history[i];
             if channel_history.len() == self.history_depth {
                 channel_history.pop_front();
             }
             channel_history.push_back(value);
 
-            if channel_history.len() < 3 {
+            if channel_history.len() < 6 {
                 continue;
             }
 
@@ -154,6 +157,7 @@ mod tests {
         encoder.encode(&[1.0]);
         encoder.encode(&[1.0]);
         encoder.encode(&[1.0]);
+        encoder.encode(&[8.0]);
         encoder.encode(&[8.0]);
         let output = encoder.encode(&[8.0]);
         assert!(!output.spikes.is_empty());
