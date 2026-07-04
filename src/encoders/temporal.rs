@@ -42,6 +42,7 @@ impl TemporalEncoder {
         change_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Self {
+        assert!(history_depth >= 3, "history_depth must be at least 3");
         Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             history_depth,
