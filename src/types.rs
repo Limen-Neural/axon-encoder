@@ -33,7 +33,7 @@ impl EncodedOutput {
 }
 
 /// General-purpose configuration for encoders.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EncoderConfig {
     pub input_channels: usize,
