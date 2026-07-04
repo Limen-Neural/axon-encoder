@@ -23,6 +23,8 @@ use crate::prelude::*;
 ///
 /// - `threshold`: Minimum change required to trigger a spike
 /// - `num_channels`: Number of input channels to track
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DeltaEncoder {
     last_values: Vec<f32>,
     threshold: f32,

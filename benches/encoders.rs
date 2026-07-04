@@ -46,7 +46,7 @@ fn bench_temporal_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemporalEncoder::encode");
     for size in [10, 100, 1000, 10000].iter() {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, size| {
-            let mut encoder = TemporalEncoder::new(5, vec![(0.5, 1)], *size);
+            let mut encoder = TemporalEncoder::new(6, vec![(0.5, 1)], *size);
             let input: Vec<f32> = (0..*size).map(|i| i as f32 / *size as f32).collect();
             b.iter(|| encoder.encode(black_box(&input)));
         });

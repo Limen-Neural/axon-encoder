@@ -30,6 +30,8 @@ use std::collections::VecDeque;
 /// - `history_depth`: Number of past values to track per channel
 /// - `deviation_thresholds`: Vec of (threshold, spike_value) pairs
 /// - `num_channels`: Number of input channels
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PredictiveEncoder {
     history: Vec<VecDeque<f32>>,
     thresholds: Vec<f32>,
@@ -38,11 +40,17 @@ pub struct PredictiveEncoder {
 }
 
 impl PredictiveEncoder {
+    /// Creates a new `PredictiveEncoder`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `history_depth < 5`.
     pub fn new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Self {
+        assert!(history_depth >= 5, "history_depth must be at least 5");
         Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             thresholds: vec![0.0; num_channels],
@@ -56,6 +64,9 @@ impl Encoder for PredictiveEncoder {
     fn encode(&mut self, input: &[f32]) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         for (i, &value) in input.iter().enumerate() {
+            if i >= self.history.len() {
+                break;
+            }
             let channel_history = &mut self.history[i];
             if channel_history.len() == self.history_depth {
                 channel_history.pop_front();
@@ -101,6 +112,56 @@ impl Encoder for PredictiveEncoder {
         for threshold in self.thresholds.iter_mut() {
             *threshold = 0.0;
         }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use std::collections::VecDeque;
+
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            history: Vec<VecDeque<f32>>,
+            thresholds: Vec<f32>,
+            history_depth: usize,
+            deviation_thresholds: Vec<(f32, u16)>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if helper.history.len() != helper.thresholds.len() {
+            return Err(serde::de::Error::custom(format!(
+                "mismatched history length ({}) and thresholds length ({})",
+                helper.history.len(),
+                helper.thresholds.len()
+            )));
+        }
+
+        if helper.history_depth < 5 {
+            return Err(serde::de::Error::custom("history_depth must be at least 5"));
+        }
+
+        for (i, deque) in helper.history.iter().enumerate() {
+            if deque.len() > helper.history_depth {
+                return Err(serde::de::Error::custom(format!(
+                    "history channel {} length ({}) exceeds history_depth ({})",
+                    i,
+                    deque.len(),
+                    helper.history_depth
+                )));
+            }
+        }
+
+        Ok(Self {
+            history: helper.history,
+            thresholds: helper.thresholds,
+            history_depth: helper.history_depth,
+            deviation_thresholds: helper.deviation_thresholds,
+        })
     }
 }
 

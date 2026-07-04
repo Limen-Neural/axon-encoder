@@ -31,7 +31,7 @@ To use `axon-encoder` in your project, add the following to your `Cargo.toml`:
 [dependencies]
 axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder.git" }
 ```
-*(Note: Once published to crates.io, this will be `axon-encoder = "0.2.0"`)*
+*(Note: Once published to crates.io, this will be `axon-encoder = "0.3.0"`)*
 
 For local development, you can use a path dependency:
 ```toml

@@ -29,6 +29,8 @@ use crate::prelude::*;
 /// - `num_neurons`: Number of neurons in the population per input channel
 /// - `input_range`: Tuple of (min, max) input values
 /// - `tuning_width`: Controls how broadly neurons respond (larger = wider spread)
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PopulationEncoder {
     num_neurons: usize,
     input_range: (f32, f32),
