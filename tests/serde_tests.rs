@@ -1,4 +1,5 @@
-#[cfg(feature = "serde")]
+#![cfg(feature = "serde")]
+
 #[test]
 fn test_serde_serialization_deserialization() {
     use axon_encoder::prelude::*;
