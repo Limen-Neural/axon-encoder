@@ -1,9 +1,9 @@
 #![cfg(feature = "serde")]
 
-#[test]
-fn test_serde_serialization_deserialization() {
-    use axon_encoder::prelude::*;
+use axon_encoder::prelude::*;
 
+#[test]
+fn test_serde_core_io() {
     // 1. Test SpikeEvent
     let spike = SpikeEvent {
         channel: 12,
@@ -32,7 +32,10 @@ fn test_serde_serialization_deserialization() {
     let serialized_output = serde_json::to_string(&output).unwrap();
     let deserialized_output: EncodedOutput = serde_json::from_str(&serialized_output).unwrap();
     assert_eq!(output, deserialized_output);
+}
 
+#[test]
+fn test_serde_encoders_and_state() {
     // 4. Test EmbeddingEncoderConfig
     let embed_config = EmbeddingEncoderConfig { v_th: 1.5 };
     let serialized_embed_config = serde_json::to_string(&embed_config).unwrap();
