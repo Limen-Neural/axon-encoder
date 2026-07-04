@@ -1,7 +1,7 @@
 //! Standardized types for encoder inputs and outputs.
 
 /// A single spike event.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SpikeEvent {
     pub channel: u16,
