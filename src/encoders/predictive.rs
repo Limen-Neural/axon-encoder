@@ -106,23 +106,6 @@ impl Encoder for PredictiveEncoder {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_predictive_encoder() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 1);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        let output = encoder.encode(&[10.0]);
-        assert!(!output.spikes.is_empty());
-    }
-}
-
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -170,5 +153,22 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
             history_depth: helper.history_depth,
             deviation_thresholds: helper.deviation_thresholds,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_predictive_encoder() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 1);
+        encoder.encode(&[1.0]);
+        encoder.encode(&[1.0]);
+        encoder.encode(&[1.0]);
+        encoder.encode(&[1.0]);
+        encoder.encode(&[1.0]);
+        let output = encoder.encode(&[10.0]);
+        assert!(!output.spikes.is_empty());
     }
 }

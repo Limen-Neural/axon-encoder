@@ -98,22 +98,6 @@ impl Encoder for TemporalEncoder {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_temporal_encoder() {
-        let mut encoder = TemporalEncoder::new(6, vec![(2.0, 1), (5.0, 2)], 1);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[8.0]);
-        let output = encoder.encode(&[8.0]);
-        assert!(!output.spikes.is_empty());
-    }
-}
-
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for TemporalEncoder {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -151,5 +135,21 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
             history_depth: helper.history_depth,
             change_thresholds: helper.change_thresholds,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_temporal_encoder() {
+        let mut encoder = TemporalEncoder::new(6, vec![(2.0, 1), (5.0, 2)], 1);
+        encoder.encode(&[1.0]);
+        encoder.encode(&[1.0]);
+        encoder.encode(&[1.0]);
+        encoder.encode(&[8.0]);
+        let output = encoder.encode(&[8.0]);
+        assert!(!output.spikes.is_empty());
     }
 }
