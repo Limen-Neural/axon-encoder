@@ -18,7 +18,7 @@ pub struct EncodingMetadata {
 }
 
 /// The standardized output of an encoder.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EncodedOutput {
     pub spikes: Vec<SpikeEvent>,
