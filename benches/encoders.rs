@@ -126,9 +126,8 @@ fn bench_temporal_encoder_step(c: &mut Criterion) {
             }
 
             b.iter(|| {
-                let input = sequence[index % sequence.len()];
-                index += 1;
-                black_box(encoder.encode_step(black_box(input)))
+                black_box(encoder.encode_step(black_box(&high)))
+            });
             });
         });
     }
