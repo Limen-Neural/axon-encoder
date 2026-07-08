@@ -37,17 +37,21 @@ impl DeltaEncoder {
             threshold,
         }
     }
-}
 
-impl Encoder for DeltaEncoder {
-    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+    fn encode_with_threshold_scale(
+        &mut self,
+        input: &[f32],
+        threshold_scale: f32,
+    ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
+        let effective_threshold = (self.threshold * threshold_scale).max(0.0);
+
         for (i, &value) in input.iter().enumerate() {
             if i >= self.last_values.len() {
                 break;
             }
             let delta = (value - self.last_values[i]).abs();
-            if delta > self.threshold {
+            if delta > effective_threshold {
                 output.spikes.push(SpikeEvent {
                     channel: i as u16,
                     timestamp: 0,
@@ -57,6 +61,32 @@ impl Encoder for DeltaEncoder {
             }
         }
         output
+    }
+
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_threshold_scale(input, gains.threshold_scale)
+    }
+
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_threshold_scale(input, gains.threshold_scale)
+    }
+}
+
+impl Encoder for DeltaEncoder {
+    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode_with_threshold_scale(input, 1.0)
     }
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
@@ -106,5 +136,27 @@ mod tests {
         let threshold = 0.7;
         let spikes = encode_deltas_to_spikes(&deltas, threshold);
         assert_eq!(spikes, vec![false, false, true, true]);
+    }
+
+    #[test]
+    fn test_delta_encoder_modulators_reduce_threshold() {
+        let mut encoder = DeltaEncoder::new(1.0, 1);
+        let modulators = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(encoder.encode(&[0.75]).spikes.is_empty());
+        encoder.reset();
+
+        let modulated = encoder.encode_with_modulators(&[0.75], &modulators, &gain_curves);
+        assert_eq!(modulated.spikes.len(), 1);
     }
 }

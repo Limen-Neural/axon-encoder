@@ -78,6 +78,55 @@ fn test_serde_encoders_and_state() {
     let serialized_temp = serde_json::to_string(&temp_encoder).unwrap();
     let deserialized_temp: TemporalEncoder = serde_json::from_str(&serialized_temp).unwrap();
     assert_eq!(temp_encoder, deserialized_temp);
+
+    // 11. Test GainCurve and modulation config types
+    let gain_curve = GainCurve::new((0.0, 1.0), (0.5, 2.0));
+    let serialized_curve = serde_json::to_string(&gain_curve).unwrap();
+    let deserialized_curve: GainCurve = serde_json::from_str(&serialized_curve).unwrap();
+    assert_eq!(gain_curve, deserialized_curve);
+
+    let modulator_curves = ModulatorGainCurves {
+        threshold: Some(gain_curve),
+        sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 1.5))),
+        firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 2.5))),
+    };
+    let serialized_modulator_curves = serde_json::to_string(&modulator_curves).unwrap();
+    let deserialized_modulator_curves: ModulatorGainCurves =
+        serde_json::from_str(&serialized_modulator_curves).unwrap();
+    assert_eq!(modulator_curves, deserialized_modulator_curves);
+
+    let encoding_gains = EncodingGains {
+        threshold_scale: 0.75,
+        sensitivity_scale: 1.25,
+        firing_rate_scale: 1.5,
+    };
+    let serialized_gains = serde_json::to_string(&encoding_gains).unwrap();
+    let deserialized_gains: EncodingGains = serde_json::from_str(&serialized_gains).unwrap();
+    assert_eq!(encoding_gains, deserialized_gains);
+
+    let neuromodulator_gain_curves = NeuromodulatorGainCurves {
+        dopamine: modulator_curves,
+        cortisol: ModulatorGainCurves {
+            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            ..Default::default()
+        },
+        acetylcholine: ModulatorGainCurves {
+            firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 1.2))),
+            ..Default::default()
+        },
+        tempo: ModulatorGainCurves {
+            sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 1.1))),
+            ..Default::default()
+        },
+    };
+    let serialized_neuromodulator_gain_curves =
+        serde_json::to_string(&neuromodulator_gain_curves).unwrap();
+    let deserialized_neuromodulator_gain_curves: NeuromodulatorGainCurves =
+        serde_json::from_str(&serialized_neuromodulator_gain_curves).unwrap();
+    assert_eq!(
+        neuromodulator_gain_curves,
+        deserialized_neuromodulator_gain_curves
+    );
 }
 
 #[test]

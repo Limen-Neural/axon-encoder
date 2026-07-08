@@ -2,6 +2,16 @@ const EVENT_DOPAMINE_DECAY: f32 = 0.95;
 const CORTISOL_DECAY: f32 = 0.90;
 const ACETYLCHOLINE_DECAY: f32 = 0.99;
 const TEMPO_DECAY: f32 = 0.98;
+const MIN_GAIN_SCALE: f32 = 1e-4;
+const MAX_GAIN_SCALE: f32 = 1e4;
+
+fn sanitize_gain_scale(scale: f32) -> f32 {
+    if !scale.is_finite() {
+        return 1.0;
+    }
+
+    scale.clamp(MIN_GAIN_SCALE, MAX_GAIN_SCALE)
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NeuroModulators {
@@ -17,5 +27,182 @@ impl NeuroModulators {
         self.cortisol = (self.cortisol * CORTISOL_DECAY).max(0.0);
         self.acetylcholine = (self.acetylcholine * ACETYLCHOLINE_DECAY).max(0.0);
         self.tempo = (self.tempo * TEMPO_DECAY).max(0.0);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GainCurve {
+    pub input_range: (f32, f32),
+    pub output_range: (f32, f32),
+}
+
+impl GainCurve {
+    pub fn new(input_range: (f32, f32), output_range: (f32, f32)) -> Self {
+        assert!(
+            input_range.0 < input_range.1,
+            "input_range min must be less than max"
+        );
+
+        Self {
+            input_range,
+            output_range,
+        }
+    }
+
+    pub fn identity() -> Self {
+        Self {
+            input_range: (0.0, 1.0),
+            output_range: (1.0, 1.0),
+        }
+    }
+
+    pub fn evaluate(&self, level: f32) -> f32 {
+        if !level.is_finite() {
+            return 1.0;
+        }
+
+        let clamped_level = level.clamp(self.input_range.0, self.input_range.1);
+        let position =
+            (clamped_level - self.input_range.0) / (self.input_range.1 - self.input_range.0);
+        let raw_scale =
+            self.output_range.0 + position * (self.output_range.1 - self.output_range.0);
+
+        sanitize_gain_scale(raw_scale)
+    }
+}
+
+impl Default for GainCurve {
+    fn default() -> Self {
+        Self::identity()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ModulatorGainCurves {
+    pub threshold: Option<GainCurve>,
+    pub sensitivity: Option<GainCurve>,
+    pub firing_rate: Option<GainCurve>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EncodingGains {
+    pub threshold_scale: f32,
+    pub sensitivity_scale: f32,
+    pub firing_rate_scale: f32,
+}
+
+impl EncodingGains {
+    pub fn identity() -> Self {
+        Self {
+            threshold_scale: 1.0,
+            sensitivity_scale: 1.0,
+            firing_rate_scale: 1.0,
+        }
+    }
+
+    fn sanitize(self) -> Self {
+        Self {
+            threshold_scale: sanitize_gain_scale(self.threshold_scale),
+            sensitivity_scale: sanitize_gain_scale(self.sensitivity_scale),
+            firing_rate_scale: sanitize_gain_scale(self.firing_rate_scale),
+        }
+    }
+}
+
+impl Default for EncodingGains {
+    fn default() -> Self {
+        Self::identity()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NeuromodulatorGainCurves {
+    pub dopamine: ModulatorGainCurves,
+    pub cortisol: ModulatorGainCurves,
+    pub acetylcholine: ModulatorGainCurves,
+    pub tempo: ModulatorGainCurves,
+}
+
+impl NeuromodulatorGainCurves {
+    pub fn evaluate(&self, modulators: &NeuroModulators) -> EncodingGains {
+        let mut gains = EncodingGains::identity();
+
+        Self::apply_curves(&mut gains, self.dopamine, modulators.dopamine);
+        Self::apply_curves(&mut gains, self.cortisol, modulators.cortisol);
+        Self::apply_curves(&mut gains, self.acetylcholine, modulators.acetylcholine);
+        Self::apply_curves(&mut gains, self.tempo, modulators.tempo);
+
+        gains.sanitize()
+    }
+
+    fn apply_curves(gains: &mut EncodingGains, curves: ModulatorGainCurves, level: f32) {
+        if let Some(curve) = curves.threshold {
+            gains.threshold_scale *= curve.evaluate(level);
+        }
+        if let Some(curve) = curves.sensitivity {
+            gains.sensitivity_scale *= curve.evaluate(level);
+        }
+        if let Some(curve) = curves.firing_rate {
+            gains.firing_rate_scale *= curve.evaluate(level);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gain_curve_clamps_input_range() {
+        let curve = GainCurve::new((0.0, 1.0), (0.5, 2.0));
+
+        assert_eq!(curve.evaluate(-5.0), 0.5);
+        assert_eq!(curve.evaluate(5.0), 2.0);
+    }
+
+    #[test]
+    fn gain_curve_sanitizes_invalid_outputs() {
+        let curve = GainCurve::new((0.0, 1.0), (-2.0, 2.0));
+
+        assert_eq!(curve.evaluate(0.0), MIN_GAIN_SCALE);
+        assert_eq!(curve.evaluate(f32::NAN), 1.0);
+    }
+
+    #[test]
+    fn neuromodulator_curves_compose_multiplicatively() {
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+                ..Default::default()
+            },
+            cortisol: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            acetylcholine: ModulatorGainCurves {
+                firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 1.5))),
+                ..Default::default()
+            },
+            tempo: ModulatorGainCurves {
+                sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 1.25))),
+                ..Default::default()
+            },
+        };
+        let modulators = NeuroModulators {
+            dopamine: 1.0,
+            cortisol: 1.0,
+            acetylcholine: 1.0,
+            tempo: 1.0,
+        };
+
+        let gains = curves.evaluate(&modulators);
+
+        assert_eq!(gains.threshold_scale, 0.5);
+        assert_eq!(gains.sensitivity_scale, 1.25);
+        assert_eq!(gains.firing_rate_scale, 3.0);
     }
 }

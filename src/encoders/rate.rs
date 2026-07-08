@@ -61,10 +61,8 @@ impl RateEncoder {
             self.accumulators.resize(num_channels, 0.0);
         }
     }
-}
 
-impl Encoder for RateEncoder {
-    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+    fn encode_with_rate_scale(&mut self, input: &[f32], rate_scale: f32) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         if input.is_empty() {
             return output;
@@ -72,7 +70,8 @@ impl Encoder for RateEncoder {
 
         for (i, &value) in input.iter().enumerate() {
             let normalized = self.normalize(value);
-            let rate = self.base_rate + normalized * (self.max_rate - self.base_rate);
+            let rate =
+                (self.base_rate + normalized * (self.max_rate - self.base_rate)) * rate_scale;
             let probability = (rate / 10.0).clamp(0.0, 1.0);
 
             if crate::rng::gen_unit_f32() < probability {
@@ -87,7 +86,7 @@ impl Encoder for RateEncoder {
         output
     }
 
-    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+    fn encode_step_with_rate_scale(&mut self, input: &[f32], rate_scale: f32) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         if input.is_empty() {
             return output;
@@ -97,9 +96,10 @@ impl Encoder for RateEncoder {
 
         for (i, &value) in input.iter().enumerate() {
             let normalized = self.normalize(value);
-            let rate_increment =
-                (self.base_rate + normalized * (self.max_rate - self.base_rate)) / 10.0;
-            self.accumulators[i] += rate_increment;
+            let rate_increment = ((self.base_rate + normalized * (self.max_rate - self.base_rate))
+                * rate_scale)
+                / 10.0;
+            self.accumulators[i] += rate_increment.max(0.0);
 
             while self.accumulators[i] >= 1.0 {
                 output.spikes.push(SpikeEvent {
@@ -112,6 +112,36 @@ impl Encoder for RateEncoder {
         }
 
         output
+    }
+
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_rate_scale(input, gains.firing_rate_scale)
+    }
+
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_step_with_rate_scale(input, gains.firing_rate_scale)
+    }
+}
+
+impl Encoder for RateEncoder {
+    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode_with_rate_scale(input, 1.0)
+    }
+
+    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode_step_with_rate_scale(input, 1.0)
     }
 
     fn reset(&mut self) {
@@ -189,5 +219,29 @@ mod tests {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| encoder.encode(input)));
             assert!(result.is_ok());
         }
+    }
+
+    #[test]
+    fn test_rate_encoder_modulated_step_scales_firing_rate() {
+        let mut encoder = RateEncoder::new(0.0, 5.0, (0.0, 1.0));
+        let modulators = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let baseline = encoder.encode_step(&[1.0]);
+        assert!(baseline.spikes.is_empty());
+
+        encoder.reset();
+
+        let boosted = encoder.encode_step_with_modulators(&[1.0], &modulators, &gain_curves);
+        assert_eq!(boosted.spikes.len(), 1);
     }
 }

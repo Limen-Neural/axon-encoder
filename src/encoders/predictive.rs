@@ -58,10 +58,12 @@ impl PredictiveEncoder {
             deviation_thresholds,
         }
     }
-}
 
-impl Encoder for PredictiveEncoder {
-    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+    fn encode_with_threshold_scale(
+        &mut self,
+        input: &[f32],
+        threshold_scale: f32,
+    ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         for (i, &value) in input.iter().enumerate() {
             if i >= self.history.len() {
@@ -83,7 +85,7 @@ impl Encoder for PredictiveEncoder {
             let deviation = (value - self.thresholds[i]).abs();
 
             for &(threshold, _spike_val) in self.deviation_thresholds.iter().rev() {
-                if deviation > threshold {
+                if deviation > threshold * threshold_scale {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
                         timestamp: 0,   // Simplified
@@ -96,13 +98,44 @@ impl Encoder for PredictiveEncoder {
         output
     }
 
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_threshold_scale(input, gains.threshold_scale)
+    }
+
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
+    }
+}
+
+impl Encoder for PredictiveEncoder {
+    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode_with_threshold_scale(input, 1.0)
+    }
+
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
         let safe_input = if input.len() > self.history.len() {
             &input[..self.history.len()]
         } else {
             input
         };
-        self.encode(safe_input)
+        self.encode_with_threshold_scale(safe_input, 1.0)
     }
 
     fn reset(&mut self) {
@@ -179,5 +212,34 @@ mod tests {
         encoder.encode(&[1.0]);
         let output = encoder.encode(&[10.0]);
         assert!(!output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_predictive_encoder_modulators_reduce_threshold() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let modulators = NeuroModulators {
+            acetylcholine: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            acetylcholine: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        for _ in 0..5 {
+            encoder.encode(&[1.0]);
+        }
+        assert!(encoder.encode(&[5.0]).spikes.is_empty());
+
+        encoder.reset();
+
+        for _ in 0..5 {
+            encoder.encode_step_with_modulators(&[1.0], &modulators, &gain_curves);
+        }
+        let output = encoder.encode_step_with_modulators(&[5.0], &modulators, &gain_curves);
+        assert_eq!(output.spikes.len(), 1);
     }
 }

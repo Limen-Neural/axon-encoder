@@ -51,26 +51,38 @@ impl PopulationEncoder {
         self.num_neurons
     }
 
-    /// Calculates the firing rate for a neuron based on a Gaussian tuning curve.
-    fn get_rate(&self, input: f32, neuron_index: usize) -> f32 {
+    fn get_rate_with_tuning_width(
+        &self,
+        input: f32,
+        neuron_index: usize,
+        tuning_width: f32,
+    ) -> f32 {
         let range_span = self.input_range.1 - self.input_range.0;
         let preferred_value =
             self.input_range.0 + (neuron_index as f32 / self.num_neurons as f32) * range_span;
 
         let distance = (input - preferred_value).abs();
         // Gaussian-like response curve
-        (-(distance * distance) / (2.0 * self.tuning_width * self.tuning_width)).exp()
+        (-(distance * distance) / (2.0 * tuning_width * tuning_width)).exp()
     }
-}
 
-impl Encoder for PopulationEncoder {
-    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+    fn effective_tuning_width(&self, sensitivity_scale: f32) -> f32 {
+        let safe_scale = sensitivity_scale.max(f32::EPSILON);
+        (self.tuning_width / safe_scale).max(f32::EPSILON)
+    }
+
+    fn encode_with_sensitivity_scale(
+        &mut self,
+        input: &[f32],
+        sensitivity_scale: f32,
+    ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
+        let tuning_width = self.effective_tuning_width(sensitivity_scale);
 
         // This encoder expects a single value in the input slice
         if let Some(&value) = input.first() {
             for i in 0..self.num_neurons {
-                let rate = self.get_rate(value, i);
+                let rate = self.get_rate_with_tuning_width(value, i, tuning_width);
                 if crate::rng::gen_unit_f32() < rate {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
@@ -81,6 +93,32 @@ impl Encoder for PopulationEncoder {
             }
         }
         output
+    }
+
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_sensitivity_scale(input, gains.sensitivity_scale)
+    }
+
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_sensitivity_scale(input, gains.sensitivity_scale)
+    }
+}
+
+impl Encoder for PopulationEncoder {
+    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode_with_sensitivity_scale(input, 1.0)
     }
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
@@ -105,7 +143,9 @@ mod tests {
 
         // The neuron whose preferred value is closest to 50.0 should have the highest chance of firing.
         // We can't guarantee a spike due to the probabilistic nature, but we can check the rates.
-        let rates: Vec<f32> = (0..10).map(|i| encoder.get_rate(50.0, i)).collect();
+        let rates: Vec<f32> = (0..10)
+            .map(|i| encoder.get_rate_with_tuning_width(50.0, i, encoder.tuning_width))
+            .collect();
         let max_rate_index = rates
             .iter()
             .enumerate()
@@ -119,5 +159,30 @@ mod tests {
             "Peak activity should be near the middle neuron for an input of 50."
         );
         assert!(output.spikes.len() <= 10);
+    }
+
+    #[test]
+    fn test_population_encoder_modulators_adjust_sensitivity() {
+        let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let modulators = NeuroModulators {
+            tempo: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            tempo: ModulatorGainCurves {
+                sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let baseline_width = encoder.effective_tuning_width(1.0);
+        let modulated_width =
+            encoder.effective_tuning_width(gain_curves.evaluate(&modulators).sensitivity_scale);
+        let baseline_rate = encoder.get_rate_with_tuning_width(50.0, 0, baseline_width);
+        let modulated_rate = encoder.get_rate_with_tuning_width(50.0, 0, modulated_width);
+
+        assert!(modulated_width < baseline_width);
+        assert!(modulated_rate < baseline_rate);
     }
 }
