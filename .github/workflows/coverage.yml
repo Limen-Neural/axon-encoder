@@ -40,3 +40,9 @@ jobs:
           files: lcov.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Codacy Coverage Reporter
+        uses: codacy/codacy-coverage-reporter-action@89d6c51370f7d7b3774591ca68555e7168669e4a
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: lcov.info
