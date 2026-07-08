@@ -119,7 +119,6 @@ fn bench_temporal_encoder_step(c: &mut Criterion) {
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];
-            let mut index = 0usize;
 
             for input in sequence {
                 encoder.encode_step(input);
@@ -127,7 +126,6 @@ fn bench_temporal_encoder_step(c: &mut Criterion) {
 
             b.iter(|| {
                 black_box(encoder.encode_step(black_box(&high)))
-            });
             });
         });
     }
