@@ -75,16 +75,16 @@ fn constant_input(size: usize, value: f32) -> Vec<f32> {
 }
 
 fn measure_operation<T>(operation: impl FnOnce() -> T) -> AllocationStats {
-    ALLOCATION_COUNT.store(0, Ordering::Relaxed);
-    ALLOCATION_BYTES.store(0, Ordering::Relaxed);
-    COUNTING_ENABLED.store(true, Ordering::Relaxed);
+    ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+    ALLOCATION_BYTES.store(0, Ordering::SeqCst);
+    COUNTING_ENABLED.store(true, Ordering::SeqCst);
     let result = operation();
-    COUNTING_ENABLED.store(false, Ordering::Relaxed);
+    COUNTING_ENABLED.store(false, Ordering::SeqCst);
     black_box(result);
 
     AllocationStats {
-        allocations: ALLOCATION_COUNT.load(Ordering::Relaxed),
-        bytes: ALLOCATION_BYTES.load(Ordering::Relaxed),
+        allocations: ALLOCATION_COUNT.load(Ordering::SeqCst),
+        bytes: ALLOCATION_BYTES.load(Ordering::SeqCst),
     }
 }
 
