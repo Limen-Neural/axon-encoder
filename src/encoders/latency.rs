@@ -35,9 +35,12 @@ impl LatencyEncoder {
         if self.max_latency == 0 {
             return 0;
         }
+        if value.is_nan() {
+            return self.max_latency;
+        }
 
-        let normalized = self.clamp_and_normalize(value);
-        ((1.0 - normalized) * self.max_latency as f32).round() as u64
+        let normalized = self.clamp_and_normalize(value) as f64;
+        ((1.0 - normalized) * self.max_latency as f64).round() as u64
     }
 }
 
