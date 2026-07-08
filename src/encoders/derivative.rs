@@ -5,11 +5,7 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DerivativeEncoder {
-    last_values: Vec<f32>,
-    thresholds: Vec<f32>,
-}
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 
 impl DerivativeEncoder {
     /// Creates a new `DerivativeEncoder` with specific thresholds for each channel.
