@@ -42,9 +42,7 @@ pub struct GainCurve {
 impl GainCurve {
     pub fn new(input_range: (f32, f32), output_range: (f32, f32)) -> Self {
         assert!(
-            input_range.0.is_finite()
-                && input_range.1.is_finite()
-                && input_range.0 < input_range.1,
+            input_range.0.is_finite() && input_range.1.is_finite() && input_range.0 < input_range.1,
             "input_range min must be less than max and finite"
         );
         assert!(
@@ -117,7 +115,9 @@ impl<'de> serde::Deserialize<'de> for GainCurve {
             ));
         }
         if !helper.output_range.0.is_finite() || !helper.output_range.1.is_finite() {
-            return Err(serde::de::Error::custom("output_range values must be finite"));
+            return Err(serde::de::Error::custom(
+                "output_range values must be finite",
+            ));
         }
 
         Ok(Self {
