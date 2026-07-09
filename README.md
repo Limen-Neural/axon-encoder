@@ -21,7 +21,7 @@ Traditional neural networks process dense, continuous values. Spiking Neural Net
     - **`PopulationEncoder`**: Encodes a value across a *population* of neurons, where each neuron is tuned to a specific input range.
     - **`DeltaEncoder`**: A simple and efficient encoder that fires a spike when the input value changes by a certain amount.
 - **Extensible**: The `Encoder` trait makes it easy to create your own custom encoders.
-- **Feature-gated `ndarray` helpers**: With the `ndarray` feature enabled, any encoder can process `ArrayView1` and row-major `ArrayView2` inputs directly through `NdarrayEncoderExt`.
+- **Feature-gated `ndarray` helpers**: With the `ndarray` feature enabled, any encoder can process `ArrayView1` and `ArrayView2` inputs directly through `NdarrayEncoderExt` (standard row-major layout is most efficient and avoids an extra copy).
 - **Lightweight**: Built with minimal dependencies to be fast and easy to integrate into any project.
 
 ## Installation

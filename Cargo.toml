@@ -20,6 +20,10 @@ ndarray = ["dep:ndarray"]
 cuda = []
 serde = ["dep:serde"]
 
+[[example]]
+name = "ndarray_encoding"
+required-features = ["ndarray"]
+
 [[bench]]
 name = "encoders"
 harness = false

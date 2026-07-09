@@ -12,7 +12,11 @@ pub trait NdarrayEncoderExt: Encoder {
     }
 
     fn encode_array2(&mut self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput> {
-        input
+        // Convert once to standard (C-contiguous) layout so each row is a
+        // contiguous slice and `with_array1_input` stays zero-alloc. Non-standard
+        // inputs pay at most one allocation for the whole matrix.
+        let standard = input.as_standard_layout();
+        standard
             .rows()
             .into_iter()
             .map(|row| self.encode_array1(row))
@@ -20,7 +24,8 @@ pub trait NdarrayEncoderExt: Encoder {
     }
 
     fn encode_step_array2(&mut self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput> {
-        input
+        let standard = input.as_standard_layout();
+        standard
             .rows()
             .into_iter()
             .map(|row| self.encode_step_array1(row))
@@ -110,6 +115,27 @@ mod tests {
 
         let mut array_encoder = DeltaEncoder::new(2.0, expected_input.len());
         let actual = array_encoder.encode_array1(non_standard);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn encode_array2_handles_column_major_with_single_layout_copy() {
+        let input = arr2(&[[0.0_f32, 0.0], [3.0, 0.0], [3.0, 4.0]]);
+        let column_major = input.t().to_owned();
+        // After transpose+own, rows of the view into column-major storage may
+        // be non-contiguous; as_standard_layout in encode_array2 fixes that.
+        let view = column_major.t();
+
+        let mut slice_encoder = DeltaEncoder::new(2.0, 2);
+        let expected: Vec<_> = input
+            .rows()
+            .into_iter()
+            .map(|row| slice_encoder.encode(row.as_slice().unwrap()))
+            .collect();
+
+        let mut array_encoder = DeltaEncoder::new(2.0, 2);
+        let actual = array_encoder.encode_array2(view);
 
         assert_eq!(actual, expected);
     }
