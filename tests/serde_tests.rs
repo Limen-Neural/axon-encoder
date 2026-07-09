@@ -116,4 +116,19 @@ fn test_serde_validation_failures() {
     }"#;
     let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
     assert!(res.is_err());
+
+    // 4. LatencyEncoder invalid range (min >= max) must be rejected
+    let invalid_latency_json = r#"{
+        "max_latency": 5,
+        "range": [1.0, 0.5]
+    }"#;
+    let res: Result<LatencyEncoder, _> = serde_json::from_str(invalid_latency_json);
+    assert!(res.is_err());
+
+    let equal_range_latency_json = r#"{
+        "max_latency": 5,
+        "range": [1.0, 1.0]
+    }"#;
+    let res: Result<LatencyEncoder, _> = serde_json::from_str(equal_range_latency_json);
+    assert!(res.is_err());
 }
