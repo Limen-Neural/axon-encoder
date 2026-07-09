@@ -15,12 +15,12 @@ Traditional neural networks process dense, continuous values. Spiking Neural Net
 ## Features
 
 - **A Suite of Encoders**: Choose the right encoding strategy for your data.
-    - **`RateEncoder`**: Encodes a value based on the *rate* of firing. Higher input values result in a higher spike frequency.
-    - **`DerivativeEncoder`**: Fires spikes based on the *rate of change* of the input. It's great for detecting sudden jumps or drops in a signal.
-    - **`TemporalEncoder`**: Detects *temporal patterns* in your data, firing when specific sequences or changes over time are observed.
-    - **`PopulationEncoder`**: Encodes a value across a *population* of neurons, where each neuron is tuned to a specific input range.
-    - **`DeltaEncoder`**: A simple and efficient encoder that fires a spike when the input value changes by a certain amount.
-    - **`PhaseEncoder`**: Encodes inputs as cycle-relative spike times within a repeating reference oscillation.
+  - **`RateEncoder`**: Encodes a value based on the *rate* of firing. Higher input values result in a higher spike frequency.
+  - **`DerivativeEncoder`**: Fires spikes based on the *rate of change* of the input. It's great for detecting sudden jumps or drops in a signal.
+  - **`TemporalEncoder`**: Detects *temporal patterns* in your data, firing when specific sequences or changes over time are observed.
+  - **`PopulationEncoder`**: Encodes a value across a *population* of neurons, where each neuron is tuned to a specific input range.
+  - **`DeltaEncoder`**: A simple and efficient encoder that fires a spike when the input value changes by a certain amount.
+  - **`PhaseEncoder`**: Encodes inputs as cycle-relative spike times within a repeating reference oscillation.
 - **Extensible**: The `Encoder` trait makes it easy to create your own custom encoders.
 - **Lightweight**: Built with minimal dependencies to be fast and easy to integrate into any project.
 
