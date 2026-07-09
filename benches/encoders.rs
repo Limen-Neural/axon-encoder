@@ -130,6 +130,8 @@ fn bench_temporal_encoder_step(c: &mut Criterion) {
                 encoder.encode_step(input);
             }
 
+            // Cycle mixed levels (via sequence_iter above) so the benchmark
+            // measures the encoder under active changes, not a static state.
             b.iter(|| {
                 let input = *sequence_iter.next().unwrap();
                 black_box(encoder.encode_step(black_box(input)))
