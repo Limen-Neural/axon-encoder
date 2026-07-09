@@ -22,12 +22,12 @@ impl PhaseEncoder {
     ///
     /// # Panics
     ///
-    /// Panics if `cycle_steps == 0` or `range.0 >= range.1`.
+    /// Panics if `cycle_steps == 0` or if range bounds are non-finite or `range.0 >= range.1`.
     pub fn new(cycle_steps: u64, range: (f32, f32)) -> Self {
         assert!(cycle_steps > 0, "cycle_steps must be greater than 0");
         assert!(
             range.0.is_finite() && range.1.is_finite() && range.0 < range.1,
-            "range min must be less than range max"
+            "range min must be less than range max and both must be finite"
         );
 
         Self {
