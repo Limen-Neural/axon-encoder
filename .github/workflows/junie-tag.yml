@@ -9,30 +9,41 @@ on:
     types: [opened, assigned]
   pull_request_review:
     types: [submitted]
+  pull_request:
+    types: [opened]
 
 jobs:
   junie:
+    # Gate on trusted associations (not a hardcoded username) so renames/org
+    # transfers do not silently disable the workflow, while still blocking
+    # untrusted mention spam.
     if: |
-      github.event.sender.login == 'rmems' && (
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association || github.event.review.author_association || github.event.issue.author_association || github.event.pull_request.author_association) && (
         (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@junie-agent')) ||
         (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@junie-agent')) ||
         (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@junie-agent')) ||
-        (github.event_name == 'issues' && (contains(github.event.issue.body, '@junie-agent') || contains(github.event.issue.title, '@junie-agent')))
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@junie-agent') || contains(github.event.issue.title, '@junie-agent'))) ||
+        (github.event_name == 'pull_request' && (contains(github.event.pull_request.body, '@junie-agent') || contains(github.event.pull_request.title, '@junie-agent')))
       )
     runs-on: ubuntu-latest
+    # contents/pull-requests/issues write are required by the official Junie
+    # action for commits, PR updates, and feedback comments (least privilege
+    # for an agent that mutates repo state).
     permissions:
       contents: write
       pull-requests: write
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Run Junie
         id: junie
-        uses: JetBrains/junie-github-action@v0
+        # Pin to v1.5.8 commit SHA (stable line; avoid mutable @v0 tags).
+        uses: JetBrains/junie-github-action@8c16bc017475d62fe7911701164cb5ceef999f02 # v1.5.8
         with:
           junie_api_key: ${{ secrets.JUNIE_API_KEY }}
           use_single_comment: true
