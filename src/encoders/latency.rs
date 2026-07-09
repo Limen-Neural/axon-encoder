@@ -91,7 +91,10 @@ impl<'de> serde::Deserialize<'de> for LatencyEncoder {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        if !(helper.range.0 < helper.range.1) {
+        if !matches!(
+            helper.range.0.partial_cmp(&helper.range.1),
+            Some(std::cmp::Ordering::Less)
+        ) {
             return Err(serde::de::Error::custom(
                 "range min must be less than range max",
             ));
