@@ -32,12 +32,15 @@ impl Encoder for DerivativeEncoder {
     fn encode_step(&mut self, current_values: &[f32]) -> EncodedOutput {
         let mut output = EncodedOutput::new();
 
-        for (i, &current_val) in current_values.iter().enumerate() {
-            // Bound on both vectors so mismatched serde state cannot panic.
-            if i >= self.thresholds.len() || i >= self.last_values.len() {
-                break;
-            }
+        // Defensive bound: never index past either internal buffer (also covers
+        // mismatched lengths that could arise from untrusted serialized state).
+        let len = current_values
+            .len()
+            .min(self.last_values.len())
+            .min(self.thresholds.len());
+        let current_values = &current_values[..len];
 
+        for (i, &current_val) in current_values.iter().enumerate() {
             let delta = current_val - self.last_values[i];
 
             // Excitatory spike on positive jump exceeding threshold

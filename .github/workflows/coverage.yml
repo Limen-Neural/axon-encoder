@@ -42,6 +42,8 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Codacy Coverage Reporter
+        # Fork PRs cannot access CODACY_PROJECT_TOKEN; do not fail the job.
+        continue-on-error: true
         uses: codacy/codacy-coverage-reporter-action@89d6c51370f7d7b3774591ca68555e7168669e4a
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
