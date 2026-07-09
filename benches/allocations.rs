@@ -41,7 +41,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         let new_ptr = System.realloc(ptr, layout, new_size);
         if COUNTING_ENABLED.load(Ordering::Relaxed) && !new_ptr.is_null() {
             ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOCATION_BYTES.fetch_add(new_size, Ordering::Relaxed);
+            ALLOCATION_BYTES.fetch_add(new_size.saturating_sub(layout.size()), Ordering::Relaxed);
         }
         new_ptr
     }
@@ -140,7 +140,7 @@ fn report_temporal_encoder() {
         let low = constant_input(scale, 0.0);
         let high = constant_input(scale, 1.0);
 
-        for input in [&low, &low, &low, &high, &high] {
+        for input in [&low, &low, &low, &high, &high, &high] {
             encoder.encode_step(input);
         }
 
