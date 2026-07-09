@@ -18,35 +18,46 @@ static ALLOCATION_BYTES: AtomicUsize = AtomicUsize::new(0);
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
+// SeqCst on the enable flag and counters so measurement boundaries cannot be
+// reordered relative to the counted allocations (single-threaded harness, but
+// the compiler can still reorder across relaxed atomics).
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = System.alloc(layout);
-        if COUNTING_ENABLED.load(Ordering::Relaxed) && !ptr.is_null() {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOCATION_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+        if COUNTING_ENABLED.load(Ordering::SeqCst) && !ptr.is_null() {
+            ALLOCATION_COUNT.fetch_add(1, Ordering::SeqCst);
+            ALLOCATION_BYTES.fetch_add(layout.size(), Ordering::SeqCst);
         }
         ptr
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         let ptr = System.alloc_zeroed(layout);
-        if COUNTING_ENABLED.load(Ordering::Relaxed) && !ptr.is_null() {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOCATION_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+        if COUNTING_ENABLED.load(Ordering::SeqCst) && !ptr.is_null() {
+            ALLOCATION_COUNT.fetch_add(1, Ordering::SeqCst);
+            ALLOCATION_BYTES.fetch_add(layout.size(), Ordering::SeqCst);
         }
         ptr
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let new_ptr = System.realloc(ptr, layout, new_size);
-        if COUNTING_ENABLED.load(Ordering::Relaxed) && !new_ptr.is_null() {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOCATION_BYTES.fetch_add(new_size, Ordering::Relaxed);
+        if COUNTING_ENABLED.load(Ordering::SeqCst) && !new_ptr.is_null() {
+            // Count realloc as an allocation event, but only credit net growth so
+            // bytes reflects additional memory requested rather than re-adding
+            // the entire new_size on every grow (which double-counts prior size).
+            ALLOCATION_COUNT.fetch_add(1, Ordering::SeqCst);
+            let prior_size = layout.size();
+            if new_size > prior_size {
+                ALLOCATION_BYTES.fetch_add(new_size - prior_size, Ordering::SeqCst);
+            }
         }
         new_ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // Intentionally not tracked: this harness reports gross allocation
+        // activity during the measured call, not net live heap after free.
         System.dealloc(ptr, layout);
     }
 }
@@ -140,7 +151,9 @@ fn report_temporal_encoder() {
         let low = constant_input(scale, 0.0);
         let high = constant_input(scale, 1.0);
 
-        for input in [&low, &low, &low, &high, &high] {
+        // Warm up the full window (6) so the measured step is steady-state
+        // change detection, consistent with the criterion temporal step bench.
+        for input in [&low, &low, &low, &high, &high, &high] {
             encoder.encode_step(input);
         }
 
