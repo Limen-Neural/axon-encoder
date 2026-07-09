@@ -66,9 +66,21 @@ impl PopulationEncoder {
         (-(distance * distance) / (2.0 * tuning_width * tuning_width)).exp()
     }
 
+    /// Effective tuning width under a sensitivity gain.
+    ///
+    /// Scales **≥ 1** narrow the Gaussian (`width / scale`) so high sensitivity is
+    /// more selective. Scales in **(0, 1)** keep the base width and rely on rate
+    /// scaling in `encode_with_sensitivity_scale` so low (but nonzero) gain
+    /// *suppresses* activity instead of widening toward universal firing.
     fn effective_tuning_width(&self, sensitivity_scale: f32) -> f32 {
-        let safe_scale = sensitivity_scale.max(f32::EPSILON);
-        (self.tuning_width / safe_scale).max(f32::EPSILON)
+        if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
+            return self.tuning_width.max(f32::EPSILON);
+        }
+        if sensitivity_scale >= 1.0 {
+            return (self.tuning_width / sensitivity_scale).max(f32::EPSILON);
+        }
+        // Sub-unity: do not widen; rate scaling handles suppression.
+        self.tuning_width.max(f32::EPSILON)
     }
 
     fn encode_with_sensitivity_scale(
@@ -77,17 +89,20 @@ impl PopulationEncoder {
         sensitivity_scale: f32,
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        // Zero (or negative) sensitivity fully suppresses population responses
-        // instead of widening the Gaussian toward a flat, always-on curve.
+        // Zero/negative/non-finite sensitivity fully suppresses population responses.
         if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
             return output;
         }
         let tuning_width = self.effective_tuning_width(sensitivity_scale);
+        // Rate gain: scales > 1 also narrow width; scales in (0, 1) only reduce rate
+        // so small positive gains never produce near-universal firing.
+        let rate_gain = sensitivity_scale.min(1.0);
 
         // This encoder expects a single value in the input slice
         if let Some(&value) = input.first() {
             for i in 0..self.num_neurons {
-                let rate = self.get_rate_with_tuning_width(value, i, tuning_width);
+                let rate =
+                    self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
                 if crate::rng::gen_unit_f32() < rate {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
