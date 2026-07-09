@@ -77,6 +77,11 @@ impl PopulationEncoder {
         sensitivity_scale: f32,
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
+        // Zero (or negative) sensitivity fully suppresses population responses
+        // instead of widening the Gaussian toward a flat, always-on curve.
+        if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
+            return output;
+        }
         let tuning_width = self.effective_tuning_width(sensitivity_scale);
 
         // This encoder expects a single value in the input slice

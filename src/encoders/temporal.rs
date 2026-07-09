@@ -99,8 +99,14 @@ impl TemporalEncoder {
         modulators: &NeuroModulators,
         gain_curves: &NeuromodulatorGainCurves,
     ) -> EncodedOutput {
+        // Match encode_step_with_modulators: only process channels we track.
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
         let gains = gain_curves.evaluate(modulators);
-        self.encode_with_threshold_scale(input, gains.threshold_scale)
+        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
     }
 
     pub fn encode_step_with_modulators(
