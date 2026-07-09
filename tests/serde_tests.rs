@@ -84,6 +84,18 @@ fn test_serde_encoders_and_state() {
     let serialized_latency = serde_json::to_string(&latency_encoder).unwrap();
     let deserialized_latency: LatencyEncoder = serde_json::from_str(&serialized_latency).unwrap();
     assert_eq!(latency_encoder, deserialized_latency);
+
+    // 12. Test DerivativeEncoder
+    let deriv_encoder = DerivativeEncoder::new(vec![0.5, 1.0]);
+    let serialized_deriv = serde_json::to_string(&deriv_encoder).unwrap();
+    let deserialized_deriv: DerivativeEncoder = serde_json::from_str(&serialized_deriv).unwrap();
+    assert_eq!(deriv_encoder, deserialized_deriv);
+
+    // 13. Test EmbeddingRateEncoder
+    let emb_encoder = EmbeddingRateEncoder::new(&[0.1, 0.9], EmbeddingEncoderConfig { v_th: 1.0 });
+    let serialized_emb = serde_json::to_string(&emb_encoder).unwrap();
+    let deserialized_emb: EmbeddingRateEncoder = serde_json::from_str(&serialized_emb).unwrap();
+    assert_eq!(emb_encoder, deserialized_emb);
 }
 
 #[test]
@@ -130,5 +142,25 @@ fn test_serde_validation_failures() {
         "range": [1.0, 1.0]
     }"#;
     let res: Result<LatencyEncoder, _> = serde_json::from_str(equal_range_latency_json);
+    assert!(res.is_err());
+
+    // 5. DerivativeEncoder mismatched vector lengths
+    let invalid_deriv_json = r#"{
+        "last_values": [0.0],
+        "thresholds": [1.0, 2.0]
+    }"#;
+    let res: Result<DerivativeEncoder, _> = serde_json::from_str(invalid_deriv_json);
+    assert!(res.is_err());
+
+    // 6. EmbeddingEncoderConfig / EmbeddingRateEncoder reject non-positive v_th
+    let invalid_vth_json = r#"{ "v_th": 0.0 }"#;
+    let res: Result<EmbeddingEncoderConfig, _> = serde_json::from_str(invalid_vth_json);
+    assert!(res.is_err());
+
+    let invalid_emb_json = r#"{
+        "config": { "v_th": -1.0 },
+        "normalized_embeddings": [0.5]
+    }"#;
+    let res: Result<EmbeddingRateEncoder, _> = serde_json::from_str(invalid_emb_json);
     assert!(res.is_err());
 }

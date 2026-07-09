@@ -5,7 +5,13 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct DerivativeEncoder {
+    /// Last observed value per channel.
+    last_values: Vec<f32>,
+    /// Per-channel change threshold.
+    thresholds: Vec<f32>,
+}
 
 impl DerivativeEncoder {
     /// Creates a new `DerivativeEncoder` with specific thresholds for each channel.
@@ -27,7 +33,8 @@ impl Encoder for DerivativeEncoder {
         let mut output = EncodedOutput::new();
 
         for (i, &current_val) in current_values.iter().enumerate() {
-            if i >= self.thresholds.len() {
+            // Bound on both vectors so mismatched serde state cannot panic.
+            if i >= self.thresholds.len() || i >= self.last_values.len() {
                 break;
             }
 
@@ -36,7 +43,7 @@ impl Encoder for DerivativeEncoder {
             // Excitatory spike on positive jump exceeding threshold
             if delta > self.thresholds[i] {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: true,
                 });
@@ -44,7 +51,7 @@ impl Encoder for DerivativeEncoder {
             // Inhibitory/Negative spike on sudden drop
             else if delta < -self.thresholds[i] {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: false,
                 });
@@ -59,6 +66,35 @@ impl Encoder for DerivativeEncoder {
         for val in self.last_values.iter_mut() {
             *val = 0.0;
         }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for DerivativeEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            last_values: Vec<f32>,
+            thresholds: Vec<f32>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if helper.last_values.len() != helper.thresholds.len() {
+            return Err(serde::de::Error::custom(format!(
+                "mismatched last_values length ({}) and thresholds length ({})",
+                helper.last_values.len(),
+                helper.thresholds.len()
+            )));
+        }
+
+        Ok(Self {
+            last_values: helper.last_values,
+            thresholds: helper.thresholds,
+        })
     }
 }
 
@@ -99,5 +135,17 @@ mod tests {
         encoder.encode(&[5.0]);
         encoder.reset();
         assert_eq!(encoder.last_values[0], 0.0);
+    }
+
+    #[test]
+    fn test_derivative_encoder_mismatched_state_does_not_panic() {
+        let mut encoder = DerivativeEncoder {
+            last_values: vec![0.0],
+            thresholds: vec![1.0, 1.0],
+        };
+        // Bounds check stops before indexing past last_values.
+        let output = encoder.encode_step(&[2.0, 3.0]);
+        assert_eq!(output.spikes.len(), 1);
+        assert_eq!(output.spikes[0].channel, 0);
     }
 }
