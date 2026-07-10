@@ -11,6 +11,19 @@ pub trait NdarrayEncoderExt: Encoder {
         with_array1_input(input, |input| self.encode_step(input))
     }
 
+    /// Encodes each row of `input` as an independent sample.
+    ///
+    /// Before any row is processed, the encoder is snapshotted via [`Clone`] and
+    /// every row is encoded starting from that identical initial state. `self`
+    /// is left unmodified by this call. State is **not** carried over between
+    /// rows, so this is the right choice when each row represents a separate,
+    /// unrelated sample.
+    ///
+    /// This differs from [`encode_step_array2`](Self::encode_step_array2), which
+    /// streams a single mutable state across rows (i.e. later rows see the
+    /// accumulated state from earlier rows). For encoders whose `encode_step`
+    /// simply delegates to `encode` (e.g. [`DeltaEncoder`](crate::encoders::DeltaEncoder)),
+    /// the two methods will produce different results for the same input.
     fn encode_array2(&mut self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput>
     where
         Self: Clone,
@@ -32,6 +45,14 @@ pub trait NdarrayEncoderExt: Encoder {
             .collect()
     }
 
+    /// Encodes each row of `input` as a step in a continuous stream.
+    ///
+    /// Unlike [`encode_array2`](Self::encode_array2), this threads a single
+    /// mutable `self` across rows: each row is encoded via `encode_step` using
+    /// the state left behind by the previous row, and `self` ends up holding
+    /// the state accumulated after the last row. Use this when the rows of
+    /// `input` represent a single continuous stream rather than independent
+    /// samples.
     fn encode_step_array2(&mut self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput> {
         let standard = input.as_standard_layout();
         standard
