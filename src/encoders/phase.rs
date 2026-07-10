@@ -6,8 +6,10 @@ use crate::prelude::*;
 /// timestamp positioned relative to the current background phase according to the
 /// normalized input value. Higher values map to later phase bins.
 ///
-/// Timestamps are monotonic (`current_phase + phase_offset`) so ordering within and
-/// across encode calls is stable. Cycle-relative phase is recoverable as
+/// Timestamps are computed as `current_phase + phase_offset`, which keeps ordering
+/// stable *within* a single encode call (higher-value channels get later timestamps).
+/// Ordering *across* calls is not globally guaranteed, since `phase_offset` can exceed
+/// the per-call phase advance. Cycle-relative phase is recoverable as
 /// `timestamp % cycle_steps`.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
