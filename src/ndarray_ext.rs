@@ -15,13 +15,8 @@ pub trait NdarrayEncoderExt: Encoder {
     where
         Self: Clone,
     {
-        // Convert once to standard (C-contiguous) layout so each row is a
-        // contiguous slice and `with_array1_input` stays zero-alloc. Non-standard
-        // inputs pay at most one allocation for the whole matrix.
         let standard = input.as_standard_layout();
-        // Snapshot the encoder before any row is processed so each row encodes
-        // from an identical initial state (no cross-row state carryover).
-        let base = self.clone();
+        let base = self.clone(); // each row gets a fresh clone so state never crosses row boundaries
         standard
             .rows()
             .into_iter()
@@ -79,8 +74,6 @@ mod tests {
     fn encode_array2_encodes_each_row_independently() {
         let input = arr2(&[[0.0_f32, 0.0], [3.0, 0.0], [3.0, 4.0]]);
 
-        // Each row must be encoded from a fresh encoder, not carrying state from
-        // the previous row.
         let expected: Vec<_> = input
             .rows()
             .into_iter()
@@ -136,11 +129,8 @@ mod tests {
     fn encode_array2_handles_column_major_with_single_layout_copy() {
         let input = arr2(&[[0.0_f32, 0.0], [3.0, 0.0], [3.0, 4.0]]);
         let column_major = input.t().to_owned();
-        // After transpose+own, rows of the view into column-major storage may
-        // be non-contiguous; as_standard_layout in encode_array2 fixes that.
         let view = column_major.t();
 
-        // Each row is encoded independently (same semantics as the row-major test).
         let expected: Vec<_> = input
             .rows()
             .into_iter()
