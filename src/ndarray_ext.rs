@@ -11,15 +11,24 @@ pub trait NdarrayEncoderExt: Encoder {
         with_array1_input(input, |input| self.encode_step(input))
     }
 
-    fn encode_array2(&mut self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput> {
+    fn encode_array2(&mut self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput>
+    where
+        Self: Clone,
+    {
         // Convert once to standard (C-contiguous) layout so each row is a
         // contiguous slice and `with_array1_input` stays zero-alloc. Non-standard
         // inputs pay at most one allocation for the whole matrix.
         let standard = input.as_standard_layout();
+        // Snapshot the encoder before any row is processed so each row encodes
+        // from an identical initial state (no cross-row state carryover).
+        let base = self.clone();
         standard
             .rows()
             .into_iter()
-            .map(|row| self.encode_array1(row))
+            .map(|row| {
+                let mut encoder = base.clone();
+                encoder.encode_array1(row)
+            })
             .collect()
     }
 
@@ -67,14 +76,18 @@ mod tests {
     }
 
     #[test]
-    fn encode_array2_batches_rows_as_samples() {
+    fn encode_array2_encodes_each_row_independently() {
         let input = arr2(&[[0.0_f32, 0.0], [3.0, 0.0], [3.0, 4.0]]);
 
-        let mut slice_encoder = DeltaEncoder::new(2.0, input.ncols());
+        // Each row must be encoded from a fresh encoder, not carrying state from
+        // the previous row.
         let expected: Vec<_> = input
             .rows()
             .into_iter()
-            .map(|row| slice_encoder.encode(row.as_slice().unwrap()))
+            .map(|row| {
+                let mut enc = DeltaEncoder::new(2.0, input.ncols());
+                enc.encode(row.as_slice().unwrap())
+            })
             .collect();
 
         let mut array_encoder = DeltaEncoder::new(2.0, input.ncols());
@@ -127,11 +140,14 @@ mod tests {
         // be non-contiguous; as_standard_layout in encode_array2 fixes that.
         let view = column_major.t();
 
-        let mut slice_encoder = DeltaEncoder::new(2.0, 2);
+        // Each row is encoded independently (same semantics as the row-major test).
         let expected: Vec<_> = input
             .rows()
             .into_iter()
-            .map(|row| slice_encoder.encode(row.as_slice().unwrap()))
+            .map(|row| {
+                let mut enc = DeltaEncoder::new(2.0, 2);
+                enc.encode(row.as_slice().unwrap())
+            })
             .collect();
 
         let mut array_encoder = DeltaEncoder::new(2.0, 2);
