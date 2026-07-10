@@ -78,6 +78,12 @@ fn test_serde_encoders_and_state() {
     let serialized_temp = serde_json::to_string(&temp_encoder).unwrap();
     let deserialized_temp: TemporalEncoder = serde_json::from_str(&serialized_temp).unwrap();
     assert_eq!(temp_encoder, deserialized_temp);
+
+    // 11. Test LatencyEncoder
+    let latency_encoder = LatencyEncoder::new(12, (0.0, 1.0));
+    let serialized_latency = serde_json::to_string(&latency_encoder).unwrap();
+    let deserialized_latency: LatencyEncoder = serde_json::from_str(&serialized_latency).unwrap();
+    assert_eq!(latency_encoder, deserialized_latency);
 }
 
 #[test]
@@ -109,5 +115,20 @@ fn test_serde_validation_failures() {
         "change_thresholds": []
     }"#;
     let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
+    assert!(res.is_err());
+
+    // 4. LatencyEncoder invalid range (min >= max) must be rejected
+    let invalid_latency_json = r#"{
+        "max_latency": 5,
+        "range": [1.0, 0.5]
+    }"#;
+    let res: Result<LatencyEncoder, _> = serde_json::from_str(invalid_latency_json);
+    assert!(res.is_err());
+
+    let equal_range_latency_json = r#"{
+        "max_latency": 5,
+        "range": [1.0, 1.0]
+    }"#;
+    let res: Result<LatencyEncoder, _> = serde_json::from_str(equal_range_latency_json);
     assert!(res.is_err());
 }
