@@ -135,7 +135,11 @@ mod tests {
         let mut zeros = 0;
         for _ in 0..100 {
             let s = enc.encode_step(0.5);
-            if s == 1 { ones += 1; } else { zeros += 1; }
+            if s == 1 {
+                ones += 1;
+            } else {
+                zeros += 1;
+            }
         }
         assert!(ones > 0 && zeros > 0);
     }

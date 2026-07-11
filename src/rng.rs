@@ -30,7 +30,7 @@ mod tests {
     fn test_gen_unit_f32() {
         for _ in 0..100 {
             let v = gen_unit_f32();
-            assert!(v >= 0.0 && v < 1.0);
+            assert!((0.0..1.0).contains(&v));
         }
     }
 }

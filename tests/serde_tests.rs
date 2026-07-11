@@ -129,7 +129,10 @@ fn test_serde_embedding_rate_encoder() {
     let deserialized: EmbeddingRateEncoder = serde_json::from_str(&serialized).unwrap();
 
     assert_eq!(encoder.config, deserialized.config);
-    assert_eq!(encoder.normalized_embeddings, deserialized.normalized_embeddings);
+    assert_eq!(
+        encoder.normalized_embeddings,
+        deserialized.normalized_embeddings
+    );
 }
 
 #[test]
