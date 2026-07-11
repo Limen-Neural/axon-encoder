@@ -1,4 +1,5 @@
 pub mod delta;
+pub mod latency;
 pub mod phase;
 pub mod population;
 pub mod predictive;
@@ -6,6 +7,7 @@ pub mod rate;
 pub mod temporal;
 
 pub use delta::{encode_deltas_to_spikes, DeltaEncoder};
+pub use latency::LatencyEncoder;
 pub use phase::PhaseEncoder;
 pub use population::PopulationEncoder;
 pub use predictive::PredictiveEncoder;

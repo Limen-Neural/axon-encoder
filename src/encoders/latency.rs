@@ -1,0 +1,223 @@
+use crate::prelude::*;
+
+/// Encodes analog values into latency-coded spike times.
+///
+/// Each input channel produces exactly one positive spike whose timestamp is
+/// determined by the input strength within the configured range. Stronger
+/// inputs fire earlier. Values below the range minimum map to the latest
+/// possible spike at `max_latency`, and values above the range maximum map to
+/// timestamp `0`.
+///
+/// # Timestamp precision
+///
+/// Timestamps are computed via `f64` arithmetic. For extremely large
+/// `max_latency` values (above `2^53`), the conversion from `u64` to `f64`
+/// can lose low-order bits; such latencies are unrealistic for spike timing.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct LatencyEncoder {
+    max_latency: u64,
+    range: (f32, f32),
+}
+
+impl LatencyEncoder {
+    /// Creates a new `LatencyEncoder`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `range.0 >= range.1`.
+    pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
+        assert!(range.0 < range.1, "range min must be less than range max");
+
+        Self { max_latency, range }
+    }
+
+    fn clamp_and_normalize(&self, value: f32) -> f32 {
+        let clamped = value.clamp(self.range.0, self.range.1);
+        (clamped - self.range.0) / (self.range.1 - self.range.0)
+    }
+
+    fn timestamp_for(&self, value: f32) -> u64 {
+        if self.max_latency == 0 {
+            return 0;
+        }
+        // Handle NaN before clamp: f32::clamp does not clamp NaN.
+        // Treat unknown values as the weakest input (latest spike).
+        if value.is_nan() {
+            return self.max_latency;
+        }
+
+        let normalized = self.clamp_and_normalize(value) as f64;
+        ((1.0 - normalized) * self.max_latency as f64).round() as u64
+    }
+}
+
+impl Encoder for LatencyEncoder {
+    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        output.spikes.reserve(input.len());
+
+        for (channel, &value) in input.iter().enumerate() {
+            output.spikes.push(SpikeEvent {
+                channel: u16::try_from(channel).expect("channel index exceeds u16::MAX"),
+                timestamp: self.timestamp_for(value),
+                polarity: true,
+            });
+        }
+
+        output
+    }
+
+    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode(input)
+    }
+
+    fn reset(&mut self) {
+        // Stateless encoder.
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for LatencyEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            max_latency: u64,
+            range: (f32, f32),
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if !matches!(
+            helper.range.0.partial_cmp(&helper.range.1),
+            Some(std::cmp::Ordering::Less)
+        ) {
+            return Err(serde::de::Error::custom(
+                "range min must be less than range max",
+            ));
+        }
+
+        Ok(Self {
+            max_latency: helper.max_latency,
+            range: helper.range,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latency_encoder_emits_one_positive_spike_per_channel() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+
+        let output = encoder.encode(&[0.0, 0.5, 1.0]);
+
+        assert_eq!(output.spikes.len(), 3);
+        assert_eq!(
+            output.spikes,
+            vec![
+                SpikeEvent {
+                    channel: 0,
+                    timestamp: 10,
+                    polarity: true,
+                },
+                SpikeEvent {
+                    channel: 1,
+                    timestamp: 5,
+                    polarity: true,
+                },
+                SpikeEvent {
+                    channel: 2,
+                    timestamp: 0,
+                    polarity: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn latency_encoder_stronger_inputs_fire_earlier() {
+        let mut encoder = LatencyEncoder::new(12, (0.0, 3.0));
+
+        let output = encoder.encode(&[0.5, 1.5, 2.5]);
+
+        assert_eq!(output.spikes.len(), 3);
+        assert!(output.spikes[0].timestamp > output.spikes[1].timestamp);
+        assert!(output.spikes[1].timestamp > output.spikes[2].timestamp);
+    }
+
+    #[test]
+    fn latency_encoder_clamps_inputs_to_range() {
+        let mut encoder = LatencyEncoder::new(8, (2.0, 6.0));
+
+        let output = encoder.encode(&[0.0, 2.0, 4.0, 6.0, 9.0]);
+
+        assert_eq!(
+            output
+                .spikes
+                .iter()
+                .map(|spike| spike.timestamp)
+                .collect::<Vec<_>>(),
+            vec![8, 8, 4, 0, 0]
+        );
+    }
+
+    #[test]
+    fn latency_encoder_encode_step_matches_encode() {
+        let mut encoder = LatencyEncoder::new(20, (-1.0, 1.0));
+        let input = [-1.0, -0.25, 0.75, 1.5];
+
+        let batch = encoder.encode(&input);
+        let step = encoder.encode_step(&input);
+
+        assert_eq!(batch, step);
+    }
+
+    #[test]
+    fn latency_encoder_handles_empty_input() {
+        let mut encoder = LatencyEncoder::new(5, (0.0, 1.0));
+
+        let output = encoder.encode(&[]);
+
+        assert!(output.spikes.is_empty());
+    }
+
+    #[test]
+    fn latency_encoder_supports_zero_max_latency() {
+        let mut encoder = LatencyEncoder::new(0, (0.0, 1.0));
+
+        let output = encoder.encode(&[-1.0, 0.5, 2.0]);
+
+        assert_eq!(output.spikes.len(), 3);
+        assert!(output.spikes.iter().all(|spike| spike.timestamp == 0));
+    }
+
+    #[test]
+    fn latency_encoder_nan_maps_to_max_latency() {
+        let mut encoder = LatencyEncoder::new(7, (0.0, 1.0));
+
+        let output = encoder.encode(&[f32::NAN, 1.0]);
+
+        assert_eq!(output.spikes[0].timestamp, 7);
+        assert_eq!(output.spikes[1].timestamp, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "range min must be less than range max")]
+    fn latency_encoder_rejects_invalid_range() {
+        let _ = LatencyEncoder::new(5, (1.0, 1.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "channel index exceeds u16::MAX")]
+    fn latency_encoder_rejects_channel_overflow() {
+        let mut encoder = LatencyEncoder::new(1, (0.0, 1.0));
+        let input = vec![0.0f32; (u16::MAX as usize) + 2];
+        let _ = encoder.encode(&input);
+    }
+}
