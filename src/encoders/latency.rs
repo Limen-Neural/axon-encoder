@@ -51,7 +51,7 @@ impl Encoder for LatencyEncoder {
 
         for (channel, &value) in input.iter().enumerate() {
             output.spikes.push(SpikeEvent {
-                channel: channel as u16,
+                channel: u16::try_from(channel).expect("channel index exceeds u16::MAX"),
                 timestamp: self.timestamp_for(value),
                 polarity: true,
             });
