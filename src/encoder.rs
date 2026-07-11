@@ -29,6 +29,12 @@ pub struct EmbeddingRateEncoder {
 
 impl EmbeddingRateEncoder {
     pub fn new(embeddings: &[f32], config: EmbeddingEncoderConfig) -> Self {
+        assert!(config.v_th > 0.0, "v_th must be positive");
+        assert!(
+            embeddings.len() <= u16::MAX as usize + 1,
+            "too many channels (max 65536)"
+        );
+
         let min_val = embeddings.iter().copied().fold(f32::INFINITY, f32::min);
         let max_val = embeddings.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let range = max_val - min_val;
@@ -59,7 +65,7 @@ impl EmbeddingRateEncoder {
 
             if *pot >= self.config.v_th {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: true,
                 });
