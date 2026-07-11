@@ -1,9 +1,28 @@
 use crate::types::{EncodedOutput, SpikeEvent};
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "EmbeddingEncoderConfigRepr"))]
 pub struct EmbeddingEncoderConfig {
     pub v_th: f32,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct EmbeddingEncoderConfigRepr {
+    v_th: f32,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<EmbeddingEncoderConfigRepr> for EmbeddingEncoderConfig {
+    type Error = String;
+
+    fn try_from(r: EmbeddingEncoderConfigRepr) -> Result<Self, String> {
+        if !(r.v_th > 0.0) {
+            return Err("v_th must be positive".into());
+        }
+        Ok(Self { v_th: r.v_th })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,10 +40,36 @@ impl EncoderState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "EmbeddingRateEncoderRepr"))]
 pub struct EmbeddingRateEncoder {
     pub config: EmbeddingEncoderConfig,
     pub normalized_embeddings: Vec<f32>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct EmbeddingRateEncoderRepr {
+    config: EmbeddingEncoderConfig,
+    normalized_embeddings: Vec<f32>,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<EmbeddingRateEncoderRepr> for EmbeddingRateEncoder {
+    type Error = String;
+
+    fn try_from(r: EmbeddingRateEncoderRepr) -> Result<Self, String> {
+        if r.normalized_embeddings.iter().any(|v| !v.is_finite()) {
+            return Err("normalized_embeddings must be finite".into());
+        }
+        if r.normalized_embeddings.len() > u16::MAX as usize + 1 {
+            return Err("too many channels (max 65536)".into());
+        }
+        Ok(Self {
+            config: r.config,
+            normalized_embeddings: r.normalized_embeddings,
+        })
+    }
 }
 
 impl EmbeddingRateEncoder {
