@@ -65,3 +65,12 @@ pub trait Encoder {
     /// Resets the encoder to its initial state.
     fn reset(&mut self);
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_lib_prelude_imports() {
+        use crate::prelude::*;
+        let _ = EncoderConfig::default();
+    }
+}

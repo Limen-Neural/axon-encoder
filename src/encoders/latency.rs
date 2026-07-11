@@ -103,6 +103,19 @@ mod tests {
     }
 
     #[test]
+    fn test_latency_encoder_nan() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let output = encoder.encode(&[f32::NAN]);
+        assert_eq!(output.spikes[0].timestamp, 10);
+    }
+
+    #[test]
+    fn test_latency_encoder_reset() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        encoder.reset(); // Should do nothing
+    }
+
+    #[test]
     fn latency_encoder_stronger_inputs_fire_earlier() {
         let mut encoder = LatencyEncoder::new(12, (0.0, 3.0));
 

@@ -120,4 +120,17 @@ mod tests {
         );
         assert!(output.spikes.len() <= 10);
     }
+
+    #[test]
+    fn test_population_encoder_empty_input() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 1.0), 0.1);
+        let output = encoder.encode(&[]);
+        assert!(output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_population_encoder_reset() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 1.0), 0.1);
+        encoder.reset();
+    }
 }

@@ -172,12 +172,47 @@ mod tests {
     #[test]
     fn test_predictive_encoder() {
         let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 1);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
         let output = encoder.encode(&[10.0]);
         assert!(!output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_predictive_encoder_history_limit() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(1.0, 1)], 1);
+        for _ in 0..10 {
+            encoder.encode(&[1.0]);
+        }
+        assert_eq!(encoder.history[0].len(), 5);
+    }
+
+    #[test]
+    fn test_predictive_encoder_reset() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(1.0, 1)], 1);
+        encoder.encode(&[1.0; 5]);
+        encoder.reset();
+        assert_eq!(encoder.history[0].len(), 0);
+        assert_eq!(encoder.thresholds[0], 0.0);
+    }
+
+    #[test]
+    fn test_predictive_encoder_mismatched_input() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(1.0, 1)], 2);
+        let _output = encoder.encode(&[1.0]);
+        assert_eq!(encoder.history[0].len(), 1);
+        assert_eq!(encoder.history[1].len(), 0);
+
+        let output2 = encoder.encode_step(&[1.0, 2.0, 3.0]);
+        assert_eq!(output2.spikes.len(), 0); // Not enough history
+    }
+
+    #[test]
+    #[should_panic(expected = "history_depth must be at least 5")]
+    fn test_predictive_encoder_invalid_depth() {
+        let _ = PredictiveEncoder::new(4, vec![], 1);
     }
 }

@@ -126,3 +126,39 @@ impl EmbeddingRateEncoder {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embedding_rate_encoder_basic() {
+        let config = EmbeddingEncoderConfig { v_th: 0.9 };
+        let embeddings = [0.5, 1.0, 0.0];
+        let encoder = EmbeddingRateEncoder::new(&embeddings, config);
+
+        let state = EncoderState::new_zeros(3);
+        let (output, next_state) = encoder.forward(&state);
+
+        assert_eq!(output.spikes.len(), 1);
+        assert_eq!(output.spikes[0].channel, 1);
+
+        let (output2, _) = encoder.forward(&next_state);
+        // Channel 0: 0.5 + 0.5 = 1.0 > 0.9 -> spike
+        // Channel 1: (1.0-0.9) + 1.0 = 1.1 > 0.9 -> spike
+        assert_eq!(output2.spikes.len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "v_th must be positive")]
+    fn test_embedding_encoder_config_invalid_vth() {
+        let _ = EmbeddingRateEncoder::new(&[0.5], EmbeddingEncoderConfig { v_th: 0.0 });
+    }
+
+    #[test]
+    fn test_encoder_state_new_zeros() {
+        let state = EncoderState::new_zeros(5);
+        assert_eq!(state.membrane_potentials.len(), 5);
+        assert!(state.membrane_potentials.iter().all(|&v| v == 0.0));
+    }
+}

@@ -23,6 +23,7 @@
 /// the input is a single probability (0.0 to 1.0) and the output is a spike train
 /// over multiple time steps.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PoissonEncoder {
     pub num_steps: usize,
 }
@@ -125,6 +126,18 @@ mod tests {
             "p=0.5 should produce mixed output, got {} spikes",
             count
         );
+    }
+
+    #[test]
+    fn test_poisson_encode_step() {
+        let enc = PoissonEncoder::new(1);
+        let mut ones = 0;
+        let mut zeros = 0;
+        for _ in 0..100 {
+            let s = enc.encode_step(0.5);
+            if s == 1 { ones += 1; } else { zeros += 1; }
+        }
+        assert!(ones > 0 && zeros > 0);
     }
 
     #[test]

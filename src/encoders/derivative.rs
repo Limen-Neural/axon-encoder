@@ -104,4 +104,14 @@ mod tests {
         encoder.reset();
         assert_eq!(encoder.last_values[0], 0.0);
     }
+
+    #[test]
+    fn test_derivative_encoder_empty_and_mismatched() {
+        let mut encoder = DerivativeEncoder::new(vec![1.0]);
+        let output = encoder.encode(&[]);
+        assert!(output.spikes.is_empty());
+
+        let output = encoder.encode(&[2.0, 3.0]);
+        assert_eq!(output.spikes.len(), 1); // Only channel 0 should be processed
+    }
 }

@@ -21,3 +21,16 @@ pub fn gen_unit_f32() -> f32 {
     let v = (next_u64() >> 32) as u32;
     (v as f32) * SCALE
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gen_unit_f32() {
+        for _ in 0..100 {
+            let v = gen_unit_f32();
+            assert!(v >= 0.0 && v < 1.0);
+        }
+    }
+}
