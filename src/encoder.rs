@@ -1,33 +1,9 @@
 use crate::types::{EncodedOutput, SpikeEvent};
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EmbeddingEncoderConfig {
     pub v_th: f32,
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for EmbeddingEncoderConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        struct Helper {
-            v_th: f32,
-        }
-
-        let helper = Helper::deserialize(deserializer)?;
-        if !matches!(
-            helper.v_th.partial_cmp(&0.0),
-            Some(std::cmp::Ordering::Greater)
-        ) {
-            return Err(serde::de::Error::custom(
-                "EmbeddingEncoderConfig.v_th must be > 0",
-            ));
-        }
-        Ok(Self { v_th: helper.v_th })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,31 +21,10 @@ impl EncoderState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EmbeddingRateEncoder {
     pub config: EmbeddingEncoderConfig,
     pub normalized_embeddings: Vec<f32>,
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for EmbeddingRateEncoder {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        struct Helper {
-            config: EmbeddingEncoderConfig,
-            normalized_embeddings: Vec<f32>,
-        }
-
-        // EmbeddingEncoderConfig's Deserialize already enforces v_th > 0.
-        let helper = Helper::deserialize(deserializer)?;
-        Ok(Self {
-            config: helper.config,
-            normalized_embeddings: helper.normalized_embeddings,
-        })
-    }
 }
 
 impl EmbeddingRateEncoder {
@@ -104,7 +59,7 @@ impl EmbeddingRateEncoder {
 
             if *pot >= self.config.v_th {
                 output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    channel: i as u16,
                     timestamp: 0,
                     polarity: true,
                 });

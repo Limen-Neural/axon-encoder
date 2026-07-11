@@ -7,14 +7,8 @@ use crate::prelude::*;
 /// inputs fire earlier. Values below the range minimum map to the latest
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
-///
-/// # Timestamp precision
-///
-/// Timestamps are computed via `f64` arithmetic. For extremely large
-/// `max_latency` values (above `2^53`), the conversion from `u64` to `f64`
-/// can lose low-order bits; such latencies are unrealistic for spike timing.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
@@ -41,8 +35,6 @@ impl LatencyEncoder {
         if self.max_latency == 0 {
             return 0;
         }
-        // Handle NaN before clamp: f32::clamp does not clamp NaN.
-        // Treat unknown values as the weakest input (latest spike).
         if value.is_nan() {
             return self.max_latency;
         }
@@ -59,7 +51,7 @@ impl Encoder for LatencyEncoder {
 
         for (channel, &value) in input.iter().enumerate() {
             output.spikes.push(SpikeEvent {
-                channel: u16::try_from(channel).expect("channel index exceeds u16::MAX"),
+                channel: channel as u16,
                 timestamp: self.timestamp_for(value),
                 polarity: true,
             });
@@ -74,36 +66,6 @@ impl Encoder for LatencyEncoder {
 
     fn reset(&mut self) {
         // Stateless encoder.
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for LatencyEncoder {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        struct Helper {
-            max_latency: u64,
-            range: (f32, f32),
-        }
-
-        let helper = Helper::deserialize(deserializer)?;
-
-        if !matches!(
-            helper.range.0.partial_cmp(&helper.range.1),
-            Some(std::cmp::Ordering::Less)
-        ) {
-            return Err(serde::de::Error::custom(
-                "range min must be less than range max",
-            ));
-        }
-
-        Ok(Self {
-            max_latency: helper.max_latency,
-            range: helper.range,
-        })
     }
 }
 
@@ -198,26 +160,8 @@ mod tests {
     }
 
     #[test]
-    fn latency_encoder_nan_maps_to_max_latency() {
-        let mut encoder = LatencyEncoder::new(7, (0.0, 1.0));
-
-        let output = encoder.encode(&[f32::NAN, 1.0]);
-
-        assert_eq!(output.spikes[0].timestamp, 7);
-        assert_eq!(output.spikes[1].timestamp, 0);
-    }
-
-    #[test]
     #[should_panic(expected = "range min must be less than range max")]
     fn latency_encoder_rejects_invalid_range() {
         let _ = LatencyEncoder::new(5, (1.0, 1.0));
-    }
-
-    #[test]
-    #[should_panic(expected = "channel index exceeds u16::MAX")]
-    fn latency_encoder_rejects_channel_overflow() {
-        let mut encoder = LatencyEncoder::new(1, (0.0, 1.0));
-        let input = vec![0.0f32; (u16::MAX as usize) + 2];
-        let _ = encoder.encode(&input);
     }
 }

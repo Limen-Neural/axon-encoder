@@ -9,14 +9,6 @@ pub mod poisson;
 pub mod rng;
 pub mod types;
 
-/// Compatibility shim for the pre-move public path of [`DerivativeEncoder`].
-///
-/// Prefer `axon_encoder::encoders::DerivativeEncoder` (or the prelude).
-#[deprecated(note = "use axon_encoder::encoders::DerivativeEncoder instead")]
-pub mod spike_encoder {
-    pub use crate::encoders::derivative::DerivativeEncoder;
-}
-
 pub mod prelude {
     pub use crate::encoder::*;
     pub use crate::encoders::*;
