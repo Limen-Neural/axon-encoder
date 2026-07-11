@@ -9,6 +9,7 @@ pub mod modulators;
 pub mod ndarray_ext;
 pub mod poisson;
 pub mod rng;
+pub mod spike_encoder;
 pub mod types;
 
 #[cfg(feature = "ndarray")]
