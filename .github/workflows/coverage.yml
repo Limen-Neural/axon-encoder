@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
@@ -35,7 +35,7 @@ jobs:
         run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@79066c46f8dcdf8d7355f820dbac958c5b4cb9d3
+        uses: codecov/codecov-action@af2c6347526edfe5ff45ad690affad475d77ddb4
         with:
           files: lcov.info
           fail_ci_if_error: false
