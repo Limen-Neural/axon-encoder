@@ -20,6 +20,7 @@ static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // Using SeqCst to ensure measurement boundaries are strictly respected.
         let ptr = System.alloc(layout);
         if COUNTING_ENABLED.load(Ordering::SeqCst) && !ptr.is_null() {
             ALLOCATION_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -29,6 +30,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // Using SeqCst to ensure measurement boundaries are strictly respected.
         let ptr = System.alloc_zeroed(layout);
         if COUNTING_ENABLED.load(Ordering::SeqCst) && !ptr.is_null() {
             ALLOCATION_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -38,8 +40,10 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // Using SeqCst to ensure measurement boundaries are strictly respected.
         let new_ptr = System.realloc(ptr, layout, new_size);
         if COUNTING_ENABLED.load(Ordering::SeqCst) && !new_ptr.is_null() {
+            // Only count the net growth to avoid double-counting existing allocations.
             ALLOCATION_COUNT.fetch_add(1, Ordering::SeqCst);
             ALLOCATION_BYTES.fetch_add(new_size.saturating_sub(layout.size()), Ordering::SeqCst);
         }
@@ -47,6 +51,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // dealloc is not tracked to focus on net growth metrics during the measured operation.
         System.dealloc(ptr, layout);
     }
 }
