@@ -57,7 +57,6 @@ fn bench_population_encoder(c: &mut Criterion) {
             BenchmarkId::from_parameter(neurons),
             &neurons,
             |b, &neurons| {
-                // Population encoding maps a single scalar onto a bank of neurons.
                 let mut encoder = PopulationEncoder::new(neurons, (50.0, 100.0), 10.0);
                 let input = [75.0_f32];
                 b.iter(|| black_box(encoder.encode(black_box(&input))));
@@ -86,15 +85,13 @@ fn bench_delta_encoder_step(c: &mut Criterion) {
             let mut encoder = DeltaEncoder::new(0.1, size);
             let baseline = normalized_input(size);
             let shifted = shifted_input(size, 0.25);
-            // Alternate baseline/shifted so the bench measures actual delta work,
-            // not the steady-state zero-delta path after a single transition.
-            let inputs = [&shifted, &baseline];
-            let mut inputs_iter = inputs.iter().cycle();
+            let mut use_shifted = true;
 
             encoder.encode_step(&baseline);
 
             b.iter(|| {
-                let input = *inputs_iter.next().unwrap();
+                let input = if use_shifted { &shifted } else { &baseline };
+                use_shifted = !use_shifted;
                 black_box(encoder.encode_step(black_box(input)))
             });
         });
@@ -122,16 +119,16 @@ fn bench_temporal_encoder_step(c: &mut Criterion) {
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];
-            // Cycle mixed levels so history stays non-uniform and both spike
-            // and no-spike paths are exercised under active temporal change.
-            let mut sequence_iter = sequence.iter().cycle();
+            let mut index = 0usize;
 
             for input in sequence {
                 encoder.encode_step(input);
             }
-
+            // Cycle through inputs to ensure the encoder is tested under active temporal changes
+            // rather than reaching a steady state with no spikes.
             b.iter(|| {
-                let input = *sequence_iter.next().unwrap();
+                let input = sequence[index % sequence.len()];
+                index += 1;
                 black_box(encoder.encode_step(black_box(input)))
             });
         });
@@ -159,15 +156,15 @@ fn bench_predictive_encoder_step(c: &mut Criterion) {
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];
-            // Deterministic cycling: representative mixed load, not steady-state.
-            let mut sequence_iter = sequence.iter().cycle();
+            let mut index = 0usize;
 
             for _ in 0..5 {
                 encoder.encode_step(&low);
             }
 
             b.iter(|| {
-                let input = *sequence_iter.next().unwrap();
+                let input = sequence[index % sequence.len()];
+                index += 1;
                 black_box(encoder.encode_step(black_box(input)))
             });
         });
