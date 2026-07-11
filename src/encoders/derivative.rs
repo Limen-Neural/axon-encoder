@@ -40,7 +40,7 @@ impl Encoder for DerivativeEncoder {
             // Excitatory spike on positive jump exceeding threshold
             if delta > self.thresholds[i] {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: true,
                 });
@@ -48,7 +48,7 @@ impl Encoder for DerivativeEncoder {
             // Inhibitory/Negative spike on sudden drop
             else if delta < -self.thresholds[i] {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: false,
                 });
