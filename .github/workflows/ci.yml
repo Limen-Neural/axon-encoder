@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
         with:
           persist-credentials: false
 
@@ -26,7 +26,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@baf1a810e98b6a3001d0d7234864ed75a17c42fb
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc
 
       - name: Check formatting
         run: cargo fmt --check
