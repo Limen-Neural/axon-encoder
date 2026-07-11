@@ -8,7 +8,7 @@ use crate::prelude::*;
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
@@ -51,7 +51,7 @@ impl Encoder for LatencyEncoder {
 
         for (channel, &value) in input.iter().enumerate() {
             output.spikes.push(SpikeEvent {
-                channel: channel as u16,
+                channel: u16::try_from(channel).expect("channel index exceeds u16::MAX"),
                 timestamp: self.timestamp_for(value),
                 polarity: true,
             });
@@ -66,6 +66,33 @@ impl Encoder for LatencyEncoder {
 
     fn reset(&mut self) {
         // Stateless encoder.
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for LatencyEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            max_latency: u64,
+            range: (f32, f32),
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if helper.range.0 >= helper.range.1 {
+            return Err(serde::de::Error::custom(
+                "range min must be less than range max",
+            ));
+        }
+
+        Ok(Self {
+            max_latency: helper.max_latency,
+            range: helper.range,
+        })
     }
 }
 
