@@ -27,3 +27,7 @@ required-features = ["ndarray"]
 [[bench]]
 name = "encoders"
 harness = false
+
+[[bench]]
+name = "allocations"
+harness = false
