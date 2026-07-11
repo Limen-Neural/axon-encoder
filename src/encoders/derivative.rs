@@ -5,45 +5,15 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(try_from = "DerivativeEncoderRepr"))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DerivativeEncoder {
     last_values: Vec<f32>,
     thresholds: Vec<f32>,
 }
 
-#[cfg(feature = "serde")]
-#[derive(serde::Deserialize)]
-struct DerivativeEncoderRepr {
-    last_values: Vec<f32>,
-    thresholds: Vec<f32>,
-}
-
-#[cfg(feature = "serde")]
-impl TryFrom<DerivativeEncoderRepr> for DerivativeEncoder {
-    type Error = String;
-
-    fn try_from(r: DerivativeEncoderRepr) -> Result<Self, String> {
-        if r.last_values.len() != r.thresholds.len() {
-            return Err("last_values and thresholds must have the same length".into());
-        }
-        if r.thresholds.len() > u16::MAX as usize + 1 {
-            return Err("too many channels (max 65536)".into());
-        }
-        Ok(Self {
-            last_values: r.last_values,
-            thresholds: r.thresholds,
-        })
-    }
-}
-
 impl DerivativeEncoder {
     /// Creates a new `DerivativeEncoder` with specific thresholds for each channel.
     pub fn new(thresholds: Vec<f32>) -> Self {
-        assert!(
-            thresholds.len() <= u16::MAX as usize + 1,
-            "too many channels (max 65536)"
-        );
         let num_channels = thresholds.len();
         Self {
             last_values: vec![0.0; num_channels],
@@ -70,7 +40,7 @@ impl Encoder for DerivativeEncoder {
             // Excitatory spike on positive jump exceeding threshold
             if delta > self.thresholds[i] {
                 output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    channel: i as u16,
                     timestamp: 0,
                     polarity: true,
                 });
@@ -78,7 +48,7 @@ impl Encoder for DerivativeEncoder {
             // Inhibitory/Negative spike on sudden drop
             else if delta < -self.thresholds[i] {
                 output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    channel: i as u16,
                     timestamp: 0,
                     polarity: false,
                 });

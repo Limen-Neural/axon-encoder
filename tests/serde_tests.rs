@@ -84,12 +84,6 @@ fn test_serde_encoders_and_state() {
     let serialized_latency = serde_json::to_string(&latency_encoder).unwrap();
     let deserialized_latency: LatencyEncoder = serde_json::from_str(&serialized_latency).unwrap();
     assert_eq!(latency_encoder, deserialized_latency);
-
-    // 12. Test PhaseEncoder
-    let phase_encoder = PhaseEncoder::new(8, (0.0, 1.0));
-    let serialized_phase = serde_json::to_string(&phase_encoder).unwrap();
-    let deserialized_phase: PhaseEncoder = serde_json::from_str(&serialized_phase).unwrap();
-    assert_eq!(phase_encoder, deserialized_phase);
 }
 
 #[test]

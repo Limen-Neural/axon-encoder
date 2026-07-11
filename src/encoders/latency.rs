@@ -8,33 +8,10 @@ use crate::prelude::*;
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(try_from = "LatencyEncoderRepr"))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Deserialize)]
-struct LatencyEncoderRepr {
-    max_latency: u64,
-    range: (f32, f32),
-}
-
-#[cfg(feature = "serde")]
-impl TryFrom<LatencyEncoderRepr> for LatencyEncoder {
-    type Error = String;
-
-    fn try_from(r: LatencyEncoderRepr) -> Result<Self, String> {
-        if !(r.range.0 < r.range.1) {
-            return Err("range min must be less than range max".into());
-        }
-        Ok(Self {
-            max_latency: r.max_latency,
-            range: r.range,
-        })
-    }
 }
 
 impl LatencyEncoder {
@@ -74,7 +51,7 @@ impl Encoder for LatencyEncoder {
 
         for (channel, &value) in input.iter().enumerate() {
             output.spikes.push(SpikeEvent {
-                channel: u16::try_from(channel).expect("channel index exceeds u16::MAX"),
+                channel: channel as u16,
                 timestamp: self.timestamp_for(value),
                 polarity: true,
             });

@@ -1,7 +1,7 @@
 use crate::types::{EncodedOutput, SpikeEvent};
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "EmbeddingEncoderConfigRepr"))]
 pub struct EmbeddingEncoderConfig {
     pub v_th: f32,
@@ -18,7 +18,7 @@ impl TryFrom<EmbeddingEncoderConfigRepr> for EmbeddingEncoderConfig {
     type Error = String;
 
     fn try_from(r: EmbeddingEncoderConfigRepr) -> Result<Self, String> {
-        if !(r.v_th > 0.0) {
+        if r.v_th <= 0.0 {
             return Err("v_th must be positive".into());
         }
         Ok(Self { v_th: r.v_th })
@@ -40,7 +40,7 @@ impl EncoderState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "EmbeddingRateEncoderRepr"))]
 pub struct EmbeddingRateEncoder {
     pub config: EmbeddingEncoderConfig,
