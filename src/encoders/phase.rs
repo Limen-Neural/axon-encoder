@@ -19,6 +19,20 @@ pub struct PhaseEncoder {
     current_phase: u64,
 }
 
+/// Validates `cycle_steps` and `range`, returning an error message if invalid.
+///
+/// Shared by both `PhaseEncoder::new` (which panics on failure) and the
+/// `Deserialize` impl (which surfaces the message as a deserialization error).
+fn validate_params(cycle_steps: u64, range: (f32, f32)) -> Result<(), &'static str> {
+    if cycle_steps == 0 {
+        return Err("cycle_steps must be greater than 0");
+    }
+    if !range.0.is_finite() || !range.1.is_finite() || range.0 >= range.1 {
+        return Err("range min must be less than range max and both must be finite");
+    }
+    Ok(())
+}
+
 impl PhaseEncoder {
     /// Creates a new `PhaseEncoder`.
     ///
@@ -26,11 +40,9 @@ impl PhaseEncoder {
     ///
     /// Panics if `cycle_steps == 0` or if range bounds are non-finite or `range.0 >= range.1`.
     pub fn new(cycle_steps: u64, range: (f32, f32)) -> Self {
-        assert!(cycle_steps > 0, "cycle_steps must be greater than 0");
-        assert!(
-            range.0.is_finite() && range.1.is_finite() && range.0 < range.1,
-            "range min must be less than range max and both must be finite"
-        );
+        if let Err(message) = validate_params(cycle_steps, range) {
+            panic!("{message}");
+        }
 
         Self {
             cycle_steps,
@@ -116,19 +128,7 @@ impl<'de> serde::Deserialize<'de> for PhaseEncoder {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        if helper.cycle_steps == 0 {
-            return Err(serde::de::Error::custom(
-                "cycle_steps must be greater than 0",
-            ));
-        }
-        if !helper.range.0.is_finite()
-            || !helper.range.1.is_finite()
-            || helper.range.0 >= helper.range.1
-        {
-            return Err(serde::de::Error::custom(
-                "range min must be less than range max and finite",
-            ));
-        }
+        validate_params(helper.cycle_steps, helper.range).map_err(serde::de::Error::custom)?;
 
         Ok(Self {
             cycle_steps: helper.cycle_steps,
