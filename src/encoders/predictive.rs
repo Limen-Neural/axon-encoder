@@ -239,7 +239,7 @@ mod tests {
         }
         let output = encoder.encode(&[10.0, 20.0, 30.0]);
         // All channels should spike on large deviation
-        assert!(output.spikes.len() >= 1);
+        assert!(!output.spikes.is_empty());
     }
 
     #[test]
