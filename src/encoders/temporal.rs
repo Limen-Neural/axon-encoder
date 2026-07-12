@@ -80,7 +80,7 @@ impl Encoder for TemporalEncoder {
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
                 if change > threshold {
                     output.spikes.push(SpikeEvent {
-                        channel: i as u16,
+                        channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                         timestamp: 0,   // Simplified
                         polarity: true, // Or use spike_val to determine polarity/strength
                     });

@@ -77,7 +77,7 @@ impl Encoder for RateEncoder {
 
             if crate::rng::gen_unit_f32() < probability {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: true,
                 });
@@ -103,7 +103,7 @@ impl Encoder for RateEncoder {
 
             while self.accumulators[i] >= 1.0 {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: true,
                 });

@@ -49,7 +49,7 @@ impl Encoder for DeltaEncoder {
             let delta = (value - self.last_values[i]).abs();
             if delta > self.threshold {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: value > self.last_values[i],
                 });
