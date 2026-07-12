@@ -176,9 +176,13 @@ impl Default for EncodingGains {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NeuromodulatorGainCurves {
+    #[cfg_attr(feature = "serde", serde(default))]
     pub dopamine: ModulatorGainCurves,
+    #[cfg_attr(feature = "serde", serde(default))]
     pub cortisol: ModulatorGainCurves,
+    #[cfg_attr(feature = "serde", serde(default))]
     pub acetylcholine: ModulatorGainCurves,
+    #[cfg_attr(feature = "serde", serde(default))]
     pub tempo: ModulatorGainCurves,
 }
 
@@ -386,5 +390,21 @@ mod tests {
         assert!(curves.threshold.is_none());
         assert!(curves.sensitivity.is_none());
         assert!(curves.firing_rate.is_none());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn neuromodulator_gain_curves_partial_json_deserializes() {
+        // Only set dopamine; cortisol/acetylcholine/tempo should default
+        let json = r#"{
+            "dopamine": {
+                "firing_rate": {"input_range": [0.0, 1.0], "output_range": [1.0, 2.0]}
+            }
+        }"#;
+        let curves: NeuromodulatorGainCurves = serde_json::from_str(json).unwrap();
+        assert!(curves.dopamine.firing_rate.is_some());
+        assert!(curves.cortisol.threshold.is_none());
+        assert!(curves.acetylcholine.sensitivity.is_none());
+        assert!(curves.tempo.firing_rate.is_none());
     }
 }
