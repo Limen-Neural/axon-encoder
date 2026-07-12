@@ -284,4 +284,104 @@ mod tests {
         let err = serde_json::from_str::<GainCurve>(json).unwrap_err();
         assert!(err.to_string().contains("input_range"));
     }
+
+    #[test]
+    fn sanitize_gain_scale_handles_nan_and_infinity() {
+        assert_eq!(sanitize_gain_scale(f32::NAN), 1.0);
+        assert_eq!(sanitize_gain_scale(f32::INFINITY), 1.0);
+        assert_eq!(sanitize_gain_scale(f32::NEG_INFINITY), 1.0);
+        assert_eq!(sanitize_gain_scale(0.0), 0.0);
+        assert_eq!(sanitize_gain_scale(5.0), 5.0);
+        assert_eq!(sanitize_gain_scale(1e10), MAX_GAIN_SCALE);
+    }
+
+    #[test]
+    fn neuro_modulators_decay() {
+        let mut mods = NeuroModulators {
+            dopamine: 1.0,
+            cortisol: 1.0,
+            acetylcholine: 1.0,
+            tempo: 1.0,
+        };
+        mods.decay();
+        assert!((mods.dopamine - 0.95).abs() < 1e-6);
+        assert!((mods.cortisol - 0.90).abs() < 1e-6);
+        assert!((mods.acetylcholine - 0.99).abs() < 1e-6);
+        assert!((mods.tempo - 0.98).abs() < 1e-6);
+
+        // Decay floors at zero
+        mods.dopamine = -0.5;
+        mods.decay();
+        assert_eq!(mods.dopamine, 0.0);
+    }
+
+    #[test]
+    fn gain_curve_identity_returns_constant_one() {
+        let curve = GainCurve::identity();
+        assert_eq!(curve.evaluate(0.0), 1.0);
+        assert_eq!(curve.evaluate(0.5), 1.0);
+        assert_eq!(curve.evaluate(1.0), 1.0);
+    }
+
+    #[test]
+    fn gain_curve_evaluate_non_finite_output_range_returns_identity() {
+        let curve = GainCurve {
+            input_range: (0.0, 1.0),
+            output_range: (f32::NAN, 2.0),
+        };
+        assert_eq!(curve.evaluate(0.5), 1.0);
+
+        let curve2 = GainCurve {
+            input_range: (0.0, 1.0),
+            output_range: (1.0, f32::INFINITY),
+        };
+        assert_eq!(curve2.evaluate(0.5), 1.0);
+    }
+
+    #[test]
+    fn encoding_gains_sanitize_clamps_extremes() {
+        let gains = EncodingGains {
+            threshold_scale: f32::NAN,
+            sensitivity_scale: f32::INFINITY,
+            firing_rate_scale: -1.0,
+        };
+        let sanitized = gains.sanitize();
+        assert_eq!(sanitized.threshold_scale, 1.0);
+        assert_eq!(sanitized.sensitivity_scale, 1.0);
+        assert_eq!(sanitized.firing_rate_scale, 0.0);
+    }
+
+    #[test]
+    fn neuromodulator_curves_all_none_returns_identity() {
+        let curves = NeuromodulatorGainCurves::default();
+        let mods = NeuroModulators::default();
+        let gains = curves.evaluate(&mods);
+        assert_eq!(gains.threshold_scale, 1.0);
+        assert_eq!(gains.sensitivity_scale, 1.0);
+        assert_eq!(gains.firing_rate_scale, 1.0);
+    }
+
+    #[test]
+    fn neuromodulator_curves_partial_none() {
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators { dopamine: 1.0, ..Default::default() };
+        let gains = curves.evaluate(&mods);
+        assert_eq!(gains.threshold_scale, 2.0);
+        assert_eq!(gains.sensitivity_scale, 1.0);
+        assert_eq!(gains.firing_rate_scale, 1.0);
+    }
+
+    #[test]
+    fn modulator_gain_curves_default_is_none() {
+        let curves = ModulatorGainCurves::default();
+        assert!(curves.threshold.is_none());
+        assert!(curves.sensitivity.is_none());
+        assert!(curves.firing_rate.is_none());
+    }
 }

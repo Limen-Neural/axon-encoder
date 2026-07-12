@@ -181,6 +181,62 @@ mod tests {
     }
 
     #[test]
+    fn test_effective_tuning_width_sub_unity() {
+        let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        // Sub-unity sensitivity should NOT widen the tuning width
+        let width = encoder.effective_tuning_width(0.5);
+        assert_eq!(width, encoder.tuning_width.max(f32::EPSILON));
+    }
+
+    #[test]
+    fn test_effective_tuning_width_zero_and_negative() {
+        let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        assert_eq!(encoder.effective_tuning_width(0.0), encoder.tuning_width.max(f32::EPSILON));
+        assert_eq!(encoder.effective_tuning_width(-1.0), encoder.tuning_width.max(f32::EPSILON));
+        assert_eq!(encoder.effective_tuning_width(f32::NAN), encoder.tuning_width.max(f32::EPSILON));
+    }
+
+    #[test]
+    fn test_encode_with_zero_sensitivity_returns_empty() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let output = encoder.encode_with_sensitivity_scale(&[50.0], 0.0);
+        assert!(output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_encode_with_negative_sensitivity_returns_empty() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let output = encoder.encode_with_sensitivity_scale(&[50.0], -1.0);
+        assert!(output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_encode_with_nan_sensitivity_returns_empty() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let output = encoder.encode_with_sensitivity_scale(&[50.0], f32::NAN);
+        assert!(output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_encode_with_modulators_uses_gain_curves() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let mods = NeuroModulators::default();
+        let curves = NeuromodulatorGainCurves::default();
+        // With identity gains, should produce similar output to plain encode
+        let output = encoder.encode_with_modulators(&[50.0], &mods, &curves);
+        assert!(output.spikes.len() <= 10);
+    }
+
+    #[test]
+    fn test_encode_step_with_modulators() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let mods = NeuroModulators::default();
+        let curves = NeuromodulatorGainCurves::default();
+        let output = encoder.encode_step_with_modulators(&[50.0], &mods, &curves);
+        assert!(output.spikes.len() <= 10);
+    }
+
+    #[test]
     fn test_population_encoder_modulators_adjust_sensitivity() {
         let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
         let modulators = NeuroModulators {

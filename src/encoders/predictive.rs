@@ -221,6 +221,68 @@ mod tests {
     }
 
     #[test]
+    fn test_predictive_encoder_reset() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        for _ in 0..6 {
+            encoder.encode(&[1.0, 2.0]);
+        }
+        encoder.reset();
+        assert!(encoder.history.iter().all(|h| h.is_empty()));
+        assert!(encoder.thresholds.iter().all(|&t| t == 0.0));
+    }
+
+    #[test]
+    fn test_predictive_encoder_multi_channel() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 3);
+        for _ in 0..6 {
+            encoder.encode(&[1.0, 2.0, 3.0]);
+        }
+        let output = encoder.encode(&[10.0, 20.0, 30.0]);
+        // All channels should spike on large deviation
+        assert!(output.spikes.len() >= 1);
+    }
+
+    #[test]
+    fn test_predictive_encoder_input_truncation() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        for _ in 0..6 {
+            // 4 values but only 2 channels tracked — should truncate
+            encoder.encode(&[1.0, 2.0, 3.0, 4.0]);
+        }
+        // Should not panic; only first 2 channels processed
+        let output = encoder.encode(&[10.0, 20.0, 30.0, 40.0]);
+        assert!(output.spikes.len() <= 2);
+    }
+
+    #[test]
+    fn test_predictive_encoder_step_input_truncation() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        for _ in 0..6 {
+            encoder.encode_step(&[1.0, 2.0, 3.0]);
+        }
+        let output = encoder.encode_step(&[10.0, 20.0, 30.0]);
+        assert!(output.spikes.len() <= 2);
+    }
+
+    #[test]
+    fn test_predictive_encoder_encode_with_modulators() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mods = NeuroModulators { acetylcholine: 1.0, ..Default::default() };
+        let curves = NeuromodulatorGainCurves {
+            acetylcholine: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            encoder.encode_with_modulators(&[1.0], &mods, &curves);
+        }
+        let output = encoder.encode_with_modulators(&[5.0], &mods, &curves);
+        assert_eq!(output.spikes.len(), 1);
+    }
+
+    #[test]
     fn test_predictive_encoder_modulators_reduce_threshold() {
         let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
         let modulators = NeuroModulators {
