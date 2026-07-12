@@ -93,6 +93,16 @@ impl TemporalEncoder {
         output
     }
 
+    /// Encode input using neuromodulator-driven gain curves.
+    ///
+    /// Evaluates `gain_curves` against the current `modulators` to produce
+    /// an [`EncodingGains`], then uses the `threshold_scale` component to
+    /// modulate the change-detection threshold. Values > 1.0 increase
+    /// sensitivity; values < 1.0 decrease it.
+    ///
+    /// Input is truncated to the number of tracked channels. Expected
+    /// modulator range: any finite f32. Expected gain range after
+    /// sanitization: `[0.0, 10,000.0]`.
     pub fn encode_with_modulators(
         &mut self,
         input: &[f32],
@@ -109,6 +119,8 @@ impl TemporalEncoder {
         self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
     }
 
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    /// Identical behavior, provided for API symmetry with the [`Encoder`] trait.
     pub fn encode_step_with_modulators(
         &mut self,
         input: &[f32],

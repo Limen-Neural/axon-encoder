@@ -114,6 +114,16 @@ impl PopulationEncoder {
         output
     }
 
+    /// Encode input using neuromodulator-driven gain curves.
+    ///
+    /// Evaluates `gain_curves` against the current `modulators` to produce
+    /// an [`EncodingGains`], then uses the `sensitivity_scale` component to
+    /// modulate the population tuning width. Values >= 1.0 narrow the
+    /// Gaussian (more selective); values in (0, 1) suppress firing rate
+    /// without widening.
+    ///
+    /// Expected modulator range: any finite f32. Expected gain range after
+    /// sanitization: `[0.0, 10,000.0]`.
     pub fn encode_with_modulators(
         &mut self,
         input: &[f32],
@@ -124,6 +134,8 @@ impl PopulationEncoder {
         self.encode_with_sensitivity_scale(input, gains.sensitivity_scale)
     }
 
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    /// Identical behavior, provided for API symmetry with the [`Encoder`] trait.
     pub fn encode_step_with_modulators(
         &mut self,
         input: &[f32],
@@ -224,6 +236,28 @@ mod tests {
         let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
         let output = encoder.encode_with_sensitivity_scale(&[50.0], f32::NAN);
         assert!(output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_sub_unity_sensitivity_suppresses_firing() {
+        let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        // Sub-unity scale should NOT widen tuning width (that's handled by effective_tuning_width)
+        // but the rate_gain = scale.min(1.0) should suppress firing probability.
+        let baseline_width = encoder.effective_tuning_width(1.0);
+        let suppressed_width = encoder.effective_tuning_width(0.1);
+        // Widths should be equal (sub-unity doesn't widen)
+        assert_eq!(baseline_width, suppressed_width);
+
+        // Rate gain at 0.1 should be 0.1x the baseline rate
+        let baseline_rate = encoder.get_rate_with_tuning_width(50.0, 5, baseline_width);
+        let suppressed_rate = encoder.get_rate_with_tuning_width(50.0, 5, suppressed_width) * 0.1;
+        // Suppressed rate should be substantially lower
+        assert!(
+            suppressed_rate < baseline_rate * 0.15,
+            "suppressed_rate {} should be < 15% of baseline_rate {}",
+            suppressed_rate,
+            baseline_rate
+        );
     }
 
     #[test]

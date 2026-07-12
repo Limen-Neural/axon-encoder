@@ -114,6 +114,15 @@ impl RateEncoder {
         output
     }
 
+    /// Encode input using neuromodulator-driven gain curves.
+    ///
+    /// Evaluates `gain_curves` against the current `modulators` to produce
+    /// an [`EncodingGains`], then uses the `firing_rate_scale` component to
+    /// modulate the base firing rate. Values > 1.0 increase spike frequency;
+    /// values < 1.0 decrease it.
+    ///
+    /// Expected modulator range: any finite f32. Expected gain range after
+    /// sanitization: `[0.0, 10,000.0]`.
     pub fn encode_with_modulators(
         &mut self,
         input: &[f32],
@@ -124,6 +133,9 @@ impl RateEncoder {
         self.encode_with_rate_scale(input, gains.firing_rate_scale)
     }
 
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    /// Uses [`encode_step_with_rate_scale`](Self::encode_step_with_rate_scale)
+    /// for accumulator-based spike generation.
     pub fn encode_step_with_modulators(
         &mut self,
         input: &[f32],

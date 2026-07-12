@@ -142,7 +142,7 @@ pub struct ModulatorGainCurves {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EncodingGains {
     pub threshold_scale: f32,
     pub sensitivity_scale: f32,
@@ -164,6 +164,29 @@ impl EncodingGains {
             sensitivity_scale: sanitize_gain_scale(self.sensitivity_scale),
             firing_rate_scale: sanitize_gain_scale(self.firing_rate_scale),
         }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for EncodingGains {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            threshold_scale: f32,
+            sensitivity_scale: f32,
+            firing_rate_scale: f32,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+        let gains = Self {
+            threshold_scale: helper.threshold_scale,
+            sensitivity_scale: helper.sensitivity_scale,
+            firing_rate_scale: helper.firing_rate_scale,
+        };
+        Ok(gains.sanitize())
     }
 }
 
@@ -287,6 +310,36 @@ mod tests {
         let json = r#"{"input_range":[1.0,0.0],"output_range":[0.0,1.0]}"#;
         let err = serde_json::from_str::<GainCurve>(json).unwrap_err();
         assert!(err.to_string().contains("input_range"));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn gain_curve_rejects_invalid_output_range_deserialize() {
+        // JSON doesn't support NaN/Infinity literals, so we test the validation
+        // path by constructing a GainCurve directly with invalid output_range.
+        let curve = GainCurve {
+            input_range: (0.0, 1.0),
+            output_range: (f32::NAN, 2.0),
+        };
+        assert_eq!(curve.evaluate(0.5), 1.0); // returns identity for invalid output
+
+        let curve2 = GainCurve {
+            input_range: (0.0, 1.0),
+            output_range: (1.0, f32::INFINITY),
+        };
+        assert_eq!(curve2.evaluate(0.5), 1.0);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn encoding_gains_deserialize_sanitizes_values() {
+        // Use out-of-range values that serde_json can parse (NaN is not valid JSON)
+        let json =
+            r#"{"threshold_scale":-999.0,"sensitivity_scale":999999.0,"firing_rate_scale":0.5}"#;
+        let gains: EncodingGains = serde_json::from_str(json).unwrap();
+        assert_eq!(gains.threshold_scale, 0.0); // -999 clamped to MIN_GAIN_SCALE (0.0)
+        assert_eq!(gains.sensitivity_scale, MAX_GAIN_SCALE); // 999999 clamped to MAX_GAIN_SCALE
+        assert_eq!(gains.firing_rate_scale, 0.5); // in range, unchanged
     }
 
     #[test]
