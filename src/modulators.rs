@@ -370,7 +370,10 @@ mod tests {
             },
             ..Default::default()
         };
-        let mods = NeuroModulators { dopamine: 1.0, ..Default::default() };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
         let gains = curves.evaluate(&mods);
         assert_eq!(gains.threshold_scale, 2.0);
         assert_eq!(gains.sensitivity_scale, 1.0);

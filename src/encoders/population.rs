@@ -191,9 +191,18 @@ mod tests {
     #[test]
     fn test_effective_tuning_width_zero_and_negative() {
         let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
-        assert_eq!(encoder.effective_tuning_width(0.0), encoder.tuning_width.max(f32::EPSILON));
-        assert_eq!(encoder.effective_tuning_width(-1.0), encoder.tuning_width.max(f32::EPSILON));
-        assert_eq!(encoder.effective_tuning_width(f32::NAN), encoder.tuning_width.max(f32::EPSILON));
+        assert_eq!(
+            encoder.effective_tuning_width(0.0),
+            encoder.tuning_width.max(f32::EPSILON)
+        );
+        assert_eq!(
+            encoder.effective_tuning_width(-1.0),
+            encoder.tuning_width.max(f32::EPSILON)
+        );
+        assert_eq!(
+            encoder.effective_tuning_width(f32::NAN),
+            encoder.tuning_width.max(f32::EPSILON)
+        );
     }
 
     #[test]

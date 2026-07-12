@@ -267,7 +267,10 @@ mod tests {
     #[test]
     fn test_predictive_encoder_encode_with_modulators() {
         let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
-        let mods = NeuroModulators { acetylcholine: 1.0, ..Default::default() };
+        let mods = NeuroModulators {
+            acetylcholine: 1.0,
+            ..Default::default()
+        };
         let curves = NeuromodulatorGainCurves {
             acetylcholine: ModulatorGainCurves {
                 threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
