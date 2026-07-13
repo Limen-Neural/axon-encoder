@@ -132,6 +132,22 @@ fn test_serde_validation_failures() {
     }"#;
     let res: Result<LatencyEncoder, _> = serde_json::from_str(invalid_latency_json);
     assert!(res.is_err());
+
+    // 6. DerivativeEncoder rejects non-finite thresholds
+    let nonfinite_derivative_json = r#"{
+        "last_values": [0.0, 0.0],
+        "thresholds": [1e309, 1e309]
+    }"#;
+    let res: Result<DerivativeEncoder, _> = serde_json::from_str(nonfinite_derivative_json);
+    assert!(res.is_err());
+
+    // 7. DerivativeEncoder rejects non-finite last_values
+    let nonfinite_state_json = r#"{
+        "last_values": [1e309, 0.0],
+        "thresholds": [1.0, 2.0]
+    }"#;
+    let res: Result<DerivativeEncoder, _> = serde_json::from_str(nonfinite_state_json);
+    assert!(res.is_err());
 }
 
 #[test]

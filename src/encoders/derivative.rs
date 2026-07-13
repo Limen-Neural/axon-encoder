@@ -34,6 +34,12 @@ impl TryFrom<DerivativeEncoderRepr> for DerivativeEncoder {
         if r.thresholds.len() > u16::MAX as usize + 1 {
             return Err("too many channels (max 65536)".into());
         }
+        if r.thresholds.iter().any(|v| !v.is_finite()) {
+            return Err("thresholds must be finite".into());
+        }
+        if r.last_values.iter().any(|v| !v.is_finite()) {
+            return Err("last_values must be finite".into());
+        }
         Ok(Self {
             last_values: r.last_values,
             thresholds: r.thresholds,
@@ -47,6 +53,10 @@ impl DerivativeEncoder {
         assert!(
             thresholds.len() <= u16::MAX as usize + 1,
             "too many channels (max 65536)"
+        );
+        assert!(
+            thresholds.iter().all(|v| v.is_finite()),
+            "thresholds must be finite"
         );
         let num_channels = thresholds.len();
         Self {
