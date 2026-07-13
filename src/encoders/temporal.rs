@@ -97,8 +97,9 @@ impl TemporalEncoder {
     ///
     /// Evaluates `gain_curves` against the current `modulators` to produce
     /// an [`EncodingGains`], then uses the `threshold_scale` component to
-    /// modulate the change-detection threshold. Values > 1.0 increase
-    /// sensitivity; values < 1.0 decrease it.
+    /// modulate the change-detection threshold. Values > 1.0 raise the
+    /// effective threshold (less sensitive — larger changes required to
+    /// spike); values in (0, 1) lower it (more sensitive).
     ///
     /// Input is truncated to the number of tracked channels. Expected
     /// modulator range: any finite f32. Expected gain range after

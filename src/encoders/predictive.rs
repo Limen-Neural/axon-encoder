@@ -102,9 +102,9 @@ impl PredictiveEncoder {
     ///
     /// Evaluates `gain_curves` against the current `modulators` to produce
     /// an [`EncodingGains`], then uses the `threshold_scale` component to
-    /// modulate the deviation detection threshold. Values > 1.0 make the
-    /// encoder more sensitive (lower effective threshold); values < 1.0 make
-    /// it less sensitive.
+    /// modulate the deviation detection threshold. Values > 1.0 raise the
+    /// effective threshold (less sensitive — larger deviations required to
+    /// spike); values in (0, 1) lower it (more sensitive).
     ///
     /// Input is truncated to the number of tracked channels. Expected
     /// modulator range: any finite f32. Expected gain range after

@@ -67,9 +67,9 @@ impl DeltaEncoder {
     ///
     /// Evaluates `gain_curves` against the current `modulators` to produce
     /// an [`EncodingGains`], then uses the `threshold_scale` component to
-    /// modulate the delta-change detection threshold. Values > 1.0 make the
-    /// encoder more sensitive (lower effective threshold); values < 1.0 make
-    /// it less sensitive.
+    /// modulate the delta-change detection threshold. Values > 1.0 raise the
+    /// effective threshold (less sensitive — larger changes required to spike);
+    /// values in (0, 1) lower it (more sensitive).
     ///
     /// `NeuromodulatorGainCurves` composes per-modulator curves
     /// (dopamine, cortisol, acetylcholine, tempo) multiplicatively via
