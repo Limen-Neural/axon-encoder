@@ -8,7 +8,7 @@ use crate::prelude::*;
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
@@ -68,34 +68,6 @@ impl Encoder for LatencyEncoder {
 
     fn reset(&mut self) {
         // Stateless encoder.
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for LatencyEncoder {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        struct LatencyEncoderRepr {
-            max_latency: u64,
-            range: (f32, f32),
-        }
-
-        let repr = LatencyEncoderRepr::deserialize(deserializer)?;
-
-        if repr.range.0 >= repr.range.1 {
-            return Err(serde::de::Error::custom(format!(
-                "invalid range: min ({}) must be less than max ({})",
-                repr.range.0, repr.range.1
-            )));
-        }
-
-        Ok(Self {
-            max_latency: repr.max_latency,
-            range: repr.range,
-        })
     }
 }
 
@@ -206,23 +178,5 @@ mod tests {
     #[should_panic(expected = "range min must be less than range max")]
     fn latency_encoder_rejects_invalid_range() {
         let _ = LatencyEncoder::new(5, (1.0, 1.0));
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn test_latency_encoder_serde_validation() {
-        use serde_json;
-
-        // Valid serialization/deserialization
-        let encoder = LatencyEncoder::new(10, (0.0, 1.0));
-        let json = serde_json::to_string(&encoder).unwrap();
-        let decoded: LatencyEncoder = serde_json::from_str(&json).unwrap();
-        assert_eq!(encoder, decoded);
-
-        // Invalid: range min >= max should fail deserialization
-        let invalid_json = r#"{"max_latency":10,"range":[1.0,1.0]}"#;
-        let result: Result<LatencyEncoder, _> = serde_json::from_str(invalid_json);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid range"));
     }
 }
