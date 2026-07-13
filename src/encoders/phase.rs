@@ -98,8 +98,8 @@ impl PhaseEncoder {
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
 
-        // Guard: zero sensitivity collapses the range, suppressing all output.
-        if sensitivity_scale <= 0.0 {
+        // Guard: zero or non-finite sensitivity collapses the range, suppressing all output.
+        if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
             return output;
         }
 
@@ -371,5 +371,24 @@ mod tests {
         let step = encoder2.encode_step_with_modulators(&input, &mods, &curves);
 
         assert_eq!(batch, step);
+    }
+
+    #[test]
+    fn test_encode_with_modulators_zero_sensitivity_suppresses() {
+        let mut encoder = PhaseEncoder::new(8, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                sensitivity: Some(GainCurve::new((0.0, 1.0), (0.0, 0.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+
+        let output = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+        assert!(output.spikes.is_empty());
     }
 }
