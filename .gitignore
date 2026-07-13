@@ -10,3 +10,6 @@
 
 # Log files
 *.log
+
+# Coverage
+lcov.info

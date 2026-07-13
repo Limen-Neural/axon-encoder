@@ -180,4 +180,10 @@ mod tests {
         let output = encoder.encode(&[10.0]);
         assert!(!output.spikes.is_empty());
     }
+
+    #[test]
+    #[should_panic(expected = "history_depth must be at least 5")]
+    fn test_predictive_encoder_rejects_invalid_history_depth() {
+        let _ = PredictiveEncoder::new(4, vec![(2.0, 1)], 1);
+    }
 }
