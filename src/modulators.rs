@@ -34,9 +34,9 @@ mod tests {
             tempo: 1.0,
         };
         nm.decay();
-        assert!(nm.dopamine < 1.0);
-        assert!(nm.cortisol < 1.0);
-        assert!(nm.acetylcholine < 1.0);
-        assert!(nm.tempo < 1.0);
+        assert!(nm.dopamine.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
+        assert!(nm.cortisol.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
+        assert!(nm.acetylcholine.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
+        assert!(nm.tempo.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
     }
 }

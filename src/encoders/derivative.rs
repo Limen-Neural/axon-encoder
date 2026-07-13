@@ -5,39 +5,10 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DerivativeEncoder {
     last_values: Vec<f32>,
     thresholds: Vec<f32>,
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for DerivativeEncoder {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        struct Helper {
-            last_values: Vec<f32>,
-            thresholds: Vec<f32>,
-        }
-
-        let helper = Helper::deserialize(deserializer)?;
-
-        if helper.last_values.len() != helper.thresholds.len() {
-            return Err(serde::de::Error::custom(format!(
-                "mismatched last_values length ({}) and thresholds length ({})",
-                helper.last_values.len(),
-                helper.thresholds.len()
-            )));
-        }
-
-        Ok(Self {
-            last_values: helper.last_values,
-            thresholds: helper.thresholds,
-        })
-    }
 }
 
 impl DerivativeEncoder {
