@@ -196,14 +196,14 @@ fn test_serde_validation_failures() {
     let res: Result<GainCurve, _> = serde_json::from_str(invalid_gain_curve_json);
     assert!(res.is_err());
 
-    // 6. GainCurve non-finite output_range must be rejected
-    // (JSON doesn't support NaN/Infinity, so we test with very large values instead)
-    let invalid_gain_curve_output_json = r#"{
+    // 6. GainCurve valid case passes (JSON cannot represent NaN/Infinity, so
+    //    non-finite rejection is tested via direct struct construction elsewhere)
+    let valid_gain_curve_json = r#"{
         "input_range": [0.0, 1.0],
         "output_range": [0.0, 1.0]
     }"#;
-    let res: Result<GainCurve, _> = serde_json::from_str(invalid_gain_curve_output_json);
-    assert!(res.is_ok()); // valid case should pass
+    let res: Result<GainCurve, _> = serde_json::from_str(valid_gain_curve_json);
+    assert!(res.is_ok());
 
     // 7. PhaseEncoder zero cycle_steps must be rejected
     let invalid_phase_json = r#"{

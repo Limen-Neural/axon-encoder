@@ -97,6 +97,12 @@ impl PhaseEncoder {
         sensitivity_scale: f32,
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
+
+        // Guard: zero sensitivity collapses the range, suppressing all output.
+        if sensitivity_scale <= 0.0 {
+            return output;
+        }
+
         let scaled_range = (
             self.range.0,
             self.range.0 + (self.range.1 - self.range.0) * sensitivity_scale,
@@ -316,5 +322,54 @@ mod tests {
         let json = r#"{"cycle_steps":0,"range":[0.0,1.0],"current_phase":0}"#;
         let err = serde_json::from_str::<PhaseEncoder>(json).unwrap_err();
         assert!(err.to_string().contains("cycle_steps"));
+    }
+
+    #[test]
+    fn test_encode_with_modulators_identity() {
+        let mut encoder = PhaseEncoder::new(8, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves::default();
+        let mods = NeuroModulators::default();
+
+        let plain = encoder.encode(&[0.5]);
+        let mut encoder2 = PhaseEncoder::new(8, (0.0, 1.0));
+        let modulated = encoder2.encode_with_modulators(&[0.5], &mods, &curves);
+
+        assert_eq!(plain.spikes[0].timestamp, modulated.spikes[0].timestamp);
+    }
+
+    #[test]
+    fn test_encode_with_modulators_sensitivity_scale() {
+        let mut encoder = PhaseEncoder::new(8, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                sensitivity: Some(GainCurve::new((0.0, 1.0), (0.5, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+
+        let output = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+        // sensitivity_scale = 0.5, range = (0.0, 0.5)
+        // value 0.5 maps to normalized 1.0, phase_offset = 7
+        assert_eq!(output.spikes[0].timestamp, 7);
+    }
+
+    #[test]
+    fn test_encode_step_with_modulators_matches_encode() {
+        let input = [0.5];
+        let curves = NeuromodulatorGainCurves::default();
+        let mods = NeuroModulators::default();
+
+        let mut encoder1 = PhaseEncoder::new(8, (0.0, 1.0));
+        let mut encoder2 = PhaseEncoder::new(8, (0.0, 1.0));
+
+        let batch = encoder1.encode_with_modulators(&input, &mods, &curves);
+        let step = encoder2.encode_step_with_modulators(&input, &mods, &curves);
+
+        assert_eq!(batch, step);
     }
 }

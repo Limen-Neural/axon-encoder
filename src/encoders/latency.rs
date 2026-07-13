@@ -290,4 +290,49 @@ mod tests {
         let input = vec![0.0f32; (u16::MAX as usize) + 2];
         let _ = encoder.encode(&input);
     }
+
+    #[test]
+    fn latency_encoder_encode_with_modulators_identity() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves::default();
+        let mods = NeuroModulators::default();
+
+        let plain = encoder.encode(&[0.5]);
+        let modulated = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+
+        assert_eq!(plain.spikes[0].timestamp, modulated.spikes[0].timestamp);
+    }
+
+    #[test]
+    fn latency_encoder_encode_with_modulators_latency_scale() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                latency: Some(GainCurve::new((0.0, 1.0), (0.5, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+
+        let output = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+        // latency_scale = 0.5, so max_latency = 10 * 0.5 = 5
+        // normalized(0.5) = 0.5, timestamp = (1.0 - 0.5) * 5 = 2.5 → 3
+        assert_eq!(output.spikes[0].timestamp, 3);
+    }
+
+    #[test]
+    fn latency_encoder_encode_step_with_modulators_matches_encode() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves::default();
+        let mods = NeuroModulators::default();
+
+        let batch = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+        let step = encoder.encode_step_with_modulators(&[0.5], &mods, &curves);
+
+        assert_eq!(batch, step);
+    }
 }
