@@ -162,4 +162,10 @@ mod tests {
         let output = encoder.encode(&[8.0]);
         assert!(!output.spikes.is_empty());
     }
+
+    #[test]
+    #[should_panic(expected = "history_depth must be at least 6")]
+    fn test_temporal_encoder_new_panics_on_invalid_depth() {
+        let _ = TemporalEncoder::new(5, vec![(2.0, 1)], 1);
+    }
 }
