@@ -5,7 +5,7 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DerivativeEncoder {
     last_values: Vec<f32>,
     thresholds: Vec<f32>,
@@ -66,6 +66,35 @@ impl Encoder for DerivativeEncoder {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for DerivativeEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct DerivativeEncoderRepr {
+            last_values: Vec<f32>,
+            thresholds: Vec<f32>,
+        }
+
+        let repr = DerivativeEncoderRepr::deserialize(deserializer)?;
+
+        if repr.last_values.len() != repr.thresholds.len() {
+            return Err(serde::de::Error::custom(format!(
+                "mismatched last_values length ({}) and thresholds length ({})",
+                repr.last_values.len(),
+                repr.thresholds.len()
+            )));
+        }
+
+        Ok(Self {
+            last_values: repr.last_values,
+            thresholds: repr.thresholds,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +142,23 @@ mod tests {
 
         let output = encoder.encode(&[2.0, 3.0]);
         assert_eq!(output.spikes.len(), 1); // Only channel 0 should be processed
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_derivative_encoder_serde_validation() {
+        use serde_json;
+
+        // Valid serialization/deserialization
+        let encoder = DerivativeEncoder::new(vec![1.0, 2.0]);
+        let json = serde_json::to_string(&encoder).unwrap();
+        let decoded: DerivativeEncoder = serde_json::from_str(&json).unwrap();
+        assert_eq!(encoder, decoded);
+
+        // Invalid: mismatched lengths should fail deserialization
+        let invalid_json = r#"{"last_values":[1.0,2.0,3.0],"thresholds":[1.0,2.0]}"#;
+        let result: Result<DerivativeEncoder, _> = serde_json::from_str(invalid_json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("mismatched"));
     }
 }
