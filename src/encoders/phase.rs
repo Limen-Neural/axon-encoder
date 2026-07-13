@@ -90,6 +90,75 @@ impl PhaseEncoder {
     fn advance_phase(&mut self) {
         self.current_phase = self.current_phase.saturating_add(1);
     }
+
+    fn encode_current_cycle_with_sensitivity_scale(
+        &self,
+        input: &[f32],
+        sensitivity_scale: f32,
+    ) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        let scaled_range = (
+            self.range.0,
+            self.range.0 + (self.range.1 - self.range.0) * sensitivity_scale,
+        );
+
+        for (channel, &value) in input.iter().enumerate() {
+            if !value.is_finite() {
+                continue;
+            }
+
+            let Ok(channel_u16) = u16::try_from(channel) else {
+                break;
+            };
+
+            let normalized =
+                ((value - scaled_range.0) / (scaled_range.1 - scaled_range.0)).clamp(0.0, 1.0);
+            let phase_offset = self.phase_offset(normalized);
+            output.spikes.push(SpikeEvent {
+                channel: channel_u16,
+                timestamp: self.current_phase.saturating_add(phase_offset),
+                polarity: true,
+            });
+        }
+
+        output
+    }
+
+    /// Encode input using neuromodulator-driven gain curves.
+    ///
+    /// Evaluates `gain_curves` against the current `modulators` to produce
+    /// an [`EncodingGains`], then uses the `sensitivity_scale` component to
+    /// modulate the input-to-phase mapping range. Values > 1.0 widen the range
+    /// (more sensitive); values in (0, 1) narrow it (less sensitive).
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        let output =
+            self.encode_current_cycle_with_sensitivity_scale(input, gains.sensitivity_scale);
+        self.advance_phase();
+        output
+    }
+
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    ///
+    /// Identical behavior — provided for API symmetry with the [`Encoder`] trait's
+    /// `encode` / `encode_step` pair.
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        let output =
+            self.encode_current_cycle_with_sensitivity_scale(input, gains.sensitivity_scale);
+        self.advance_phase();
+        output
+    }
 }
 
 impl Encoder for PhaseEncoder {

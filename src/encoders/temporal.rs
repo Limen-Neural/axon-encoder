@@ -80,7 +80,7 @@ impl TemporalEncoder {
             let change = (recent_avg - older_avg).abs();
 
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
-                if change > threshold * threshold_scale {
+                if change > (threshold * threshold_scale).max(0.0) {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
                         timestamp: 0,   // Simplified

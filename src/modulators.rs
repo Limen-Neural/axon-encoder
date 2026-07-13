@@ -70,6 +70,10 @@ impl GainCurve {
             && self.input_range.0 < self.input_range.1
     }
 
+    /// Evaluate the gain curve at the given modulator level.
+    ///
+    /// Negative levels are clamped to `input_range.0` and behave identically
+    /// to zero. NaN or non-finite levels return the identity gain (1.0).
     pub fn evaluate(&self, level: f32) -> f32 {
         // Guard against NaN levels and invalid ranges that can arise from
         // public fields or bypassed constructors (e.g. deserialization).
@@ -139,14 +143,27 @@ pub struct ModulatorGainCurves {
     pub threshold: Option<GainCurve>,
     pub sensitivity: Option<GainCurve>,
     pub firing_rate: Option<GainCurve>,
+    pub latency: Option<GainCurve>,
 }
 
+/// Scales produced by neuromodulator gain curves for each encoder component.
+///
+/// # Zero-gain semantics
+///
+/// The meaning of a 0.0 gain depends on the component:
+/// - `threshold_scale = 0.0` → effective threshold is 0 → every input spikes (maximum sensitivity)
+/// - `sensitivity_scale = 0.0` → output is suppressed (no spikes for PopulationEncoder)
+/// - `firing_rate_scale = 0.0` → firing rate is 0 → no spikes (silence)
+/// - `latency_scale = 0.0` → max_latency is 0 → all spikes at timestamp 0 (instant response)
+///
+/// This asymmetry is intentional and reflects the physical semantics of each component.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EncodingGains {
     pub threshold_scale: f32,
     pub sensitivity_scale: f32,
     pub firing_rate_scale: f32,
+    pub latency_scale: f32,
 }
 
 impl EncodingGains {
@@ -155,6 +172,7 @@ impl EncodingGains {
             threshold_scale: 1.0,
             sensitivity_scale: 1.0,
             firing_rate_scale: 1.0,
+            latency_scale: 1.0,
         }
     }
 
@@ -163,6 +181,7 @@ impl EncodingGains {
             threshold_scale: sanitize_gain_scale(self.threshold_scale),
             sensitivity_scale: sanitize_gain_scale(self.sensitivity_scale),
             firing_rate_scale: sanitize_gain_scale(self.firing_rate_scale),
+            latency_scale: sanitize_gain_scale(self.latency_scale),
         }
     }
 }
@@ -178,6 +197,12 @@ impl<'de> serde::Deserialize<'de> for EncodingGains {
             threshold_scale: f32,
             sensitivity_scale: f32,
             firing_rate_scale: f32,
+            #[serde(default = "default_latency_scale")]
+            latency_scale: f32,
+        }
+
+        fn default_latency_scale() -> f32 {
+            1.0
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -185,6 +210,7 @@ impl<'de> serde::Deserialize<'de> for EncodingGains {
             threshold_scale: helper.threshold_scale,
             sensitivity_scale: helper.sensitivity_scale,
             firing_rate_scale: helper.firing_rate_scale,
+            latency_scale: helper.latency_scale,
         };
         Ok(gains.sanitize())
     }
@@ -230,6 +256,9 @@ impl NeuromodulatorGainCurves {
         }
         if let Some(curve) = curves.firing_rate {
             gains.firing_rate_scale *= curve.evaluate(level);
+        }
+        if let Some(curve) = curves.latency {
+            gains.latency_scale *= curve.evaluate(level);
         }
     }
 }
@@ -302,6 +331,7 @@ mod tests {
         assert_eq!(gains.threshold_scale, 0.5);
         assert_eq!(gains.sensitivity_scale, 1.25);
         assert_eq!(gains.firing_rate_scale, 3.0);
+        assert_eq!(gains.latency_scale, 1.0); // no latency curve set
     }
 
     #[cfg(feature = "serde")]
@@ -340,6 +370,7 @@ mod tests {
         assert_eq!(gains.threshold_scale, 0.0); // -999 clamped to MIN_GAIN_SCALE (0.0)
         assert_eq!(gains.sensitivity_scale, MAX_GAIN_SCALE); // 999999 clamped to MAX_GAIN_SCALE
         assert_eq!(gains.firing_rate_scale, 0.5); // in range, unchanged
+        assert_eq!(gains.latency_scale, 1.0); // defaults to 1.0 when omitted
     }
 
     #[test]
@@ -401,11 +432,13 @@ mod tests {
             threshold_scale: f32::NAN,
             sensitivity_scale: f32::INFINITY,
             firing_rate_scale: -1.0,
+            latency_scale: 0.5,
         };
         let sanitized = gains.sanitize();
         assert_eq!(sanitized.threshold_scale, 1.0);
         assert_eq!(sanitized.sensitivity_scale, 1.0);
         assert_eq!(sanitized.firing_rate_scale, 0.0);
+        assert_eq!(sanitized.latency_scale, 0.5);
     }
 
     #[test]
@@ -416,6 +449,7 @@ mod tests {
         assert_eq!(gains.threshold_scale, 1.0);
         assert_eq!(gains.sensitivity_scale, 1.0);
         assert_eq!(gains.firing_rate_scale, 1.0);
+        assert_eq!(gains.latency_scale, 1.0);
     }
 
     #[test]
@@ -435,6 +469,7 @@ mod tests {
         assert_eq!(gains.threshold_scale, 2.0);
         assert_eq!(gains.sensitivity_scale, 1.0);
         assert_eq!(gains.firing_rate_scale, 1.0);
+        assert_eq!(gains.latency_scale, 1.0);
     }
 
     #[test]

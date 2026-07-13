@@ -25,14 +25,17 @@ impl LatencyEncoder {
     ///
     /// # Panics
     ///
-    /// Panics if `range.0 >= range.1`.
+    /// Panics if `range.0 >= range.1` or if either bound is non-finite.
     pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
-        assert!(range.0 < range.1, "range min must be less than range max");
+        assert!(
+            range.0.is_finite() && range.1.is_finite() && range.0 < range.1,
+            "range must be finite and min must be less than max"
+        );
 
         Self { max_latency, range }
     }
 
-    fn clamp_and_normalize(&self, value: f32) -> f32 {
+    fn normalize(&self, value: f32) -> f32 {
         let clamped = value.clamp(self.range.0, self.range.1);
         (clamped - self.range.0) / (self.range.1 - self.range.0)
     }
@@ -47,8 +50,66 @@ impl LatencyEncoder {
             return self.max_latency;
         }
 
-        let normalized = self.clamp_and_normalize(value) as f64;
+        let normalized = self.normalize(value) as f64;
         ((1.0 - normalized) * self.max_latency as f64).round() as u64
+    }
+
+    fn timestamp_for_with_latency_scale(&self, value: f32, latency_scale: f32) -> u64 {
+        let scaled_latency = ((self.max_latency as f64) * (latency_scale as f64)).round() as u64;
+        if scaled_latency == 0 {
+            return 0;
+        }
+        if value.is_nan() {
+            return scaled_latency;
+        }
+
+        let normalized = self.normalize(value) as f64;
+        ((1.0 - normalized) * scaled_latency as f64).round() as u64
+    }
+
+    /// Encode input using neuromodulator-driven gain curves.
+    ///
+    /// Evaluates `gain_curves` against the current `modulators` to produce
+    /// an [`EncodingGains`], then uses the `latency_scale` component to
+    /// modulate the maximum latency. Values > 1.0 increase max_latency
+    /// (slower response); values in (0, 1) decrease it (faster response).
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_latency_scale(input, gains.latency_scale)
+    }
+
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    ///
+    /// Identical behavior — provided for API symmetry with the [`Encoder`] trait's
+    /// `encode` / `encode_step` pair.
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_latency_scale(input, gains.latency_scale)
+    }
+
+    fn encode_with_latency_scale(&mut self, input: &[f32], latency_scale: f32) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        output.spikes.reserve(input.len());
+
+        for (channel, &value) in input.iter().enumerate() {
+            output.spikes.push(SpikeEvent {
+                channel: u16::try_from(channel).expect("channel index exceeds u16::MAX"),
+                timestamp: self.timestamp_for_with_latency_scale(value, latency_scale),
+                polarity: true,
+            });
+        }
+
+        output
     }
 }
 
@@ -91,12 +152,15 @@ impl<'de> serde::Deserialize<'de> for LatencyEncoder {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        if !matches!(
-            helper.range.0.partial_cmp(&helper.range.1),
-            Some(std::cmp::Ordering::Less)
-        ) {
+        if !helper.range.0.is_finite()
+            || !helper.range.1.is_finite()
+            || !matches!(
+                helper.range.0.partial_cmp(&helper.range.1),
+                Some(std::cmp::Ordering::Less)
+            )
+        {
             return Err(serde::de::Error::custom(
-                "range min must be less than range max",
+                "range must be finite and min must be less than max",
             ));
         }
 
@@ -208,9 +272,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "range min must be less than range max")]
+    #[should_panic(expected = "range must be finite and min must be less than max")]
     fn latency_encoder_rejects_invalid_range() {
         let _ = LatencyEncoder::new(5, (1.0, 1.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "range must be finite and min must be less than max")]
+    fn latency_encoder_rejects_infinite_range() {
+        let _ = LatencyEncoder::new(10, (f32::NEG_INFINITY, f32::INFINITY));
     }
 
     #[test]

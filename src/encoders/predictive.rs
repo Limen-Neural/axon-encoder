@@ -85,7 +85,7 @@ impl PredictiveEncoder {
             let deviation = (value - self.thresholds[i]).abs();
 
             for &(threshold, _spike_val) in self.deviation_thresholds.iter().rev() {
-                if deviation > threshold * threshold_scale {
+                if deviation > (threshold * threshold_scale).max(0.0) {
                     output.spikes.push(SpikeEvent {
                         channel: i as u16,
                         timestamp: 0,   // Simplified
