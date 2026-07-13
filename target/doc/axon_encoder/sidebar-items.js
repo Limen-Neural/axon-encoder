@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["cuda","encoder","encoders","modulators","poisson","prelude","rng","spike_encoder","types"],"trait":["Encoder"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["encode_deltas_to_spikes"],"struct":["DeltaEncoder"]};

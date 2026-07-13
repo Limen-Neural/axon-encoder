@@ -7,6 +7,7 @@
 .mimocode/plans/          # MiMoCode ephemeral plans
 .cursor/                  # Cursor local MCP/indexes (commit rules/ if valuable)
 .cursorignore             # Optional: keep if project-specific
+.worktrees/               # MiMoCode worktrees
 
 # Standard dev + your data
 node_modules/

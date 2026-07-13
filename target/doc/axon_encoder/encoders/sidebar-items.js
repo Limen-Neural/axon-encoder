@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["delta","population","predictive","rate","temporal"]};
