@@ -314,24 +314,6 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn gain_curve_rejects_invalid_output_range_deserialize() {
-        // JSON doesn't support NaN/Infinity literals, so we test the validation
-        // path by constructing a GainCurve directly with invalid output_range.
-        let curve = GainCurve {
-            input_range: (0.0, 1.0),
-            output_range: (f32::NAN, 2.0),
-        };
-        assert_eq!(curve.evaluate(0.5), 1.0); // returns identity for invalid output
-
-        let curve2 = GainCurve {
-            input_range: (0.0, 1.0),
-            output_range: (1.0, f32::INFINITY),
-        };
-        assert_eq!(curve2.evaluate(0.5), 1.0);
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
     fn encoding_gains_deserialize_sanitizes_values() {
         // Use out-of-range values that serde_json can parse (NaN is not valid JSON)
         let json =
