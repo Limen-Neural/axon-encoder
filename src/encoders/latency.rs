@@ -35,9 +35,12 @@ impl LatencyEncoder {
         Self { max_latency, range }
     }
 
-    fn normalize(&self, value: f32) -> f32 {
-        let clamped = value.clamp(self.range.0, self.range.1);
-        (clamped - self.range.0) / (self.range.1 - self.range.0)
+    fn normalize(&self, value: f32) -> f64 {
+        // Use f64 to prevent overflow for valid f32 ranges (e.g., f32::MIN..f32::MAX).
+        let clamped = value.clamp(self.range.0, self.range.1) as f64;
+        let lo = self.range.0 as f64;
+        let hi = self.range.1 as f64;
+        (clamped - lo) / (hi - lo)
     }
 
     fn timestamp_for(&self, value: f32) -> u64 {
@@ -50,7 +53,7 @@ impl LatencyEncoder {
             return self.max_latency;
         }
 
-        let normalized = self.normalize(value) as f64;
+        let normalized = self.normalize(value);
         ((1.0 - normalized) * self.max_latency as f64).round() as u64
     }
 
@@ -63,7 +66,7 @@ impl LatencyEncoder {
             return scaled_latency;
         }
 
-        let normalized = self.normalize(value) as f64;
+        let normalized = self.normalize(value);
         ((1.0 - normalized) * scaled_latency as f64).round() as u64
     }
 

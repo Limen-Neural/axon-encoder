@@ -103,10 +103,10 @@ impl PhaseEncoder {
             return output;
         }
 
-        let scaled_range = (
-            self.range.0,
-            self.range.0 + (self.range.1 - self.range.0) * sensitivity_scale,
-        );
+        // Use f64 to prevent overflow for valid f32 ranges and scales.
+        let lo = self.range.0 as f64;
+        let hi = lo + (self.range.1 as f64 - lo) * (sensitivity_scale as f64);
+        let scaled_range = (lo as f32, hi as f32);
 
         for (channel, &value) in input.iter().enumerate() {
             if !value.is_finite() {

@@ -72,8 +72,8 @@ impl GainCurve {
 
     /// Evaluate the gain curve at the given modulator level.
     ///
-    /// Negative levels are clamped to `input_range.0` and behave identically
-    /// to zero. NaN or non-finite levels return the identity gain (1.0).
+    /// Negative levels are clamped to `input_range.0`. NaN or non-finite
+    /// levels return the identity gain (1.0).
     pub fn evaluate(&self, level: f32) -> f32 {
         // Guard against NaN levels and invalid ranges that can arise from
         // public fields or bypassed constructors (e.g. deserialization).
@@ -88,9 +88,10 @@ impl GainCurve {
         let clamped_level = level.clamp(self.input_range.0, self.input_range.1);
         let span = self.input_range.1 - self.input_range.0;
         // span is guaranteed > 0 by has_valid_input_range
-        let position = (clamped_level - self.input_range.0) / span;
-        let raw_scale =
-            self.output_range.0 + position * (self.output_range.1 - self.output_range.0);
+        let position = ((clamped_level as f64 - self.input_range.0 as f64) / (span as f64)) as f32;
+
+        // Use lerp form to avoid overflow when output_range spans nearly f32::MAX.
+        let raw_scale = self.output_range.0 * (1.0 - position) + self.output_range.1 * position;
 
         sanitize_gain_scale(raw_scale)
     }
