@@ -116,6 +116,22 @@ fn test_serde_validation_failures() {
     }"#;
     let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
     assert!(res.is_err());
+
+    // 4. DerivativeEncoder mismatched last_values/thresholds lengths
+    let invalid_derivative_json = r#"{
+        "last_values": [0.0],
+        "thresholds": [1.0, 2.0]
+    }"#;
+    let res: Result<DerivativeEncoder, _> = serde_json::from_str(invalid_derivative_json);
+    assert!(res.is_err());
+
+    // 5. LatencyEncoder invalid range (min >= max) must be rejected
+    let invalid_latency_json = r#"{
+        "max_latency": 5,
+        "range": [1.0, 0.5]
+    }"#;
+    let res: Result<LatencyEncoder, _> = serde_json::from_str(invalid_latency_json);
+    assert!(res.is_err());
 }
 
 #[test]
@@ -153,12 +169,12 @@ fn test_serde_validation_errors_extended() {
     assert!(res.is_err());
 
     // Test non-finite embeddings
-    let _invalid_rate_json = r#"{
+    let invalid_rate_json = r#"{
         "config": {"v_th": 1.0},
-        "normalized_embeddings": [null, "NaN"]
+        "normalized_embeddings": [1e309, 1e309]
     }"#;
-    // Note: Serde might fail to parse null/string into f32 depending on config, but here we expect the TryFrom to catch it if parse succeeds.
-    // Actually let's use a simpler way to trigger non-finite in JSON if possible, or just trust the code logic.
+    let res: Result<EmbeddingRateEncoder, _> = serde_json::from_str(invalid_rate_json);
+    assert!(res.is_err());
 }
 
 #[test]
