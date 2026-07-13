@@ -135,7 +135,7 @@ impl PhaseEncoder {
     /// Evaluates `gain_curves` against the current `modulators` to produce
     /// an [`EncodingGains`], then uses the `sensitivity_scale` component to
     /// modulate the input-to-phase mapping range. Values > 1.0 widen the range
-    /// (more sensitive); values in (0, 1) narrow it (less sensitive).
+    /// (less sensitive); values in (0, 1) narrow it (more sensitive).
     pub fn encode_with_modulators(
         &mut self,
         input: &[f32],
