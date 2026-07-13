@@ -184,7 +184,7 @@ mod tests {
         let output = encoder.encode(&input);
         assert!(output.spikes.len() <= 3);
         for spike in &output.spikes {
-            assert!(spike.channel < 3);
+            assert!(u32::from(spike.channel) < 3);
         }
     }
 

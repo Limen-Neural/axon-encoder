@@ -6,58 +6,14 @@ use crate::prelude::*;
 /// and an inhibitory spike when the negative change exceeds the threshold.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(try_from = "DerivativeEncoderRepr"))]
 pub struct DerivativeEncoder {
     last_values: Vec<f32>,
     thresholds: Vec<f32>,
 }
 
-#[cfg(feature = "serde")]
-#[derive(serde::Deserialize)]
-struct DerivativeEncoderRepr {
-    last_values: Vec<f32>,
-    thresholds: Vec<f32>,
-}
-
-#[cfg(feature = "serde")]
-impl TryFrom<DerivativeEncoderRepr> for DerivativeEncoder {
-    type Error = String;
-
-    fn try_from(r: DerivativeEncoderRepr) -> Result<Self, String> {
-        if r.last_values.len() != r.thresholds.len() {
-            return Err(format!(
-                "mismatched last_values length ({}) and thresholds length ({})",
-                r.last_values.len(),
-                r.thresholds.len()
-            ));
-        }
-        if r.thresholds.len() > u16::MAX as usize + 1 {
-            return Err("too many channels (max 65536)".into());
-        }
-        if r.thresholds.iter().any(|v| !v.is_finite()) {
-            return Err("thresholds must be finite".into());
-        }
-        if r.last_values.iter().any(|v| !v.is_finite()) {
-            return Err("last_values must be finite".into());
-        }
-        Ok(Self {
-            last_values: r.last_values,
-            thresholds: r.thresholds,
-        })
-    }
-}
-
 impl DerivativeEncoder {
     /// Creates a new `DerivativeEncoder` with specific thresholds for each channel.
     pub fn new(thresholds: Vec<f32>) -> Self {
-        assert!(
-            thresholds.len() <= u16::MAX as usize + 1,
-            "too many channels (max 65536)"
-        );
-        assert!(
-            thresholds.iter().all(|v| v.is_finite()),
-            "thresholds must be finite"
-        );
         let num_channels = thresholds.len();
         Self {
             last_values: vec![0.0; num_channels],

@@ -9,32 +9,9 @@ use crate::prelude::*;
 /// timestamp `0`.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(try_from = "LatencyEncoderRepr"))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Deserialize)]
-struct LatencyEncoderRepr {
-    max_latency: u64,
-    range: (f32, f32),
-}
-
-#[cfg(feature = "serde")]
-impl TryFrom<LatencyEncoderRepr> for LatencyEncoder {
-    type Error = String;
-
-    fn try_from(r: LatencyEncoderRepr) -> Result<Self, String> {
-        if r.range.0.partial_cmp(&r.range.1) != Some(core::cmp::Ordering::Less) {
-            return Err("range min must be less than range max".into());
-        }
-        Ok(Self {
-            max_latency: r.max_latency,
-            range: r.range,
-        })
-    }
 }
 
 impl LatencyEncoder {
