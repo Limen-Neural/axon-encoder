@@ -18,7 +18,7 @@ impl TryFrom<EmbeddingEncoderConfigRepr> for EmbeddingEncoderConfig {
     type Error = String;
 
     fn try_from(r: EmbeddingEncoderConfigRepr) -> Result<Self, String> {
-        if r.v_th <= 0.0 {
+        if r.v_th.is_nan() || r.v_th <= 0.0 {
             return Err("v_th must be positive".into());
         }
         Ok(Self { v_th: r.v_th })

@@ -8,10 +8,40 @@ use crate::prelude::*;
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for LatencyEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            max_latency: u64,
+            range: (f32, f32),
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if !matches!(
+            helper.range.0.partial_cmp(&helper.range.1),
+            Some(std::cmp::Ordering::Less)
+        ) {
+            return Err(serde::de::Error::custom(
+                "range min must be less than range max",
+            ));
+        }
+
+        Ok(Self {
+            max_latency: helper.max_latency,
+            range: helper.range,
+        })
+    }
 }
 
 impl LatencyEncoder {
