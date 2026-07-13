@@ -1,13 +1,34 @@
-# Compiled output
-/target
+# AI Tool Local/Ephemeral (no clutter)
+.kilo/worktrees/          # Kilo Agent Manager temp
+.kilo/*.json              # If any local state (commit tui.jsonc manually if needed)
+.kilocode/worktrees/
+.devin/cache/             # Devin build artifacts (if any)
+.mimocode/auth.json       # Never commit creds
+.mimocode/plans/          # MiMoCode ephemeral plans
+.cursor/                  # Cursor local MCP/indexes (commit rules/ if valuable)
+.cursorignore             # Optional: keep if project-specific
 
-# General editor and OS files
-.vscode/
-.idea/
-*.swp
-*~
-.DS_Store
-
-# Log files
+# Standard dev + your data
+node_modules/
+dist/
+build/
 *.log
-.worktrees/
+.env*
+*.env
+__pycache__/
+.cache/
+.DS_Store
+# Your large telemetry/datasets (keep in data/ or separate)
+neuromorphic_data/        # Or whatever your 378MB+ GPU/mining sets are named
+
+# Tool-specific ignores (these files exist but we control via their own ignores)
+# .kilocodeignore  # Committed - Kilo uses it
+# .cursorignore    # Committed - Cursor uses it
+
+# Negations: Force-commit the good stuff
+!.kilo/skills/**         # Your custom SNN skills
+!.kilo/tui.jsonc
+!.devin/blueprint.yaml   # Critical for Devin
+!.mimocode/mimocode.jsonc
+!.mimocode/AGENTS.md
+!.kilocodeignore
