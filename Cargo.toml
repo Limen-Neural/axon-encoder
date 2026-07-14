@@ -7,15 +7,16 @@ license = "MIT OR Apache-2.0"
 edition = "2021"
 
 [dependencies]
+ndarray = { version = "0.17.2", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8.2"
 serde_json = "1.0"
 
 [features]
 default = []
-ndarray = []
+ndarray = ["dep:ndarray"]
 cuda = []
 serde = ["dep:serde"]
 
