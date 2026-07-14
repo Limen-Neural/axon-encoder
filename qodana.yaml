@@ -42,5 +42,5 @@ profile:
 #    fresh: 70
 #    total: 50
 
-#Specify Qodana linter for analysis (Applied in CI/CD pipeline)
-linter: jetbrains/qodana-rust:2026.1
+#Specify Qodana Docker image for analysis (Applied in CI/CD pipeline)
+image: jetbrains/qodana-rust:2026.1-eap
