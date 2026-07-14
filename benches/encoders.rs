@@ -2,7 +2,8 @@ use axon_encoder::encoders::{
     DeltaEncoder, PopulationEncoder, PredictiveEncoder, RateEncoder, TemporalEncoder,
 };
 use axon_encoder::prelude::*;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 
 const SCALES: [usize; 3] = [256, 1024, 10_000];
 const POISSON_STEPS: [usize; 3] = [10, 100, 1000];
