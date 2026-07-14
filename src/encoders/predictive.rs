@@ -87,7 +87,7 @@ impl PredictiveEncoder {
             for &(threshold, _spike_val) in self.deviation_thresholds.iter().rev() {
                 if deviation > (threshold * threshold_scale).max(0.0) {
                     output.spikes.push(SpikeEvent {
-                        channel: i as u16,
+                        channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                         timestamp: 0,   // Simplified
                         polarity: true, // Indicates a deviation spike
                     });
@@ -224,11 +224,11 @@ mod tests {
     #[test]
     fn test_predictive_encoder() {
         let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 1);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
         let output = encoder.encode(&[10.0]);
         assert!(!output.spikes.is_empty());
     }

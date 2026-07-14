@@ -104,7 +104,7 @@ impl PopulationEncoder {
                 let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
                 if crate::rng::gen_unit_f32() < rate {
                     output.spikes.push(SpikeEvent {
-                        channel: i as u16,
+                        channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                         timestamp: 0, // Simplified
                         polarity: true,
                     });

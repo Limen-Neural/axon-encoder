@@ -82,7 +82,7 @@ impl TemporalEncoder {
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
                 if change > (threshold * threshold_scale).max(0.0) {
                     output.spikes.push(SpikeEvent {
-                        channel: i as u16,
+                        channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                         timestamp: 0,   // Simplified
                         polarity: true, // Or use spike_val to determine polarity/strength
                     });
@@ -206,11 +206,11 @@ mod tests {
     #[test]
     fn test_temporal_encoder() {
         let mut encoder = TemporalEncoder::new(6, vec![(2.0, 1), (5.0, 2)], 1);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[8.0]);
-        encoder.encode(&[8.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[8.0]);
+        let _output = encoder.encode(&[8.0]);
         let output = encoder.encode(&[8.0]);
         assert!(!output.spikes.is_empty());
     }

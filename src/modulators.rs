@@ -15,7 +15,8 @@ fn sanitize_gain_scale(scale: f32) -> f32 {
     scale.clamp(MIN_GAIN_SCALE, MAX_GAIN_SCALE)
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NeuroModulators {
     pub dopamine: f32,
     pub cortisol: f32,

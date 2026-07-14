@@ -7,17 +7,34 @@ use crate::prelude::*;
 /// inputs fire earlier. Values below the range minimum map to the latest
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
-///
-/// # Timestamp precision
-///
-/// Timestamps are computed via `f64` arithmetic. For extremely large
-/// `max_latency` values (above `2^53`), the conversion from `u64` to `f64`
-/// can lose low-order bits; such latencies are unrealistic for spike timing.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "LatencyEncoderRepr"))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct LatencyEncoderRepr {
+    max_latency: u64,
+    range: (f32, f32),
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<LatencyEncoderRepr> for LatencyEncoder {
+    type Error = String;
+
+    fn try_from(r: LatencyEncoderRepr) -> Result<Self, String> {
+        if r.range.0.partial_cmp(&r.range.1) != Some(core::cmp::Ordering::Less) {
+            return Err("range min must be less than range max".into());
+        }
+        Ok(Self {
+            max_latency: r.max_latency,
+            range: r.range,
+        })
+    }
 }
 
 impl LatencyEncoder {
@@ -47,8 +64,6 @@ impl LatencyEncoder {
         if self.max_latency == 0 {
             return 0;
         }
-        // Handle NaN before clamp: f32::clamp does not clamp NaN.
-        // Treat unknown values as the weakest input (latest spike).
         if value.is_nan() {
             return self.max_latency;
         }
@@ -205,6 +220,19 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn test_latency_encoder_nan() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let output = encoder.encode(&[f32::NAN]);
+        assert_eq!(output.spikes[0].timestamp, 10);
+    }
+
+    #[test]
+    fn test_latency_encoder_reset() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        encoder.reset(); // Should do nothing
     }
 
     #[test]
