@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["EncodedOutput","EncoderConfig","EncodingMetadata","SpikeEvent"]};

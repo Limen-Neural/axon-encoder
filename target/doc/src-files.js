@@ -1,2 +1,0 @@
-createSrcSidebar('[["axon_encoder",["",[["encoders",[],["delta.rs","mod.rs","population.rs","predictive.rs","rate.rs","temporal.rs"]]],["cuda.rs","encoder.rs","lib.rs","modulators.rs","poisson.rs","rng.rs","spike_encoder.rs","types.rs"]]],["axon_encoder",["",[["encoders",[],["delta.rs","mod.rs","population.rs","predictive.rs","rate.rs","temporal.rs"]]],["encoder.rs","lib.rs","modulators.rs","poisson.rs","rng.rs","spike_encoder.rs","types.rs"]]]]');
-//{"start":19,"fragment_lengths":[219,210]}

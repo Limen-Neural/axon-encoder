@@ -10,7 +10,13 @@
 .worktrees/
 
 # Compiled output
-/target
+/target/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
 
 # Standard dev + your data
 node_modules/
@@ -23,8 +29,7 @@ __pycache__/
 .cache/
 .DS_Store
 neuromorphic_data/
-.idea
-target
+remotes.txt
 
 # Negations: Force-commit the good stuff
 !.kilo/skills/**
