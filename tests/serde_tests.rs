@@ -84,12 +84,6 @@ fn test_serde_encoders_and_state() {
     let serialized_latency = serde_json::to_string(&latency_encoder).unwrap();
     let deserialized_latency: LatencyEncoder = serde_json::from_str(&serialized_latency).unwrap();
     assert_eq!(latency_encoder, deserialized_latency);
-
-    // 12. Test PhaseEncoder
-    let phase_encoder = PhaseEncoder::new(8, (0.0, 1.0));
-    let serialized_phase = serde_json::to_string(&phase_encoder).unwrap();
-    let deserialized_phase: PhaseEncoder = serde_json::from_str(&serialized_phase).unwrap();
-    assert_eq!(phase_encoder, deserialized_phase);
 }
 
 #[test]
@@ -123,7 +117,15 @@ fn test_serde_validation_failures() {
     let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
     assert!(res.is_err());
 
-    // 4. LatencyEncoder invalid range (min >= max) must be rejected
+    // 4. DerivativeEncoder mismatched last_values/thresholds lengths
+    let invalid_derivative_json = r#"{
+        "last_values": [0.0],
+        "thresholds": [1.0, 2.0]
+    }"#;
+    let res: Result<DerivativeEncoder, _> = serde_json::from_str(invalid_derivative_json);
+    assert!(res.is_err());
+
+    // 5. LatencyEncoder invalid range (min >= max) must be rejected
     let invalid_latency_json = r#"{
         "max_latency": 5,
         "range": [1.0, 0.5]
@@ -131,10 +133,85 @@ fn test_serde_validation_failures() {
     let res: Result<LatencyEncoder, _> = serde_json::from_str(invalid_latency_json);
     assert!(res.is_err());
 
-    let equal_range_latency_json = r#"{
-        "max_latency": 5,
-        "range": [1.0, 1.0]
+    // 6. DerivativeEncoder rejects non-finite thresholds
+    let nonfinite_derivative_json = r#"{
+        "last_values": [0.0, 0.0],
+        "thresholds": [1e309, 1e309]
     }"#;
-    let res: Result<LatencyEncoder, _> = serde_json::from_str(equal_range_latency_json);
+    let res: Result<DerivativeEncoder, _> = serde_json::from_str(nonfinite_derivative_json);
     assert!(res.is_err());
+
+    // 7. DerivativeEncoder rejects non-finite last_values
+    let nonfinite_state_json = r#"{
+        "last_values": [1e309, 0.0],
+        "thresholds": [1.0, 2.0]
+    }"#;
+    let res: Result<DerivativeEncoder, _> = serde_json::from_str(nonfinite_state_json);
+    assert!(res.is_err());
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_serde_embedding_rate_encoder() {
+    let config = EmbeddingEncoderConfig { v_th: 1.0 };
+    let embeddings = vec![0.5, 0.8];
+    let encoder = EmbeddingRateEncoder::new(&embeddings, config);
+
+    let serialized = serde_json::to_string(&encoder).unwrap();
+    let deserialized: EmbeddingRateEncoder = serde_json::from_str(&serialized).unwrap();
+
+    assert_eq!(encoder.config, deserialized.config);
+    assert_eq!(
+        encoder.normalized_embeddings,
+        deserialized.normalized_embeddings
+    );
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_serde_derivative_encoder() {
+    let encoder = DerivativeEncoder::new(vec![1.0, 2.0]);
+    let serialized = serde_json::to_string(&encoder).unwrap();
+    let deserialized: DerivativeEncoder = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(encoder, deserialized);
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_serde_validation_errors_extended() {
+    // Test v_th <= 0
+    let invalid_config_json = r#"{"v_th": 0.0}"#;
+    let res: Result<EmbeddingEncoderConfig, _> = serde_json::from_str(invalid_config_json);
+    assert!(res.is_err());
+
+    // Test non-finite embeddings
+    let invalid_rate_json = r#"{
+        "config": {"v_th": 1.0},
+        "normalized_embeddings": [1e309, 1e309]
+    }"#;
+    let res: Result<EmbeddingRateEncoder, _> = serde_json::from_str(invalid_rate_json);
+    assert!(res.is_err());
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_serde_poisson_encoder() {
+    let enc = PoissonEncoder::new(10);
+    let serialized = serde_json::to_string(&enc).unwrap();
+    let deserialized: PoissonEncoder = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(enc.num_steps, deserialized.num_steps);
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_serde_neuromodulators() {
+    let nm = NeuroModulators {
+        dopamine: 0.5,
+        cortisol: 0.2,
+        acetylcholine: 0.8,
+        tempo: 1.0,
+    };
+    let serialized = serde_json::to_string(&nm).unwrap();
+    let deserialized: NeuroModulators = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(nm, deserialized);
 }

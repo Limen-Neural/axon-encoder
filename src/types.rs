@@ -48,3 +48,23 @@ impl Default for EncoderConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encoded_output_new() {
+        let output = EncodedOutput::new();
+        assert!(output.spikes.is_empty());
+        assert!(output.embeddings.is_none());
+        assert!(output.metadata.is_none());
+    }
+
+    #[test]
+    fn test_encoder_config_default() {
+        let config = EncoderConfig::default();
+        assert_eq!(config.input_channels, 256);
+        assert_eq!(config.output_channels, 256);
+    }
+}
