@@ -77,7 +77,7 @@ impl Encoder for RateEncoder {
 
             if crate::rng::gen_unit_f32() < probability {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: true,
                 });
@@ -103,7 +103,7 @@ impl Encoder for RateEncoder {
 
             while self.accumulators[i] >= 1.0 {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: true,
                 });
@@ -134,11 +134,28 @@ mod tests {
     }
 
     #[test]
+    fn test_rate_encoder_encode_step() {
+        let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
+        // max_rate 10.0 -> increment = (0.0 + 1.0 * 10.0) / 10.0 = 1.0
+        let output = encoder.encode_step(&[1.0]);
+        assert_eq!(output.spikes.len(), 1);
+
+        let output2 = encoder.encode_step(&[0.5]);
+        // 0.5 * 10.0 / 10.0 = 0.5 increment
+        assert_eq!(output2.spikes.len(), 0);
+        let output3 = encoder.encode_step(&[0.5]);
+        // another 0.5 -> 1.0 -> spike
+        assert_eq!(output3.spikes.len(), 1);
+    }
+
+    #[test]
     fn test_rate_encoder_empty_input() {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 100.0));
         let input: [f32; 0] = [];
         let output = encoder.encode(&input);
         assert_eq!(output.spikes.len(), 0);
+        let output_step = encoder.encode_step(&input);
+        assert_eq!(output_step.spikes.len(), 0);
     }
 
     #[test]
@@ -167,7 +184,7 @@ mod tests {
         let output = encoder.encode(&input);
         assert!(output.spikes.len() <= 3);
         for spike in &output.spikes {
-            assert!(spike.channel < 3);
+            assert!(u32::from(spike.channel) < 3);
         }
     }
 

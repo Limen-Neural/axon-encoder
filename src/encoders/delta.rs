@@ -49,7 +49,7 @@ impl Encoder for DeltaEncoder {
             let delta = (value - self.last_values[i]).abs();
             if delta > self.threshold {
                 output.spikes.push(SpikeEvent {
-                    channel: i as u16,
+                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     timestamp: 0,
                     polarity: value > self.last_values[i],
                 });
@@ -60,7 +60,12 @@ impl Encoder for DeltaEncoder {
     }
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
-        self.encode(input)
+        let safe_input = if input.len() > self.last_values.len() {
+            &input[..self.last_values.len()]
+        } else {
+            input
+        };
+        self.encode(safe_input)
     }
 
     fn reset(&mut self) {
@@ -98,6 +103,29 @@ mod tests {
         let output = encoder.encode(&[1.0]); // 1.0 - 3.5 = -2.5.abs() = 2.5 > 2.0 -> spike
         assert!(!output.spikes.is_empty());
         assert!(!output.spikes[0].polarity);
+    }
+
+    #[test]
+    fn test_delta_encoder_encode_step() {
+        let mut encoder = DeltaEncoder::new(2.0, 2);
+        let output = encoder.encode_step(&[3.0, 3.0, 3.0]); // 3rd channel ignored
+        assert_eq!(output.spikes.len(), 2);
+    }
+
+    #[test]
+    fn test_delta_encoder_multi_channel_reset() {
+        let mut encoder = DeltaEncoder::new(1.0, 2);
+        encoder.encode(&[2.0, 2.0]);
+        assert_eq!(encoder.last_values, vec![2.0, 2.0]);
+        encoder.reset();
+        assert_eq!(encoder.last_values, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_delta_encoder_empty_input() {
+        let mut encoder = DeltaEncoder::new(1.0, 5);
+        let output = encoder.encode(&[]);
+        assert!(output.spikes.is_empty());
     }
 
     #[test]

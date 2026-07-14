@@ -5,24 +5,15 @@
 pub mod encoder;
 pub mod encoders;
 pub mod modulators;
-#[cfg(feature = "ndarray")]
-pub mod ndarray_ext;
 pub mod poisson;
 pub mod rng;
-pub mod spike_encoder;
 pub mod types;
-
-#[cfg(feature = "ndarray")]
-pub use ndarray_ext::NdarrayEncoderExt;
 
 pub mod prelude {
     pub use crate::encoder::*;
     pub use crate::encoders::*;
     pub use crate::modulators::*;
-    #[cfg(feature = "ndarray")]
-    pub use crate::ndarray_ext::NdarrayEncoderExt;
     pub use crate::poisson::*;
-    pub use crate::spike_encoder::*;
     pub use crate::types::*;
     pub use crate::Encoder;
 }
@@ -73,4 +64,13 @@ pub trait Encoder {
 
     /// Resets the encoder to its initial state.
     fn reset(&mut self);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_lib_prelude_imports() {
+        use crate::prelude::*;
+        let _ = EncoderConfig::default();
+    }
 }
