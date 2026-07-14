@@ -3,7 +3,8 @@ const CORTISOL_DECAY: f32 = 0.90;
 const ACETYLCHOLINE_DECAY: f32 = 0.99;
 const TEMPO_DECAY: f32 = 0.98;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NeuroModulators {
     pub dopamine: f32,
     pub cortisol: f32,
@@ -17,5 +18,25 @@ impl NeuroModulators {
         self.cortisol = (self.cortisol * CORTISOL_DECAY).max(0.0);
         self.acetylcholine = (self.acetylcholine * ACETYLCHOLINE_DECAY).max(0.0);
         self.tempo = (self.tempo * TEMPO_DECAY).max(0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_neuromodulators_decay() {
+        let mut nm = NeuroModulators {
+            dopamine: 1.0,
+            cortisol: 1.0,
+            acetylcholine: 1.0,
+            tempo: 1.0,
+        };
+        nm.decay();
+        assert!(nm.dopamine.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
+        assert!(nm.cortisol.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
+        assert!(nm.acetylcholine.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
+        assert!(nm.tempo.partial_cmp(&1.0) == Some(core::cmp::Ordering::Less));
     }
 }
