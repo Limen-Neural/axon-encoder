@@ -80,7 +80,7 @@ impl Encoder for TemporalEncoder {
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
                 if change > threshold {
                     output.spikes.push(SpikeEvent {
-                        channel: i as u16,
+                        channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
                         timestamp: 0,   // Simplified
                         polarity: true, // Or use spike_val to determine polarity/strength
                     });
@@ -154,12 +154,45 @@ mod tests {
     #[test]
     fn test_temporal_encoder() {
         let mut encoder = TemporalEncoder::new(6, vec![(2.0, 1), (5.0, 2)], 1);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[1.0]);
-        encoder.encode(&[8.0]);
-        encoder.encode(&[8.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[1.0]);
+        let _output = encoder.encode(&[8.0]);
+        let _output = encoder.encode(&[8.0]);
         let output = encoder.encode(&[8.0]);
         assert!(!output.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_temporal_encoder_history_limit() {
+        let mut encoder = TemporalEncoder::new(6, vec![(1.0, 1)], 1);
+        for _ in 0..10 {
+            encoder.encode(&[1.0]);
+        }
+        assert_eq!(encoder.history[0].len(), 6);
+    }
+
+    #[test]
+    fn test_temporal_encoder_reset() {
+        let mut encoder = TemporalEncoder::new(6, vec![(1.0, 1)], 1);
+        encoder.encode(&[1.0; 6]);
+        encoder.reset();
+        assert_eq!(encoder.history[0].len(), 0);
+    }
+
+    #[test]
+    fn test_temporal_encoder_mismatched_input() {
+        let mut encoder = TemporalEncoder::new(6, vec![(1.0, 1)], 2);
+        let _output = encoder.encode(&[1.0]);
+        assert_eq!(encoder.history[0].len(), 1);
+
+        let output2 = encoder.encode_step(&[1.0, 2.0, 3.0]);
+        assert_eq!(output2.spikes.len(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "history_depth must be at least 6")]
+    fn test_temporal_encoder_invalid_depth() {
+        let _ = TemporalEncoder::new(5, vec![], 1);
     }
 }

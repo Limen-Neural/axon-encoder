@@ -11,5 +11,5 @@
 # Log files
 *.log
 
-# Coverage
+# Coverage reports
 lcov.info
