@@ -50,10 +50,14 @@ impl DeltaEncoder {
             if i >= self.last_values.len() {
                 break;
             }
+            let Ok(channel) = u16::try_from(i) else {
+                // Remaining channels exceed u16::MAX; stop rather than wrap.
+                break;
+            };
             let delta = (value - self.last_values[i]).abs();
             if delta > effective_threshold {
                 output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    channel,
                     timestamp: 0,
                     polarity: value > self.last_values[i],
                 });
