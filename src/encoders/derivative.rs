@@ -159,3 +159,60 @@ mod tests {
         assert_eq!(output.spikes.len(), 1); // Only channel 0 should be processed
     }
 }
+
+#[cfg(test)]
+mod branch_coverage_tests {
+    use super::*;
+
+    #[test]
+    fn derivative_encoder_initializes_channel_state() {
+        let encoder = DerivativeEncoder::new(vec![1.0, 2.0, 3.0]);
+        assert_eq!(encoder.thresholds, vec![1.0, 2.0, 3.0]);
+        assert_eq!(encoder.last_values, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn derivative_encoder_tracks_positive_and_negative_steps() {
+        let mut encoder = DerivativeEncoder::new(vec![1.0, 2.0]);
+
+        let output = encoder.encode_step(&[1.5, -2.5]);
+        assert_eq!(output.spikes.len(), 2);
+        assert_eq!(output.spikes[0].channel, 0);
+        assert!(output.spikes[0].polarity);
+        assert_eq!(output.spikes[1].channel, 1);
+        assert!(!output.spikes[1].polarity);
+        assert_eq!(encoder.last_values, vec![1.5, -2.5]);
+
+        let output = encoder.encode_step(&[2.0, -1.0]);
+        assert!(output.spikes.is_empty());
+        assert_eq!(encoder.last_values, vec![2.0, -1.0]);
+
+        let output = encoder.encode_step(&[0.0, 2.0]);
+        assert_eq!(output.spikes.len(), 2);
+        assert!(!output.spikes[0].polarity);
+        assert!(output.spikes[1].polarity);
+        assert_eq!(encoder.last_values, vec![0.0, 2.0]);
+    }
+
+    #[test]
+    fn derivative_encoder_does_not_fire_at_threshold() {
+        let mut encoder = DerivativeEncoder::new(vec![1.0, 2.0]);
+        let output = encoder.encode_step(&[1.0, -2.0]);
+        assert!(output.spikes.is_empty());
+        assert_eq!(encoder.last_values, vec![1.0, -2.0]);
+    }
+
+    #[test]
+    fn derivative_encoder_handles_channel_count_mismatches() {
+        let mut encoder = DerivativeEncoder::new(vec![1.0, 2.0]);
+        let output = encoder.encode_step(&[2.0, -3.0, 5.0]);
+        assert_eq!(output.spikes.len(), 2);
+        assert_eq!(encoder.last_values, vec![2.0, -3.0]);
+
+        let mut encoder = DerivativeEncoder::new(vec![1.0, 2.0]);
+        let output = encoder.encode_step(&[2.0]);
+        assert_eq!(output.spikes.len(), 1);
+        assert_eq!(output.spikes[0].channel, 0);
+        assert_eq!(encoder.last_values, vec![2.0, 0.0]);
+    }
+}
