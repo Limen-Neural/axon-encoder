@@ -281,4 +281,31 @@ mod tests {
         let boosted = encoder.encode_step_with_modulators(&[1.0], &modulators, &gain_curves);
         assert_eq!(boosted.spikes.len(), 1);
     }
+
+    #[test]
+    fn test_rate_encoder_encode_with_modulators() {
+        let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
+        let modulators = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let boosted = encoder.encode_with_modulators(&[1.0], &modulators, &gain_curves);
+        assert_eq!(boosted.spikes.len(), 1);
+    }
+
+    #[test]
+    fn test_rate_encoder_step_shorter_input() {
+        let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
+        // Single value against two accumulators: process channel 0, leave channel 1 untouched
+        let output = encoder.encode_step(&[1.0]);
+        assert_eq!(output.spikes.len(), 1);
+    }
 }

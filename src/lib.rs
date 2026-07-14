@@ -73,4 +73,29 @@ mod tests {
         use crate::prelude::*;
         let _ = EncoderConfig::default();
     }
+
+    #[test]
+    fn test_encoder_default_encode_step_delegates_to_encode() {
+        use crate::prelude::*;
+
+        struct PassThrough;
+        impl Encoder for PassThrough {
+            fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+                let mut out = EncodedOutput::new();
+                for (i, &v) in input.iter().enumerate() {
+                    out.spikes.push(SpikeEvent {
+                        channel: i as u16,
+                        timestamp: v as u64,
+                        polarity: true,
+                    });
+                }
+                out
+            }
+            fn reset(&mut self) {}
+        }
+
+        let mut enc = PassThrough;
+        let out = enc.encode_step(&[1.0, 2.0]);
+        assert_eq!(out.spikes.len(), 2);
+    }
 }

@@ -464,6 +464,16 @@ mod tests {
         assert!(curves.firing_rate.is_none());
     }
 
+    #[test]
+    fn gain_curve_default_is_identity() {
+        assert_eq!(GainCurve::default(), GainCurve::identity());
+    }
+
+    #[test]
+    fn encoding_gains_default_is_identity() {
+        assert_eq!(EncodingGains::default(), EncodingGains::identity());
+    }
+
     #[cfg(feature = "serde")]
     #[test]
     fn neuromodulator_gain_curves_partial_json_deserializes() {

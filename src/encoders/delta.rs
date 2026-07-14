@@ -208,4 +208,41 @@ mod tests {
         let modulated = encoder.encode_with_modulators(&[0.75], &modulators, &gain_curves);
         assert_eq!(modulated.spikes.len(), 1);
     }
+
+    #[test]
+    fn test_delta_encoder_encode_step_with_modulators() {
+        let mut encoder = DeltaEncoder::new(1.0, 1);
+        let modulators = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(encoder
+            .encode_step_with_modulators(&[0.0], &modulators, &gain_curves)
+            .spikes
+            .is_empty());
+        let modulated = encoder.encode_step_with_modulators(&[0.75], &modulators, &gain_curves);
+        assert_eq!(modulated.spikes.len(), 1);
+    }
+
+    #[test]
+    fn test_delta_encoder_step_shorter_input() {
+        let mut encoder = DeltaEncoder::new(1.0, 2);
+        let output = encoder.encode_step(&[2.0]);
+        assert_eq!(output.spikes.len(), 1);
+    }
+
+    #[test]
+    fn test_delta_encoder_truncates_excess_channels() {
+        let mut encoder = DeltaEncoder::new(1.0, 1);
+        let output = encoder.encode(&[2.0, 3.0]);
+        assert_eq!(output.spikes.len(), 1);
+    }
 }

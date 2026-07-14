@@ -351,4 +351,24 @@ mod tests {
 
         assert_eq!(batch, step);
     }
+
+    #[test]
+    fn latency_encoder_modulators_zero_scale_maps_to_zero() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                latency: Some(GainCurve::new((0.0, 1.0), (1.0, 0.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+
+        let output = encoder.encode_with_modulators(&[0.5, f32::NAN], &mods, &curves);
+        assert_eq!(output.spikes.len(), 2);
+        assert!(output.spikes.iter().all(|s| s.timestamp == 0));
+    }
 }

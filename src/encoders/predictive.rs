@@ -326,4 +326,48 @@ mod tests {
         let output = encoder.encode_step_with_modulators(&[5.0], &modulators, &gain_curves);
         assert_eq!(output.spikes.len(), 1);
     }
+
+    #[test]
+    fn test_predictive_encoder_encode_with_modulators_truncate() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mods = NeuroModulators {
+            acetylcholine: 1.0,
+            ..Default::default()
+        };
+        let curves = NeuromodulatorGainCurves {
+            acetylcholine: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            encoder.encode_with_modulators(&[1.0, 2.0], &mods, &curves);
+        }
+        let output = encoder.encode_with_modulators(&[5.0, 6.0], &mods, &curves);
+        assert_eq!(output.spikes.len(), 1);
+    }
+
+    #[test]
+    fn test_predictive_encoder_step_shorter_input() {
+        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        for _ in 0..6 {
+            encoder.encode_step(&[1.0]);
+        }
+        let output = encoder.encode_step(&[10.0]);
+        assert!(!output.spikes.is_empty());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_serde_history_channel_too_long() {
+        let json = r#"{
+            "history": [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
+            "thresholds": [0.0],
+            "history_depth": 5,
+            "deviation_thresholds": []
+        }"#;
+        let res: Result<PredictiveEncoder, _> = serde_json::from_str(json);
+        assert!(res.is_err());
+    }
 }

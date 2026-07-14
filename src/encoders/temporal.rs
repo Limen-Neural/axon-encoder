@@ -249,4 +249,48 @@ mod tests {
         let output = encoder.encode_step_with_modulators(&[5.0], &modulators, &gain_curves);
         assert_eq!(output.spikes.len(), 1);
     }
+
+    #[test]
+    fn test_temporal_encoder_encode_with_modulators() {
+        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 1);
+        let modulators = NeuroModulators {
+            tempo: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            tempo: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        for _ in 0..3 {
+            encoder.encode_with_modulators(&[1.0], &modulators, &gain_curves);
+        }
+        for _ in 0..2 {
+            encoder.encode_with_modulators(&[5.0], &modulators, &gain_curves);
+        }
+        let output = encoder.encode_with_modulators(&[5.0], &modulators, &gain_curves);
+        assert_eq!(output.spikes.len(), 1);
+    }
+
+    #[test]
+    fn test_temporal_encoder_step_longer_input() {
+        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 2);
+        let output = encoder.encode_step(&[1.0, 2.0, 3.0]);
+        assert!(output.spikes.len() <= 2);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_serde_history_channel_too_long() {
+        let json = r#"{
+            "history": [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
+            "history_depth": 6,
+            "change_thresholds": []
+        }"#;
+        let res: Result<TemporalEncoder, _> = serde_json::from_str(json);
+        assert!(res.is_err());
+    }
 }

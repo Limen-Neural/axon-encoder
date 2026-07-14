@@ -391,4 +391,25 @@ mod tests {
         let output = encoder.encode_with_modulators(&[0.5], &mods, &curves);
         assert!(output.spikes.is_empty());
     }
+
+    #[test]
+    fn test_encode_with_modulators_nan_input_skips() {
+        let mut encoder = PhaseEncoder::new(8, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 1.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+
+        let output = encoder.encode_with_modulators(&[0.0, f32::NAN, 1.0], &mods, &curves);
+        assert_eq!(output.spikes.len(), 2);
+        assert_eq!(output.spikes[0].channel, 0);
+        assert_eq!(output.spikes[1].channel, 2);
+    }
 }

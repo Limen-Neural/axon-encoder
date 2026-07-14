@@ -307,4 +307,16 @@ mod tests {
         assert!(modulated_width < baseline_width);
         assert!(modulated_rate < baseline_rate);
     }
+
+    #[test]
+    fn test_population_encoder_step_and_accessors() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        assert_eq!(encoder.num_neurons(), 10);
+
+        let step_output = encoder.encode_step(&[50.0]);
+        assert!(step_output.spikes.len() <= 10);
+
+        encoder.reset();
+        assert_eq!(encoder.num_neurons(), 10);
+    }
 }
