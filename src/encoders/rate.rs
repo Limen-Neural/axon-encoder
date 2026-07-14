@@ -69,6 +69,10 @@ impl RateEncoder {
         }
 
         for (i, &value) in input.iter().enumerate() {
+            let Ok(channel) = u16::try_from(i) else {
+                // Remaining channels exceed u16::MAX; stop rather than wrap.
+                break;
+            };
             let normalized = self.normalize(value);
             let rate =
                 (self.base_rate + normalized * (self.max_rate - self.base_rate)) * rate_scale;
@@ -76,7 +80,7 @@ impl RateEncoder {
 
             if crate::rng::gen_unit_f32() < probability {
                 output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    channel,
                     timestamp: 0,
                     polarity: true,
                 });
@@ -95,6 +99,10 @@ impl RateEncoder {
         self.ensure_accumulators(input.len());
 
         for (i, &value) in input.iter().enumerate() {
+            let Ok(channel) = u16::try_from(i) else {
+                // Remaining channels exceed u16::MAX; stop rather than wrap.
+                break;
+            };
             let normalized = self.normalize(value);
             let rate_increment = ((self.base_rate + normalized * (self.max_rate - self.base_rate))
                 * rate_scale)
@@ -103,7 +111,7 @@ impl RateEncoder {
 
             while self.accumulators[i] >= 1.0 {
                 output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    channel,
                     timestamp: 0,
                     polarity: true,
                 });
