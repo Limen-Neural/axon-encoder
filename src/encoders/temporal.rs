@@ -65,6 +65,10 @@ impl TemporalEncoder {
             if i >= self.history.len() {
                 break;
             }
+            let Ok(channel) = u16::try_from(i) else {
+                // Remaining channels exceed u16::MAX; stop rather than wrap.
+                break;
+            };
             let channel_history = &mut self.history[i];
             if channel_history.len() == self.history_depth {
                 channel_history.pop_front();
@@ -81,9 +85,6 @@ impl TemporalEncoder {
 
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
                 if change > (threshold * threshold_scale).max(0.0) {
-                    let Ok(channel) = u16::try_from(i) else {
-                        break;
-                    };
                     output.spikes.push(SpikeEvent {
                         channel,
                         timestamp: 0,   // Simplified
