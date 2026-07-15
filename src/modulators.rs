@@ -282,6 +282,15 @@ mod tests {
     }
 
     #[test]
+    fn gain_curve_interpolates_wide_f32_range() {
+        let curve = GainCurve::new((f32::MIN, f32::MAX), (0.0, 2.0));
+
+        assert_eq!(curve.evaluate(f32::MIN), 0.0);
+        assert_eq!(curve.evaluate(f32::MAX), 2.0);
+        assert!((curve.evaluate(0.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
     fn gain_curve_sanitizes_invalid_outputs() {
         let curve = GainCurve::new((0.0, 1.0), (-2.0, 2.0));
 
