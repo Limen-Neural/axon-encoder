@@ -308,4 +308,16 @@ mod tests {
         let output = encoder.encode_step(&[1.0]);
         assert_eq!(output.spikes.len(), 1);
     }
+
+    #[test]
+    fn test_rate_encoder_zero_rate_scale_never_accumulates() {
+        let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
+        for _ in 0..10_000 {
+            let output = encoder.encode_step_with_rate_scale(&[1.0], 0.0);
+            assert!(
+                output.spikes.is_empty(),
+                "zero firing-rate scale must fully silence streaming output"
+            );
+        }
+    }
 }
