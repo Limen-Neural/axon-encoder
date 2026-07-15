@@ -176,3 +176,87 @@ mod tests {
         assert!(res.is_err());
     }
 }
+
+#[cfg(test)]
+mod forward_coverage_tests {
+    use super::*;
+
+    #[test]
+    fn embedding_rate_encoder_initializes_normalized_values() {
+        let embeddings = vec![1.0, 2.0, 3.0, 5.0];
+        let encoder = EmbeddingRateEncoder::new(&embeddings, EmbeddingEncoderConfig { v_th: 1.0 });
+        assert_eq!(encoder.normalized_embeddings.len(), 4);
+        assert!((encoder.normalized_embeddings[0] - 0.0).abs() < 1e-5);
+        assert!((encoder.normalized_embeddings[3] - (4.0 / 4.00001)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn embedding_rate_encoder_forward_without_spikes() {
+        let embeddings = vec![1.0, 2.0, 3.0];
+        let encoder = EmbeddingRateEncoder::new(&embeddings, EmbeddingEncoderConfig { v_th: 10.0 });
+        let state = EncoderState::new_zeros(3);
+        let (output, next_state) = encoder.forward(&state);
+
+        assert!(output.spikes.is_empty());
+        assert_eq!(next_state.membrane_potentials.len(), 3);
+        assert_eq!(
+            next_state.membrane_potentials,
+            encoder.normalized_embeddings
+        );
+    }
+
+    #[test]
+    fn embedding_rate_encoder_forward_soft_resets_spikes() {
+        let embeddings = vec![1.0, 2.0, 3.0];
+        let encoder = EmbeddingRateEncoder::new(&embeddings, EmbeddingEncoderConfig { v_th: 0.4 });
+        let state = EncoderState::new_zeros(3);
+        let (output, next_state) = encoder.forward(&state);
+
+        assert_eq!(output.spikes.len(), 2);
+        assert_eq!(output.spikes[0].channel, 1);
+        assert_eq!(output.spikes[1].channel, 2);
+        assert!((next_state.membrane_potentials[0] - 0.0).abs() < 1e-5);
+        assert!(
+            (next_state.membrane_potentials[1] - (encoder.normalized_embeddings[1] - 0.4)).abs()
+                < 1e-5
+        );
+        assert!(
+            (next_state.membrane_potentials[2] - (encoder.normalized_embeddings[2] - 0.4)).abs()
+                < 1e-5
+        );
+    }
+
+    #[test]
+    fn embedding_rate_encoder_accumulates_across_steps() {
+        let embeddings = vec![1.0, 3.0];
+        let encoder = EmbeddingRateEncoder::new(&embeddings, EmbeddingEncoderConfig { v_th: 0.6 });
+        let mut state = EncoderState::new_zeros(2);
+
+        for _ in 0..3 {
+            let (output, next_state) = encoder.forward(&state);
+            assert_eq!(output.spikes.len(), 1);
+            assert_eq!(output.spikes[0].channel, 1);
+            state = next_state;
+        }
+
+        assert!((state.membrane_potentials[0] - 0.0).abs() < 1e-5);
+        assert!(
+            (state.membrane_potentials[1] - (3.0 * encoder.normalized_embeddings[1] - 1.8)).abs()
+                < 1e-5
+        );
+    }
+
+    #[test]
+    fn embedding_rate_encoder_handles_equal_embeddings() {
+        let embeddings = vec![2.5, 2.5, 2.5];
+        let encoder = EmbeddingRateEncoder::new(&embeddings, EmbeddingEncoderConfig { v_th: 0.5 });
+        assert!(encoder
+            .normalized_embeddings
+            .iter()
+            .all(|value| *value == 0.0));
+
+        let (output, next_state) = encoder.forward(&EncoderState::new_zeros(3));
+        assert!(output.spikes.is_empty());
+        assert_eq!(next_state.membrane_potentials, vec![0.0, 0.0, 0.0]);
+    }
+}
