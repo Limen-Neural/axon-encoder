@@ -10,12 +10,12 @@ pub mod rng;
 pub mod types;
 
 pub mod prelude {
-    pub use crate::Encoder;
     pub use crate::encoder::*;
     pub use crate::encoders::*;
     pub use crate::modulators::*;
     pub use crate::poisson::*;
     pub use crate::types::*;
+    pub use crate::Encoder;
 }
 
 use types::EncodedOutput;

@@ -7,7 +7,7 @@ pub mod predictive;
 pub mod rate;
 pub mod temporal;
 
-pub use delta::{DeltaEncoder, encode_deltas_to_spikes};
+pub use delta::{encode_deltas_to_spikes, DeltaEncoder};
 pub use derivative::DerivativeEncoder;
 pub use latency::LatencyEncoder;
 pub use phase::PhaseEncoder;
