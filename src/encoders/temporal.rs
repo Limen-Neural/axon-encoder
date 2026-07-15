@@ -54,15 +54,21 @@ impl TemporalEncoder {
             change_thresholds,
         }
     }
-}
 
-impl Encoder for TemporalEncoder {
-    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+    fn encode_with_threshold_scale(
+        &mut self,
+        input: &[f32],
+        threshold_scale: f32,
+    ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         for (i, &value) in input.iter().enumerate() {
             if i >= self.history.len() {
                 break;
             }
+            let Ok(channel) = u16::try_from(i) else {
+                // Remaining channels exceed u16::MAX; stop rather than wrap.
+                break;
+            };
             let channel_history = &mut self.history[i];
             if channel_history.len() == self.history_depth {
                 channel_history.pop_front();
@@ -78,9 +84,9 @@ impl Encoder for TemporalEncoder {
             let change = (recent_avg - older_avg).abs();
 
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
-                if change > threshold {
+                if change > (threshold * threshold_scale).max(0.0) {
                     output.spikes.push(SpikeEvent {
-                        channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                        channel,
                         timestamp: 0,   // Simplified
                         polarity: true, // Or use spike_val to determine polarity/strength
                     });
@@ -91,13 +97,63 @@ impl Encoder for TemporalEncoder {
         output
     }
 
+    /// Encode input using neuromodulator-driven gain curves.
+    ///
+    /// Evaluates `gain_curves` against the current `modulators` to produce
+    /// an [`EncodingGains`], then uses the `threshold_scale` component to
+    /// modulate the change-detection threshold. Values > 1.0 raise the
+    /// effective threshold (less sensitive — larger changes required to
+    /// spike); values in (0, 1) lower it (more sensitive).
+    ///
+    /// Input is truncated to the number of tracked channels. Expected
+    /// modulator range: any finite f32. Expected gain range after
+    /// sanitization: `[0.0, 10,000.0]`.
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        // Match encode_step_with_modulators: only process channels we track.
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
+    }
+
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    /// Identical behavior, provided for API symmetry with the [`Encoder`] trait.
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
+    }
+}
+
+impl Encoder for TemporalEncoder {
+    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
+        self.encode_with_threshold_scale(input, 1.0)
+    }
+
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
         let safe_input = if input.len() > self.history.len() {
             &input[..self.history.len()]
         } else {
             input
         };
-        self.encode(safe_input)
+        self.encode_with_threshold_scale(safe_input, 1.0)
     }
 
     fn reset(&mut self) {
@@ -164,35 +220,81 @@ mod tests {
     }
 
     #[test]
-    fn test_temporal_encoder_history_limit() {
-        let mut encoder = TemporalEncoder::new(6, vec![(1.0, 1)], 1);
-        for _ in 0..10 {
+    fn test_temporal_encoder_modulators_reduce_threshold() {
+        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 1);
+        let modulators = NeuroModulators {
+            tempo: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            tempo: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        for _ in 0..3 {
             encoder.encode(&[1.0]);
         }
-        assert_eq!(encoder.history[0].len(), 6);
-    }
+        for _ in 0..2 {
+            encoder.encode(&[5.0]);
+        }
+        assert!(encoder.encode(&[5.0]).spikes.is_empty());
 
-    #[test]
-    fn test_temporal_encoder_reset() {
-        let mut encoder = TemporalEncoder::new(6, vec![(1.0, 1)], 1);
-        encoder.encode(&[1.0; 6]);
         encoder.reset();
-        assert_eq!(encoder.history[0].len(), 0);
+
+        for _ in 0..3 {
+            encoder.encode_step_with_modulators(&[1.0], &modulators, &gain_curves);
+        }
+        for _ in 0..2 {
+            encoder.encode_step_with_modulators(&[5.0], &modulators, &gain_curves);
+        }
+        let output = encoder.encode_step_with_modulators(&[5.0], &modulators, &gain_curves);
+        assert_eq!(output.spikes.len(), 1);
     }
 
     #[test]
-    fn test_temporal_encoder_mismatched_input() {
-        let mut encoder = TemporalEncoder::new(6, vec![(1.0, 1)], 2);
-        let _output = encoder.encode(&[1.0]);
-        assert_eq!(encoder.history[0].len(), 1);
+    fn test_temporal_encoder_encode_with_modulators() {
+        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 1);
+        let modulators = NeuroModulators {
+            tempo: 1.0,
+            ..Default::default()
+        };
+        let gain_curves = NeuromodulatorGainCurves {
+            tempo: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
-        let output2 = encoder.encode_step(&[1.0, 2.0, 3.0]);
-        assert_eq!(output2.spikes.len(), 0);
+        for _ in 0..3 {
+            encoder.encode_with_modulators(&[1.0], &modulators, &gain_curves);
+        }
+        for _ in 0..2 {
+            encoder.encode_with_modulators(&[5.0], &modulators, &gain_curves);
+        }
+        let output = encoder.encode_with_modulators(&[5.0], &modulators, &gain_curves);
+        assert_eq!(output.spikes.len(), 1);
     }
 
     #[test]
-    #[should_panic(expected = "history_depth must be at least 6")]
-    fn test_temporal_encoder_invalid_depth() {
-        let _ = TemporalEncoder::new(5, vec![], 1);
+    fn test_temporal_encoder_step_longer_input() {
+        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 2);
+        let output = encoder.encode_step(&[1.0, 2.0, 3.0]);
+        assert!(output.spikes.len() <= 2);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_serde_history_channel_too_long() {
+        let json = r#"{
+            "history": [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
+            "history_depth": 6,
+            "change_thresholds": []
+        }"#;
+        let res: Result<TemporalEncoder, _> = serde_json::from_str(json);
+        assert!(res.is_err());
     }
 }

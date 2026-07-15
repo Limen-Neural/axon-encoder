@@ -8,33 +8,10 @@ use crate::prelude::*;
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(try_from = "LatencyEncoderRepr"))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LatencyEncoder {
     max_latency: u64,
     range: (f32, f32),
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Deserialize)]
-struct LatencyEncoderRepr {
-    max_latency: u64,
-    range: (f32, f32),
-}
-
-#[cfg(feature = "serde")]
-impl TryFrom<LatencyEncoderRepr> for LatencyEncoder {
-    type Error = String;
-
-    fn try_from(r: LatencyEncoderRepr) -> Result<Self, String> {
-        if r.range.0.partial_cmp(&r.range.1) != Some(core::cmp::Ordering::Less) {
-            return Err("range min must be less than range max".into());
-        }
-        Ok(Self {
-            max_latency: r.max_latency,
-            range: r.range,
-        })
-    }
 }
 
 impl LatencyEncoder {
@@ -42,18 +19,22 @@ impl LatencyEncoder {
     ///
     /// # Panics
     ///
-    /// Panics if `range.0 >= range.1`.
+    /// Panics if `range.0 >= range.1` or if either bound is non-finite.
     pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
-        if range.0.partial_cmp(&range.1) != Some(core::cmp::Ordering::Less) {
-            panic!("range min must be less than range max");
-        }
+        assert!(
+            range.0.is_finite() && range.1.is_finite() && range.0 < range.1,
+            "range must be finite and min must be less than max"
+        );
 
         Self { max_latency, range }
     }
 
-    fn clamp_and_normalize(&self, value: f32) -> f32 {
-        let clamped = value.clamp(self.range.0, self.range.1);
-        (clamped - self.range.0) / (self.range.1 - self.range.0)
+    fn normalize(&self, value: f32) -> f64 {
+        // Use f64 to prevent overflow for valid f32 ranges (e.g., f32::MIN..f32::MAX).
+        let clamped = value.clamp(self.range.0, self.range.1) as f64;
+        let lo = self.range.0 as f64;
+        let hi = self.range.1 as f64;
+        (clamped - lo) / (hi - lo)
     }
 
     fn timestamp_for(&self, value: f32) -> u64 {
@@ -64,8 +45,70 @@ impl LatencyEncoder {
             return self.max_latency;
         }
 
-        let normalized = self.clamp_and_normalize(value) as f64;
+        let normalized = self.normalize(value);
         ((1.0 - normalized) * self.max_latency as f64).round() as u64
+    }
+
+    fn timestamp_for_with_latency_scale(&self, value: f32, latency_scale: f32) -> u64 {
+        let scaled_latency = ((self.max_latency as f64) * (latency_scale as f64)).round() as u64;
+        if scaled_latency == 0 {
+            return 0;
+        }
+        if value.is_nan() {
+            return scaled_latency;
+        }
+
+        let normalized = self.normalize(value);
+        ((1.0 - normalized) * scaled_latency as f64).round() as u64
+    }
+
+    /// Encode input using neuromodulator-driven gain curves.
+    ///
+    /// Evaluates `gain_curves` against the current `modulators` to produce
+    /// an [`EncodingGains`], then uses the `latency_scale` component to
+    /// modulate the maximum latency. Values > 1.0 increase max_latency
+    /// (slower response); values in (0, 1) decrease it (faster response).
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_latency_scale(input, gains.latency_scale)
+    }
+
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    ///
+    /// Identical behavior — provided for API symmetry with the [`Encoder`] trait's
+    /// `encode` / `encode_step` pair.
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let gains = gain_curves.evaluate(modulators);
+        self.encode_with_latency_scale(input, gains.latency_scale)
+    }
+
+    fn encode_with_latency_scale(&mut self, input: &[f32], latency_scale: f32) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        output.spikes.reserve(input.len());
+
+        for (channel, &value) in input.iter().enumerate() {
+            let Ok(channel) = u16::try_from(channel) else {
+                // Remaining channels exceed u16::MAX; stop rather than wrap.
+                break;
+            };
+            output.spikes.push(SpikeEvent {
+                channel,
+                timestamp: self.timestamp_for_with_latency_scale(value, latency_scale),
+                polarity: true,
+            });
+        }
+
+        output
     }
 }
 
@@ -75,8 +118,12 @@ impl Encoder for LatencyEncoder {
         output.spikes.reserve(input.len());
 
         for (channel, &value) in input.iter().enumerate() {
+            let Ok(channel) = u16::try_from(channel) else {
+                // Remaining channels exceed u16::MAX; stop rather than wrap.
+                break;
+            };
             output.spikes.push(SpikeEvent {
-                channel: u16::try_from(channel).expect("channel index exceeds u16::MAX"),
+                channel,
                 timestamp: self.timestamp_for(value),
                 polarity: true,
             });
@@ -91,6 +138,39 @@ impl Encoder for LatencyEncoder {
 
     fn reset(&mut self) {
         // Stateless encoder.
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for LatencyEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            max_latency: u64,
+            range: (f32, f32),
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        if !helper.range.0.is_finite()
+            || !helper.range.1.is_finite()
+            || !matches!(
+                helper.range.0.partial_cmp(&helper.range.1),
+                Some(std::cmp::Ordering::Less)
+            )
+        {
+            return Err(serde::de::Error::custom(
+                "range must be finite and min must be less than max",
+            ));
+        }
+
+        Ok(Self {
+            max_latency: helper.max_latency,
+            range: helper.range,
+        })
     }
 }
 
@@ -198,8 +278,97 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "range min must be less than range max")]
+    fn latency_encoder_nan_maps_to_max_latency() {
+        let mut encoder = LatencyEncoder::new(7, (0.0, 1.0));
+
+        let output = encoder.encode(&[f32::NAN, 1.0]);
+
+        assert_eq!(output.spikes[0].timestamp, 7);
+        assert_eq!(output.spikes[1].timestamp, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "range must be finite and min must be less than max")]
     fn latency_encoder_rejects_invalid_range() {
         let _ = LatencyEncoder::new(5, (1.0, 1.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "range must be finite and min must be less than max")]
+    fn latency_encoder_rejects_infinite_range() {
+        let _ = LatencyEncoder::new(10, (f32::NEG_INFINITY, f32::INFINITY));
+    }
+
+    #[test]
+    fn latency_encoder_truncates_channel_overflow() {
+        let mut encoder = LatencyEncoder::new(1, (0.0, 1.0));
+        let input = vec![0.0f32; (u16::MAX as usize) + 2];
+        let output = encoder.encode(&input);
+        assert_eq!(output.spikes.len(), u16::MAX as usize + 1);
+    }
+
+    #[test]
+    fn latency_encoder_encode_with_modulators_identity() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves::default();
+        let mods = NeuroModulators::default();
+
+        let plain = encoder.encode(&[0.5]);
+        let modulated = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+
+        assert_eq!(plain.spikes[0].timestamp, modulated.spikes[0].timestamp);
+    }
+
+    #[test]
+    fn latency_encoder_encode_with_modulators_latency_scale() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                latency: Some(GainCurve::new((0.0, 1.0), (0.5, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+
+        let output = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+        // latency_scale = 0.5, so max_latency = 10 * 0.5 = 5
+        // normalized(0.5) = 0.5, timestamp = (1.0 - 0.5) * 5 = 2.5 → 3
+        assert_eq!(output.spikes[0].timestamp, 3);
+    }
+
+    #[test]
+    fn latency_encoder_encode_step_with_modulators_matches_encode() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves::default();
+        let mods = NeuroModulators::default();
+
+        let batch = encoder.encode_with_modulators(&[0.5], &mods, &curves);
+        let step = encoder.encode_step_with_modulators(&[0.5], &mods, &curves);
+
+        assert_eq!(batch, step);
+    }
+
+    #[test]
+    fn latency_encoder_modulators_zero_scale_maps_to_zero() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                latency: Some(GainCurve::new((0.0, 1.0), (1.0, 0.0))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mods = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+
+        let output = encoder.encode_with_modulators(&[0.5, f32::NAN], &mods, &curves);
+        assert_eq!(output.spikes.len(), 2);
+        assert!(output.spikes.iter().all(|s| s.timestamp == 0));
     }
 }

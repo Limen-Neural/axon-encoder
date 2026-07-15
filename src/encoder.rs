@@ -163,6 +163,18 @@ mod tests {
         assert_eq!(state.membrane_potentials.len(), 5);
         assert!(state.membrane_potentials.iter().all(|&v| v == 0.0));
     }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_embedding_rate_encoder_deserialize_rejects_too_many_channels() {
+        let embeddings: Vec<f32> = vec![0.0; (u16::MAX as usize) + 2];
+        let value = serde_json::json!({
+            "config": {"v_th": 1.0},
+            "normalized_embeddings": embeddings,
+        });
+        let res: Result<EmbeddingRateEncoder, _> = serde_json::from_value(value);
+        assert!(res.is_err());
+    }
 }
 
 #[cfg(test)]
@@ -238,10 +250,12 @@ mod forward_coverage_tests {
     fn embedding_rate_encoder_handles_equal_embeddings() {
         let embeddings = vec![2.5, 2.5, 2.5];
         let encoder = EmbeddingRateEncoder::new(&embeddings, EmbeddingEncoderConfig { v_th: 0.5 });
-        assert!(encoder
-            .normalized_embeddings
-            .iter()
-            .all(|value| *value == 0.0));
+        assert!(
+            encoder
+                .normalized_embeddings
+                .iter()
+                .all(|value| *value == 0.0)
+        );
 
         let (output, next_state) = encoder.forward(&EncoderState::new_zeros(3));
         assert!(output.spikes.is_empty());

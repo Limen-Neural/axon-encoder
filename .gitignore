@@ -1,15 +1,40 @@
-# Compiled output
-/target
+# AI Tool Local/Ephemeral (no clutter)
+.kilo/worktrees/
+.kilo/*.json
+.kilocode/worktrees/
+.devin/cache/
+.mimocode/auth.json
+.mimocode/plans/
+.cursor/
+.cursorignore
+.worktrees/
 
-# General editor and OS files
-.vscode/
+# Compiled output
+/target/
+
+# IDE / editor
 .idea/
+.vscode/
 *.swp
 *~
-.DS_Store
 
-# Log files
+# Standard dev + your data
+node_modules/
+dist/
+build/
 *.log
+.env*
+*.env
+__pycache__/
+.cache/
+.DS_Store
+neuromorphic_data/
+remotes.txt
 
-# Coverage reports
-lcov.info
+# Negations: Force-commit the good stuff
+!.kilo/skills/**
+!.kilo/tui.jsonc
+!.devin/blueprint.yaml
+!.mimocode/mimocode.jsonc
+!.mimocode/AGENTS.md
+!.kilocodeignore

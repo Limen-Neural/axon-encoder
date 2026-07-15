@@ -79,11 +79,67 @@ fn test_serde_encoders_and_state() {
     let deserialized_temp: TemporalEncoder = serde_json::from_str(&serialized_temp).unwrap();
     assert_eq!(temp_encoder, deserialized_temp);
 
-    // 11. Test LatencyEncoder
+    // 11. Test GainCurve and modulation config types
+    let gain_curve = GainCurve::new((0.0, 1.0), (0.5, 2.0));
+    let serialized_curve = serde_json::to_string(&gain_curve).unwrap();
+    let deserialized_curve: GainCurve = serde_json::from_str(&serialized_curve).unwrap();
+    assert_eq!(gain_curve, deserialized_curve);
+
+    let modulator_curves = ModulatorGainCurves {
+        threshold: Some(gain_curve),
+        sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 1.5))),
+        firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 2.5))),
+        latency: Some(GainCurve::new((0.0, 1.0), (1.0, 0.8))),
+    };
+    let serialized_modulator_curves = serde_json::to_string(&modulator_curves).unwrap();
+    let deserialized_modulator_curves: ModulatorGainCurves =
+        serde_json::from_str(&serialized_modulator_curves).unwrap();
+    assert_eq!(modulator_curves, deserialized_modulator_curves);
+
+    let encoding_gains = EncodingGains {
+        threshold_scale: 0.75,
+        sensitivity_scale: 1.25,
+        firing_rate_scale: 1.5,
+        latency_scale: 0.9,
+    };
+    let serialized_gains = serde_json::to_string(&encoding_gains).unwrap();
+    let deserialized_gains: EncodingGains = serde_json::from_str(&serialized_gains).unwrap();
+    assert_eq!(encoding_gains, deserialized_gains);
+
+    let neuromodulator_gain_curves = NeuromodulatorGainCurves {
+        dopamine: modulator_curves,
+        cortisol: ModulatorGainCurves {
+            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            ..Default::default()
+        },
+        acetylcholine: ModulatorGainCurves {
+            firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 1.2))),
+            ..Default::default()
+        },
+        tempo: ModulatorGainCurves {
+            sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 1.1))),
+            ..Default::default()
+        },
+    };
+    let serialized_neuromodulator_gain_curves =
+        serde_json::to_string(&neuromodulator_gain_curves).unwrap();
+    let deserialized_neuromodulator_gain_curves: NeuromodulatorGainCurves =
+        serde_json::from_str(&serialized_neuromodulator_gain_curves).unwrap();
+    assert_eq!(
+        neuromodulator_gain_curves,
+        deserialized_neuromodulator_gain_curves
+    );
+    // 12. Test LatencyEncoder
     let latency_encoder = LatencyEncoder::new(12, (0.0, 1.0));
     let serialized_latency = serde_json::to_string(&latency_encoder).unwrap();
     let deserialized_latency: LatencyEncoder = serde_json::from_str(&serialized_latency).unwrap();
     assert_eq!(latency_encoder, deserialized_latency);
+
+    // 13. Test PhaseEncoder
+    let phase_encoder = PhaseEncoder::new(8, (0.0, 1.0));
+    let serialized_phase = serde_json::to_string(&phase_encoder).unwrap();
+    let deserialized_phase: PhaseEncoder = serde_json::from_str(&serialized_phase).unwrap();
+    assert_eq!(phase_encoder, deserialized_phase);
 }
 
 #[test]
@@ -147,6 +203,32 @@ fn test_serde_validation_failures() {
         "thresholds": [1.0, 2.0]
     }"#;
     let res: Result<DerivativeEncoder, _> = serde_json::from_str(nonfinite_state_json);
+    assert!(res.is_err());
+
+    // 5. GainCurve invalid input_range (min >= max) must be rejected
+    let invalid_gain_curve_json = r#"{
+        "input_range": [1.0, 0.0],
+        "output_range": [0.0, 2.0]
+    }"#;
+    let res: Result<GainCurve, _> = serde_json::from_str(invalid_gain_curve_json);
+    assert!(res.is_err());
+
+    // 6. GainCurve valid case passes (JSON cannot represent NaN/Infinity, so
+    //    non-finite rejection is tested via direct struct construction elsewhere)
+    let valid_gain_curve_json = r#"{
+        "input_range": [0.0, 1.0],
+        "output_range": [0.0, 1.0]
+    }"#;
+    let res: Result<GainCurve, _> = serde_json::from_str(valid_gain_curve_json);
+    assert!(res.is_ok());
+
+    // 7. PhaseEncoder zero cycle_steps must be rejected
+    let invalid_phase_json = r#"{
+        "cycle_steps": 0,
+        "range": [0.0, 1.0],
+        "current_phase": 0
+    }"#;
+    let res: Result<PhaseEncoder, _> = serde_json::from_str(invalid_phase_json);
     assert!(res.is_err());
 }
 

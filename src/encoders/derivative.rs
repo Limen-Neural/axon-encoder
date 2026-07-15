@@ -158,6 +158,18 @@ mod tests {
         let output = encoder.encode(&[2.0, 3.0]);
         assert_eq!(output.spikes.len(), 1); // Only channel 0 should be processed
     }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_derivative_serde_rejects_too_many_channels() {
+        let values: Vec<f32> = vec![0.0; (u16::MAX as usize) + 2];
+        let value = serde_json::json!({
+            "last_values": values.clone(),
+            "thresholds": values,
+        });
+        let res: Result<DerivativeEncoder, _> = serde_json::from_value(value);
+        assert!(res.is_err());
+    }
 }
 
 #[cfg(test)]
