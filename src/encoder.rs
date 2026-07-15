@@ -250,10 +250,12 @@ mod forward_coverage_tests {
     fn embedding_rate_encoder_handles_equal_embeddings() {
         let embeddings = vec![2.5, 2.5, 2.5];
         let encoder = EmbeddingRateEncoder::new(&embeddings, EmbeddingEncoderConfig { v_th: 0.5 });
-        assert!(encoder
-            .normalized_embeddings
-            .iter()
-            .all(|value| *value == 0.0));
+        assert!(
+            encoder
+                .normalized_embeddings
+                .iter()
+                .all(|value| *value == 0.0)
+        );
 
         let (output, next_state) = encoder.forward(&EncoderState::new_zeros(3));
         assert!(output.spikes.is_empty());
