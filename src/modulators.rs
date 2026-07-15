@@ -359,6 +359,17 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
+    fn encoding_gains_partial_json_deserializes() {
+        let json = r#"{"threshold_scale":0.5}"#;
+        let gains: EncodingGains = serde_json::from_str(json).unwrap();
+        assert_eq!(gains.threshold_scale, 0.5);
+        assert_eq!(gains.sensitivity_scale, 1.0);
+        assert_eq!(gains.firing_rate_scale, 1.0);
+        assert_eq!(gains.latency_scale, 1.0);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
     fn encoding_gains_deserialize_sanitizes_values() {
         // Use out-of-range values that serde_json can parse (NaN is not valid JSON)
         let json =
