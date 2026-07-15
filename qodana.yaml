@@ -43,4 +43,5 @@ profile:
 #    total: 50
 
 #Specify Qodana Docker image for analysis (Applied in CI/CD pipeline)
+# Concrete Rust linter image (replaces the qodana-<linter> template placeholder).
 image: jetbrains/qodana-rust:2026.1-eap
