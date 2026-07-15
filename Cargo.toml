@@ -1,6 +1,6 @@
 [package]
 name = "axon-encoder"
-version = "0.3.0"
+version = "0.4.0"
 description = "Flexible sensory encoding pipelines for spiking neural networks — rate, temporal, predictive, population, and neuromodulator-driven encoding for telemetry and cyber-physical data."
 repository = "https://github.com/Limen-Neural/axon-encoder"
 license = "MIT OR Apache-2.0"
