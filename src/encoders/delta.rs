@@ -247,4 +247,12 @@ mod tests {
         let output = encoder.encode(&[2.0, 3.0]);
         assert_eq!(output.spikes.len(), 1);
     }
+
+    #[test]
+    fn test_delta_encoder_zero_threshold_scale_spikes_on_any_change() {
+        let mut encoder = DeltaEncoder::new(1.0, 1);
+        encoder.encode(&[0.0]);
+        let output = encoder.encode_with_threshold_scale(&[0.01], 0.0);
+        assert_eq!(output.spikes.len(), 1);
+    }
 }
