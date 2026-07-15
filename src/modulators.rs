@@ -87,9 +87,10 @@ impl GainCurve {
         }
 
         let clamped_level = level.clamp(self.input_range.0, self.input_range.1);
-        let span = self.input_range.1 - self.input_range.0;
+        // Use f64 for span to avoid overflow for valid f32 ranges (e.g., f32::MIN..f32::MAX).
+        let span = (self.input_range.1 as f64) - (self.input_range.0 as f64);
         // span is guaranteed > 0 by has_valid_input_range
-        let position = ((clamped_level as f64 - self.input_range.0 as f64) / (span as f64)) as f32;
+        let position = ((clamped_level as f64 - self.input_range.0 as f64) / span) as f32;
 
         // Use lerp form to avoid overflow when output_range spans nearly f32::MAX.
         let raw_scale = self.output_range.0 * (1.0 - position) + self.output_range.1 * position;
@@ -196,14 +197,17 @@ impl<'de> serde::Deserialize<'de> for EncodingGains {
     {
         #[derive(serde::Deserialize)]
         struct Helper {
+            #[serde(default = "default_gain_scale")]
             threshold_scale: f32,
+            #[serde(default = "default_gain_scale")]
             sensitivity_scale: f32,
+            #[serde(default = "default_gain_scale")]
             firing_rate_scale: f32,
-            #[serde(default = "default_latency_scale")]
+            #[serde(default = "default_gain_scale")]
             latency_scale: f32,
         }
 
-        fn default_latency_scale() -> f32 {
+        fn default_gain_scale() -> f32 {
             1.0
         }
 

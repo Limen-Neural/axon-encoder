@@ -86,8 +86,11 @@ impl PredictiveEncoder {
 
             for &(threshold, _spike_val) in self.deviation_thresholds.iter().rev() {
                 if deviation > (threshold * threshold_scale).max(0.0) {
+                    let Ok(channel) = u16::try_from(i) else {
+                        break;
+                    };
                     output.spikes.push(SpikeEvent {
-                        channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                        channel,
                         timestamp: 0,   // Simplified
                         polarity: true, // Indicates a deviation spike
                     });
