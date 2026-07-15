@@ -51,12 +51,16 @@ impl PhaseEncoder {
         }
     }
 
-    fn normalize(&self, value: f32) -> f32 {
-        ((value - self.range.0) / (self.range.1 - self.range.0)).clamp(0.0, 1.0)
+    fn normalize(&self, value: f32) -> f64 {
+        // Use f64 to prevent overflow for valid f32 ranges.
+        let clamped = value.clamp(self.range.0, self.range.1) as f64;
+        let lo = self.range.0 as f64;
+        let hi = self.range.1 as f64;
+        (clamped - lo) / (hi - lo)
     }
 
-    fn phase_offset(&self, normalized: f32) -> u64 {
-        ((normalized * self.cycle_steps as f32).floor() as u64).min(self.cycle_steps - 1)
+    fn phase_offset(&self, normalized: f64) -> u64 {
+        ((normalized * self.cycle_steps as f64).floor() as u64).min(self.cycle_steps - 1)
     }
 
     fn encode_current_cycle(&self, input: &[f32]) -> EncodedOutput {
@@ -117,8 +121,9 @@ impl PhaseEncoder {
                 break;
             };
 
-            let normalized =
-                ((value - scaled_range.0) / (scaled_range.1 - scaled_range.0)).clamp(0.0, 1.0);
+            let normalized = ((value as f64 - scaled_range.0 as f64)
+                / (scaled_range.1 as f64 - scaled_range.0 as f64))
+                .clamp(0.0, 1.0);
             let phase_offset = self.phase_offset(normalized);
             output.spikes.push(SpikeEvent {
                 channel: channel_u16,

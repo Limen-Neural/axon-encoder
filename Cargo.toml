@@ -4,10 +4,9 @@ version = "0.3.0"
 description = "Flexible sensory encoding pipelines for spiking neural networks — rate, temporal, predictive, population, and neuromodulator-driven encoding for telemetry and cyber-physical data."
 repository = "https://github.com/Limen-Neural/axon-encoder"
 license = "MIT OR Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-ndarray = { version = "0.17.2", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 
 [dev-dependencies]
@@ -16,7 +15,6 @@ serde_json = "1.0"
 
 [features]
 default = []
-ndarray = ["dep:ndarray"]
 cuda = []
 serde = ["dep:serde"]
 

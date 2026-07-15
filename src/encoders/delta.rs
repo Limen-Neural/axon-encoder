@@ -224,10 +224,12 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(encoder
-            .encode_step_with_modulators(&[0.0], &modulators, &gain_curves)
-            .spikes
-            .is_empty());
+        assert!(
+            encoder
+                .encode_step_with_modulators(&[0.0], &modulators, &gain_curves)
+                .spikes
+                .is_empty()
+        );
         let modulated = encoder.encode_step_with_modulators(&[0.75], &modulators, &gain_curves);
         assert_eq!(modulated.spikes.len(), 1);
     }
