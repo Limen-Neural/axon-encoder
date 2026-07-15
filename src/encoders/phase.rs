@@ -52,7 +52,7 @@ impl PhaseEncoder {
     }
 
     fn normalize(&self, value: f32) -> f64 {
-        // Use f64 to prevent overflow for valid f32 ranges.
+        // Use f64 to prevent overflow for valid f32 ranges (e.g., f32::MIN..f32::MAX).
         let clamped = value.clamp(self.range.0, self.range.1) as f64;
         let lo = self.range.0 as f64;
         let hi = self.range.1 as f64;
@@ -110,7 +110,6 @@ impl PhaseEncoder {
         // Use f64 to prevent overflow for valid f32 ranges and scales.
         let lo = self.range.0 as f64;
         let hi = lo + (self.range.1 as f64 - lo) * (sensitivity_scale as f64);
-        let scaled_range = (lo as f32, hi as f32);
 
         for (channel, &value) in input.iter().enumerate() {
             if !value.is_finite() {
@@ -121,9 +120,7 @@ impl PhaseEncoder {
                 break;
             };
 
-            let normalized = ((value as f64 - scaled_range.0 as f64)
-                / (scaled_range.1 as f64 - scaled_range.0 as f64))
-                .clamp(0.0, 1.0);
+            let normalized = ((value as f64 - lo) / (hi - lo)).clamp(0.0, 1.0);
             let phase_offset = self.phase_offset(normalized);
             output.spikes.push(SpikeEvent {
                 channel: channel_u16,
@@ -221,6 +218,15 @@ impl<'de> serde::Deserialize<'de> for PhaseEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_wide_range_normalizes_without_nan() {
+        let mut encoder = PhaseEncoder::new(8, (f32::MIN, f32::MAX));
+        let output = encoder.encode(&[f32::MAX]);
+        assert_eq!(output.spikes.len(), 1);
+        // f32::MAX maps to the last phase bin, not NaN → phase 0.
+        assert_eq!(output.spikes[0].timestamp, 7);
+    }
 
     #[test]
     fn test_phase_mapping_clamps_and_quantizes() {
