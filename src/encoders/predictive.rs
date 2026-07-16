@@ -231,6 +231,13 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
             )));
         }
 
+        // Mirror `new()`: spike channel IDs are u16 (indices 0..=u16::MAX).
+        if helper.history.len() > u16::MAX as usize + 1 {
+            return Err(serde::de::Error::custom(
+                "num_channels exceeds u16::MAX as usize + 1 (max addressable spike channels)",
+            ));
+        }
+
         if helper.history_depth < 5 {
             return Err(serde::de::Error::custom("history_depth must be at least 5"));
         }
@@ -451,5 +458,43 @@ mod tests {
         }"#;
         let res: Result<PredictiveEncoder, _> = serde_json::from_str(json);
         assert!(res.is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_serde_rejects_too_many_channels() {
+        let max_ok = u16::MAX as usize + 1;
+        let first_bad = max_ok + 1;
+
+        // First rejected: same ceiling as `new()` (untrusted saved state cannot bypass).
+        let history: Vec<Vec<f32>> = vec![vec![]; first_bad];
+        let thresholds = vec![0.0f32; first_bad];
+        let value = serde_json::json!({
+            "history": history,
+            "thresholds": thresholds,
+            "history_depth": 5,
+            "deviation_thresholds": [[0.2, 1]],
+        });
+        let res: Result<PredictiveEncoder, _> = serde_json::from_value(value);
+        assert!(res.is_err());
+        let err = res.err().unwrap().to_string();
+        assert!(
+            err.contains("u16::MAX") || err.contains("num_channels"),
+            "unexpected error: {err}"
+        );
+
+        // Accepted maximum boundary still deserializes.
+        let history_ok: Vec<Vec<f32>> = vec![vec![]; max_ok];
+        let thresholds_ok = vec![0.0f32; max_ok];
+        let value_ok = serde_json::json!({
+            "history": history_ok,
+            "thresholds": thresholds_ok,
+            "history_depth": 5,
+            "deviation_thresholds": [[0.2, 1]],
+        });
+        let enc: PredictiveEncoder =
+            serde_json::from_value(value_ok).expect("max channel count deserializes");
+        assert_eq!(enc.history.len(), max_ok);
+        assert_eq!(enc.thresholds.len(), max_ok);
     }
 }
