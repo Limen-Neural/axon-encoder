@@ -39,9 +39,10 @@ impl PoissonEncoder {
     /// a spike occurs with the given probability.
     pub fn encode(&self, input: f32) -> Vec<u8> {
         let probability = input.clamp(0.0, 1.0);
+        let mut rng = rand::rng();
         (0..self.num_steps)
             .map(|_| {
-                if crate::rng::gen_unit_f32() < probability {
+                if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
                     1
                 } else {
                     0
@@ -55,7 +56,8 @@ impl PoissonEncoder {
     /// Useful for streaming mode where you want one spike decision at a time.
     pub fn encode_step(&self, input: f32) -> u8 {
         let probability = input.clamp(0.0, 1.0);
-        if crate::rng::gen_unit_f32() < probability {
+        let mut rng = rand::rng();
+        if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
             1
         } else {
             0

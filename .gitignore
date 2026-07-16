@@ -8,6 +8,8 @@
 .cursor/
 .cursorignore
 .worktrees/
+.swarm/
+.junie/
 
 # Compiled output
 /target/

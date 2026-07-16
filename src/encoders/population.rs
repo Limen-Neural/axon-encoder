@@ -100,13 +100,14 @@ impl PopulationEncoder {
 
         // This encoder expects a single value in the input slice
         if let Some(&value) = input.first() {
+            let mut rng = rand::rng();
             for i in 0..self.num_neurons {
                 let Ok(channel) = u16::try_from(i) else {
                     // Remaining neurons exceed u16::MAX; stop rather than wrap.
                     break;
                 };
                 let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
-                if crate::rng::gen_unit_f32() < rate {
+                if crate::rng::gen_unit_f32_with_rng(&mut rng) < rate {
                     output.spikes.push(SpikeEvent {
                         channel,
                         timestamp: 0, // Simplified

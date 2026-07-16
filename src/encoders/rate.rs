@@ -68,6 +68,7 @@ impl RateEncoder {
             return output;
         }
 
+        let mut rng = rand::rng();
         for (i, &value) in input.iter().enumerate() {
             let Ok(channel) = u16::try_from(i) else {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
@@ -78,7 +79,7 @@ impl RateEncoder {
                 (self.base_rate + normalized * (self.max_rate - self.base_rate)) * rate_scale;
             let probability = (rate / 10.0).clamp(0.0, 1.0);
 
-            if crate::rng::gen_unit_f32() < probability {
+            if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
                 output.spikes.push(SpikeEvent {
                     channel,
                     timestamp: 0,
