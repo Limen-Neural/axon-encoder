@@ -26,6 +26,26 @@ Traditional neural networks process dense, continuous values. Spiking Neural Net
 - **Extensible**: The `Encoder` trait makes it easy to create your own custom encoders.
 - **Lightweight**: Built with minimal dependencies to be fast and easy to integrate into any project.
 
+## Randomness (stochastic encoders)
+
+Encoders that sample spikes stochastically (`RateEncoder`, `PopulationEncoder`,
+`PoissonEncoder`) draw unit floats in `[0, 1)` via `axon_encoder::rng`:
+
+- **Default:** `gen_unit_f32()` uses a thread-local generator from the `rand`
+  crate. Sequences are **not** reproducible across runs.
+- **Reproducible experiments:** pass a seeded RNG into
+  `gen_unit_f32_with_rng(&mut rng)` (for example `rand::rngs::StdRng` with
+  `SeedableRng`). See the `rng` module docs for details.
+- These helpers are for **sensory / spike sampling**, not for cryptographic
+  secrets or key material.
+
+## WebAssembly
+
+When targeting `wasm32-unknown-unknown`, ensure your app enables a working
+[`getrandom`](https://docs.rs/getrandom) backend for that target (often the
+JS/browser feature set required by your toolchain). Stochastic encoders depend
+on OS/entropy-backed RNGs through `rand`.
+
 ## Installation
 
 To use `axon-encoder` in your project, add the following to your `Cargo.toml`:

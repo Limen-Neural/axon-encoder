@@ -9,7 +9,7 @@
 .cursorignore
 .worktrees/
 .swarm/
-.junie/
+.beads/
 
 # Compiled output
 /target/
