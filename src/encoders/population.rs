@@ -198,6 +198,24 @@ mod tests {
     }
 
     #[test]
+    fn test_population_encoder_empty_input() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let empty: [f32; 0] = [];
+        let via_encode = encoder.encode(&empty);
+        assert!(
+            via_encode.spikes.is_empty(),
+            "empty input must yield no spikes through encode"
+        );
+        let via_scale = encoder.encode_with_sensitivity_scale(&empty, 1.0);
+        assert!(
+            via_scale.spikes.is_empty(),
+            "empty input must yield no spikes through encode_with_sensitivity_scale"
+        );
+        let via_step = encoder.encode_step(&empty);
+        assert!(via_step.spikes.is_empty());
+    }
+
+    #[test]
     fn test_effective_tuning_width_sub_unity() {
         let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
         // Sub-unity sensitivity should NOT widen the tuning width

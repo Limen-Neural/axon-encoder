@@ -1,6 +1,8 @@
 # Axon Encoder
 
 [![CI](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Limen-Neural/axon-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/Limen-Neural/axon-encoder)
+[![Qodana](https://github.com/Limen-Neural/axon-encoder/actions/workflows/qodana_code_quality.yml/badge.svg)](https://github.com/Limen-Neural/axon-encoder/actions/workflows/qodana_code_quality.yml)
 
 **A flexible and easy-to-use sensory encoding library for Spiking Neural Networks (SNNs).**
 
