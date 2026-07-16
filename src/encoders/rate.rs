@@ -314,9 +314,15 @@ mod tests {
     #[test]
     fn test_rate_encoder_step_shorter_input() {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
-        // Single value against two accumulators: process channel 0, leave channel 1 untouched
+        // Grow accumulators to two channels, then step with a shorter slice so only
+        // channel 0 is updated; channel 1 state is left untouched.
+        let _ = encoder.encode_step(&[0.0, 0.0]);
         let output = encoder.encode_step(&[1.0]);
         assert_eq!(output.spikes.len(), 1);
+        // Channel 1 still at zero accumulation: another zero-only step on both
+        // channels must not invent a ch1 spike.
+        let quiet = encoder.encode_step(&[0.0, 0.0]);
+        assert!(quiet.spikes.is_empty());
     }
 
     #[test]

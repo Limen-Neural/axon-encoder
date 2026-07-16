@@ -81,11 +81,24 @@ mod tests {
         use rand::SeedableRng;
         use rand::rngs::StdRng;
 
+        // Long sequence: reproducibility contract for experiments (not crypto QA).
+        const N: usize = 2_048;
+
         let mut a = StdRng::seed_from_u64(42);
         let mut b = StdRng::seed_from_u64(42);
-        let seq_a: Vec<f32> = (0..16).map(|_| gen_unit_f32_with_rng(&mut a)).collect();
-        let seq_b: Vec<f32> = (0..16).map(|_| gen_unit_f32_with_rng(&mut b)).collect();
+        let seq_a: Vec<f32> = (0..N).map(|_| gen_unit_f32_with_rng(&mut a)).collect();
+        let seq_b: Vec<f32> = (0..N).map(|_| gen_unit_f32_with_rng(&mut b)).collect();
         assert_eq!(seq_a, seq_b);
         assert!(seq_a.iter().all(|&v| (0.0..1.0).contains(&v)));
+        // Sanity: stream is not stuck on a single value.
+        assert!(
+            seq_a.windows(2).any(|w| w[0] != w[1]),
+            "seeded stream should vary across draws"
+        );
+
+        // Different seed must not match seed 42's stream.
+        let mut c = StdRng::seed_from_u64(43);
+        let seq_c: Vec<f32> = (0..N).map(|_| gen_unit_f32_with_rng(&mut c)).collect();
+        assert_ne!(seq_a, seq_c);
     }
 }
