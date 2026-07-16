@@ -10,7 +10,9 @@
 .worktrees/
 .swarm/
 .beads/
-.cline
+.cline/
+.codacy/
+
 
 # Compiled output
 /target/
