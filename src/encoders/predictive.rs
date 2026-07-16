@@ -1,5 +1,24 @@
 use crate::prelude::*;
 use std::collections::VecDeque;
+use std::fmt;
+
+/// Errors that can occur when initializing a [`PredictiveEncoder`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredictiveEncoderError {
+    /// `history_depth` was less than 5 (the minimum window used by the predictor).
+    HistoryDepthTooSmall,
+}
+
+impl fmt::Display for PredictiveEncoderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HistoryDepthTooSmall => write!(f, "history_depth must be at least 5"),
+        }
+    }
+}
+
+impl std::error::Error for PredictiveEncoderError {}
 
 /// Encodes based on predictive deviation from expected values.
 ///
@@ -42,21 +61,23 @@ pub struct PredictiveEncoder {
 impl PredictiveEncoder {
     /// Creates a new `PredictiveEncoder`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `history_depth < 5`.
+    /// Returns [`PredictiveEncoderError::HistoryDepthTooSmall`] if `history_depth < 5`.
     pub fn new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
-    ) -> Self {
-        assert!(history_depth >= 5, "history_depth must be at least 5");
-        Self {
+    ) -> Result<Self, PredictiveEncoderError> {
+        if history_depth < 5 {
+            return Err(PredictiveEncoderError::HistoryDepthTooSmall);
+        }
+        Ok(Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             thresholds: vec![0.0; num_channels],
             history_depth,
             deviation_thresholds,
-        }
+        })
     }
 
     fn encode_with_threshold_scale(
@@ -225,8 +246,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_predictive_encoder_rejects_small_history_depth() {
+        let err = PredictiveEncoder::new(4, vec![(2.0, 1)], 1).err();
+        assert_eq!(err, Some(PredictiveEncoderError::HistoryDepthTooSmall));
+        assert_eq!(
+            PredictiveEncoderError::HistoryDepthTooSmall.to_string(),
+            "history_depth must be at least 5"
+        );
+        assert!(PredictiveEncoder::new(5, vec![(2.0, 1)], 1).is_ok());
+        assert!(PredictiveEncoder::new(0, vec![(2.0, 1)], 1).is_err());
+    }
+
+    #[test]
     fn test_predictive_encoder() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 1).expect("valid PredictiveEncoder");
         let _output = encoder.encode(&[1.0]);
         let _output = encoder.encode(&[1.0]);
         let _output = encoder.encode(&[1.0]);
@@ -238,7 +272,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_reset() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode(&[1.0, 2.0]);
         }
@@ -249,7 +284,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_multi_channel() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 3);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 3).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode(&[1.0, 2.0, 3.0]);
         }
@@ -260,7 +296,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_input_truncation() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             // 4 values but only 2 channels tracked — should truncate
             encoder.encode(&[1.0, 2.0, 3.0, 4.0]);
@@ -272,7 +309,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_step_input_truncation() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode_step(&[1.0, 2.0, 3.0]);
         }
@@ -282,7 +320,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_encode_with_modulators() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(5.0, 1)], 1).expect("valid PredictiveEncoder");
         let mods = NeuroModulators {
             acetylcholine: 1.0,
             ..Default::default()
@@ -303,7 +342,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_modulators_reduce_threshold() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(5.0, 1)], 1).expect("valid PredictiveEncoder");
         let modulators = NeuroModulators {
             acetylcholine: 1.0,
             ..Default::default()
@@ -332,7 +372,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_encode_with_modulators_truncate() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(5.0, 1)], 1).expect("valid PredictiveEncoder");
         let mods = NeuroModulators {
             acetylcholine: 1.0,
             ..Default::default()
@@ -353,7 +394,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_step_shorter_input() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode_step(&[1.0]);
         }

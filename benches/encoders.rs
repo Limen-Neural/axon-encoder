@@ -141,7 +141,8 @@ fn bench_predictive_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("PredictiveEncoder::encode");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = PredictiveEncoder::new(5, vec![(0.2, 1)], size);
+            let mut encoder =
+                PredictiveEncoder::new(5, vec![(0.2, 1)], size).expect("valid PredictiveEncoder");
             let input = shifted_input(size, 0.5);
             b.iter(|| black_box(encoder.encode(black_box(&input))));
         });
@@ -153,7 +154,8 @@ fn bench_predictive_encoder_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("PredictiveEncoder::encode_step");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = PredictiveEncoder::new(5, vec![(0.2, 1)], size);
+            let mut encoder =
+                PredictiveEncoder::new(5, vec![(0.2, 1)], size).expect("valid PredictiveEncoder");
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];
