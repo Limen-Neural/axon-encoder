@@ -8,6 +8,11 @@
 .cursor/
 .cursorignore
 .worktrees/
+.swarm/
+.beads/
+.cline/
+.codacy/
+
 
 # Compiled output
 /target/

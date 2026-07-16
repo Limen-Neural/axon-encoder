@@ -100,13 +100,14 @@ impl PopulationEncoder {
 
         // This encoder expects a single value in the input slice
         if let Some(&value) = input.first() {
+            let mut rng = rand::rng();
             for i in 0..self.num_neurons {
                 let Ok(channel) = u16::try_from(i) else {
                     // Remaining neurons exceed u16::MAX; stop rather than wrap.
                     break;
                 };
                 let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
-                if crate::rng::gen_unit_f32() < rate {
+                if crate::rng::gen_unit_f32_with_rng(&mut rng) < rate {
                     output.spikes.push(SpikeEvent {
                         channel,
                         timestamp: 0, // Simplified
@@ -194,6 +195,24 @@ mod tests {
             "Peak activity should be near the middle neuron for an input of 50."
         );
         assert!(output.spikes.len() <= 10);
+    }
+
+    #[test]
+    fn test_population_encoder_empty_input() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let empty: [f32; 0] = [];
+        let via_encode = encoder.encode(&empty);
+        assert!(
+            via_encode.spikes.is_empty(),
+            "empty input must yield no spikes through encode"
+        );
+        let via_scale = encoder.encode_with_sensitivity_scale(&empty, 1.0);
+        assert!(
+            via_scale.spikes.is_empty(),
+            "empty input must yield no spikes through encode_with_sensitivity_scale"
+        );
+        let via_step = encoder.encode_step(&empty);
+        assert!(via_step.spikes.is_empty());
     }
 
     #[test]

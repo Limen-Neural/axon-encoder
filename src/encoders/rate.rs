@@ -67,7 +67,13 @@ impl RateEncoder {
         if input.is_empty() {
             return output;
         }
+        // Match PopulationEncoder: non-finite or non-positive scales fully silence.
+        // Avoids NaN probabilities that would silently never spike.
+        if !rate_scale.is_finite() || rate_scale <= 0.0 {
+            return output;
+        }
 
+        let mut rng = rand::rng();
         for (i, &value) in input.iter().enumerate() {
             let Ok(channel) = u16::try_from(i) else {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
@@ -78,7 +84,7 @@ impl RateEncoder {
                 (self.base_rate + normalized * (self.max_rate - self.base_rate)) * rate_scale;
             let probability = (rate / 10.0).clamp(0.0, 1.0);
 
-            if crate::rng::gen_unit_f32() < probability {
+            if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
                 output.spikes.push(SpikeEvent {
                     channel,
                     timestamp: 0,
@@ -93,6 +99,10 @@ impl RateEncoder {
     fn encode_step_with_rate_scale(&mut self, input: &[f32], rate_scale: f32) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         if input.is_empty() {
+            return output;
+        }
+        // Non-finite / non-positive scales must not poison accumulators with NaN.
+        if !rate_scale.is_finite() || rate_scale <= 0.0 {
             return output;
         }
 
@@ -304,9 +314,15 @@ mod tests {
     #[test]
     fn test_rate_encoder_step_shorter_input() {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
-        // Single value against two accumulators: process channel 0, leave channel 1 untouched
+        // Grow accumulators to two channels, then step with a shorter slice so only
+        // channel 0 is updated; channel 1 state is left untouched.
+        let _ = encoder.encode_step(&[0.0, 0.0]);
         let output = encoder.encode_step(&[1.0]);
         assert_eq!(output.spikes.len(), 1);
+        // Channel 1 still at zero accumulation: another zero-only step on both
+        // channels must not invent a ch1 spike.
+        let quiet = encoder.encode_step(&[0.0, 0.0]);
+        assert!(quiet.spikes.is_empty());
     }
 
     #[test]
@@ -319,5 +335,26 @@ mod tests {
                 "zero firing-rate scale must fully silence streaming output"
             );
         }
+    }
+
+    #[test]
+    fn test_rate_encoder_non_finite_rate_scale_silences() {
+        let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
+        for scale in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
+            let batch = encoder.encode_with_rate_scale(&[1.0], scale);
+            assert!(
+                batch.spikes.is_empty(),
+                "non-finite/negative rate_scale ({scale}) must silence batch encode"
+            );
+            let step = encoder.encode_step_with_rate_scale(&[1.0], scale);
+            assert!(
+                step.spikes.is_empty(),
+                "non-finite/negative rate_scale ({scale}) must silence streaming encode"
+            );
+        }
+        // Accumulators must not be poisoned: a normal step after NaN still works.
+        encoder.reset();
+        let recovered = encoder.encode_step_with_rate_scale(&[1.0], 1.0);
+        assert_eq!(recovered.spikes.len(), 1);
     }
 }

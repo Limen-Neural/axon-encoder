@@ -1,25 +1,39 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+//! Random number generation for stochastic encoders.
+//!
+//! Uses `rand::rng()` (thread-local `ThreadRng`) backed by OS entropy via
+//! `getrandom` / `sys_rng`. Values are suitable for spike sampling and
+//! stochastic encoding — **not** a general-purpose API for cryptographic
+//! secrets or key material.
+//!
+//! When compiling for `wasm32-unknown-unknown`, downstream crates must enable
+//! the appropriate `getrandom` JS/browser backend for their toolchain — see
+//! the `getrandom` crate docs for the target you ship.
 
-static SEED: AtomicU64 = AtomicU64::new(0x9E3779B97F4A7C15);
+use rand::{Rng, RngExt};
 
-#[inline]
-fn next_u64() -> u64 {
-    let mut x = SEED.load(Ordering::Relaxed);
-    // xorshift64*
-    x ^= x >> 12;
-    x ^= x << 25;
-    x ^= x >> 27;
-    let next = x.wrapping_mul(0x2545F4914F6CDD1D);
-    SEED.store(next, Ordering::Relaxed);
-    next
-}
-
+/// Generates a random floating-point value in the range `[0, 1)`.
+///
+/// Uses the thread-local generator from `rand::rng()`. Prefer
+/// [`gen_unit_f32_with_rng`] when drawing many samples in a loop so a single
+/// handle can be reused (and when you need a seeded RNG for reproducible
+/// experiments).
 #[inline]
 pub fn gen_unit_f32() -> f32 {
-    // [0,1)
-    const SCALE: f32 = 1.0 / ((u32::MAX as f32) + 1.0);
-    let v = (next_u64() >> 32) as u32;
-    (v as f32) * SCALE
+    let mut rng = rand::rng();
+    gen_unit_f32_with_rng(&mut rng)
+}
+
+/// Generates a random floating-point value in the range `[0, 1)` from a
+/// caller-provided RNG.
+///
+/// Reusing the same RNG produces a deterministic sequence for a given seed
+/// and algorithm, which is useful for experiments and tests.
+#[inline]
+pub fn gen_unit_f32_with_rng<R>(rng: &mut R) -> f32
+where
+    R: Rng + ?Sized,
+{
+    rng.random::<f32>()
 }
 
 #[cfg(test)]
@@ -32,5 +46,59 @@ mod tests {
             let v = gen_unit_f32();
             assert!((0.0..1.0).contains(&v));
         }
+    }
+
+    #[test]
+    fn test_gen_unit_f32_range() {
+        for _ in 0..10_000 {
+            let val = gen_unit_f32();
+            assert!(val >= 0.0);
+            assert!(val < 1.0);
+        }
+    }
+
+    #[test]
+    fn test_gen_unit_f32_multithreaded() {
+        use std::thread;
+        let mut handles = vec![];
+        for _ in 0..8 {
+            let handle = thread::spawn(|| {
+                for _ in 0..1000 {
+                    let val = gen_unit_f32();
+                    assert!(val >= 0.0);
+                    assert!(val < 1.0);
+                }
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_gen_unit_f32_with_rng_seeded_is_deterministic() {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        // Long sequence: reproducibility contract for experiments (not crypto QA).
+        const N: usize = 2_048;
+
+        let mut a = StdRng::seed_from_u64(42);
+        let mut b = StdRng::seed_from_u64(42);
+        let seq_a: Vec<f32> = (0..N).map(|_| gen_unit_f32_with_rng(&mut a)).collect();
+        let seq_b: Vec<f32> = (0..N).map(|_| gen_unit_f32_with_rng(&mut b)).collect();
+        assert_eq!(seq_a, seq_b);
+        assert!(seq_a.iter().all(|&v| (0.0..1.0).contains(&v)));
+        // Sanity: stream is not stuck on a single value.
+        assert!(
+            seq_a.windows(2).any(|w| w[0] != w[1]),
+            "seeded stream should vary across draws"
+        );
+
+        // Different seed must not match seed 42's stream.
+        let mut c = StdRng::seed_from_u64(43);
+        let seq_c: Vec<f32> = (0..N).map(|_| gen_unit_f32_with_rng(&mut c)).collect();
+        assert_ne!(seq_a, seq_c);
     }
 }
