@@ -143,8 +143,21 @@ fn bench_predictive_encoder(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut encoder =
                 PredictiveEncoder::new(5, vec![(0.2, 1)], size).expect("valid PredictiveEncoder");
-            let input = shifted_input(size, 0.5);
-            b.iter(|| black_box(encoder.encode(black_box(&input))));
+            // Cycle low/high so thresholds keep adapting (static input converges and under-measures).
+            let low = temporal_level(size, 0.0);
+            let high = temporal_level(size, 1.0);
+            let sequence = [&low, &low, &low, &high, &high, &high];
+            let mut index = 0usize;
+
+            for _ in 0..5 {
+                encoder.encode(&low);
+            }
+
+            b.iter(|| {
+                let input = sequence[index % sequence.len()];
+                index += 1;
+                black_box(encoder.encode(black_box(input)))
+            });
         });
     }
     group.finish();
