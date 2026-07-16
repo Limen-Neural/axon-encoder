@@ -8,12 +8,20 @@ use std::fmt;
 pub enum PredictiveEncoderError {
     /// `history_depth` was less than 5 (the minimum window used by the predictor).
     HistoryDepthTooSmall,
+    /// `num_channels` exceeds the `u16` channel-ID range used when emitting spikes.
+    ///
+    /// Valid channel indices are `0..=u16::MAX`, so at most `u16::MAX as usize + 1` channels.
+    NumChannelsTooLarge,
 }
 
 impl fmt::Display for PredictiveEncoderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::HistoryDepthTooSmall => write!(f, "history_depth must be at least 5"),
+            Self::NumChannelsTooLarge => write!(
+                f,
+                "num_channels exceeds u16::MAX as usize + 1 (max addressable spike channels)"
+            ),
         }
     }
 }
@@ -63,7 +71,9 @@ impl PredictiveEncoder {
     ///
     /// # Errors
     ///
-    /// Returns [`PredictiveEncoderError::HistoryDepthTooSmall`] if `history_depth < 5`.
+    /// - [`PredictiveEncoderError::HistoryDepthTooSmall`] if `history_depth < 5`
+    /// - [`PredictiveEncoderError::NumChannelsTooLarge`] if `num_channels > u16::MAX as usize + 1`
+    ///   (spike `channel` IDs are `u16`, so indices must stay in `0..=u16::MAX`)
     pub fn new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
@@ -71,6 +81,10 @@ impl PredictiveEncoder {
     ) -> Result<Self, PredictiveEncoderError> {
         if history_depth < 5 {
             return Err(PredictiveEncoderError::HistoryDepthTooSmall);
+        }
+        // encode_with_threshold_scale maps channel index → u16 via try_from.
+        if num_channels > u16::MAX as usize + 1 {
+            return Err(PredictiveEncoderError::NumChannelsTooLarge);
         }
         Ok(Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
@@ -255,6 +269,29 @@ mod tests {
         );
         assert!(PredictiveEncoder::new(5, vec![(2.0, 1)], 1).is_ok());
         assert!(PredictiveEncoder::new(0, vec![(2.0, 1)], 1).is_err());
+    }
+
+    #[test]
+    fn test_predictive_encoder_num_channels_u16_range() {
+        let max_ok = u16::MAX as usize + 1;
+        let first_bad = max_ok + 1;
+
+        // First rejected: fails before allocation / without panicking.
+        assert_eq!(
+            PredictiveEncoder::new(5, vec![(0.2, 1)], first_bad).err(),
+            Some(PredictiveEncoderError::NumChannelsTooLarge)
+        );
+        assert!(
+            PredictiveEncoderError::NumChannelsTooLarge
+                .to_string()
+                .contains("u16::MAX")
+        );
+
+        // Accepted maximum: every channel index is representable as u16.
+        let encoder =
+            PredictiveEncoder::new(5, vec![(0.2, 1)], max_ok).expect("max u16 channel count");
+        assert_eq!(encoder.history.len(), max_ok);
+        assert_eq!(encoder.thresholds.len(), max_ok);
     }
 
     #[test]
