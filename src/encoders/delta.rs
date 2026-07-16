@@ -1,10 +1,10 @@
 use crate::prelude::*;
 
-/// A simple delta-based encoder.
+/// A simple delta-based encoder
 ///
 /// Fires a spike when the absolute difference between the current input and the last
 /// encoded value exceeds a threshold. This is useful for event-based encoding where
-/// only changes in the input signal are relevant.
+/// only changes in the input signal are relevant
 ///
 /// # Mathematical Model
 ///
@@ -66,43 +66,6 @@ impl DeltaEncoder {
         }
         output
     }
-
-    /// Encode input using neuromodulator-driven gain curves.
-    ///
-    /// Evaluates `gain_curves` against the current `modulators` to produce
-    /// an [`EncodingGains`], then uses the `threshold_scale` component to
-    /// modulate the delta-change detection threshold. Values > 1.0 raise the
-    /// effective threshold (less sensitive — larger changes required to spike);
-    /// values in (0, 1) lower it (more sensitive).
-    ///
-    /// `NeuromodulatorGainCurves` composes per-modulator curves
-    /// (dopamine, cortisol, acetylcholine, tempo) multiplicatively via
-    /// [`EncodingGains::sanitize`]. Expected modulator range: any finite f32.
-    /// Expected gain output range: `[MIN_GAIN_SCALE, MAX_GAIN_SCALE]`
-    /// (0.0 to 10,000.0 after sanitization).
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_threshold_scale(input, gains.threshold_scale)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    ///
-    /// Identical behavior — provided for API symmetry with the [`Encoder`] trait's
-    /// `encode` / `encode_step` pair.
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_threshold_scale(input, gains.threshold_scale)
-    }
 }
 
 impl Encoder for DeltaEncoder {
@@ -126,10 +89,16 @@ impl Encoder for DeltaEncoder {
     }
 }
 
+impl ModulatedEncoder for DeltaEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        self.encode_with_threshold_scale(input, gains.sanitize().threshold_scale)
+    }
+}
+
 /// Simplified: delta-based spike generation (per feature)
 ///
-/// This is a utility function that takes a slice of deltas and returns a boolean spike train.
-/// It can be used to feed the resulting binary/event sequences into LIF/RSNN layers.
+/// This is a utility function that takes a slice of deltas and returns a boolean spike train
+/// It can be used to feed the resulting binary/event sequences into LIF/RSNN layers
 pub fn encode_deltas_to_spikes(deltas: &[f32], threshold: f32) -> Vec<bool> {
     deltas.iter().map(|&d| d.abs() > threshold).collect()
 }

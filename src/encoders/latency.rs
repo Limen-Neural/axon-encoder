@@ -1,12 +1,12 @@
 use crate::prelude::*;
 
-/// Encodes analog values into latency-coded spike times.
+/// Encodes analog values into latency-coded spike times
 ///
 /// Each input channel produces exactly one positive spike whose timestamp is
 /// determined by the input strength within the configured range. Stronger
 /// inputs fire earlier. Values below the range minimum map to the latest
 /// possible spike at `max_latency`, and values above the range maximum map to
-/// timestamp `0`.
+/// timestamp `0`
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LatencyEncoder {
@@ -15,11 +15,11 @@ pub struct LatencyEncoder {
 }
 
 impl LatencyEncoder {
-    /// Creates a new `LatencyEncoder`.
+    /// Creates a new `LatencyEncoder`
     ///
     /// # Panics
     ///
-    /// Panics if `range.0 >= range.1` or if either bound is non-finite.
+    /// Panics if `range.0 >= range.1` or if either bound is non-finite
     pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
         assert!(
             range.0.is_finite() && range.1.is_finite() && range.0 < range.1,
@@ -60,36 +60,6 @@ impl LatencyEncoder {
 
         let normalized = self.normalize(value);
         ((1.0 - normalized) * scaled_latency as f64).round() as u64
-    }
-
-    /// Encode input using neuromodulator-driven gain curves.
-    ///
-    /// Evaluates `gain_curves` against the current `modulators` to produce
-    /// an [`EncodingGains`], then uses the `latency_scale` component to
-    /// modulate the maximum latency. Values > 1.0 increase max_latency
-    /// (slower response); values in (0, 1) decrease it (faster response).
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_latency_scale(input, gains.latency_scale)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    ///
-    /// Identical behavior — provided for API symmetry with the [`Encoder`] trait's
-    /// `encode` / `encode_step` pair.
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_latency_scale(input, gains.latency_scale)
     }
 
     fn encode_with_latency_scale(&mut self, input: &[f32], latency_scale: f32) -> EncodedOutput {
@@ -138,6 +108,12 @@ impl Encoder for LatencyEncoder {
 
     fn reset(&mut self) {
         // Stateless encoder.
+    }
+}
+
+impl ModulatedEncoder for LatencyEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        self.encode_with_latency_scale(input, gains.sanitize().latency_scale)
     }
 }
 

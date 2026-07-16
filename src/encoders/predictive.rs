@@ -28,15 +28,15 @@ impl fmt::Display for PredictiveEncoderError {
 
 impl std::error::Error for PredictiveEncoderError {}
 
-/// Encodes based on predictive deviation from expected values.
+/// Encodes based on predictive deviation from expected values
 ///
 /// Maintains a running average (threshold) and fires a spike when the input
 /// deviates significantly from this prediction. Useful for detecting anomalies
-/// or unexpected changes in sensor data.
+/// or unexpected changes in sensor data
 ///
 /// # Mathematical Model
 ///
-/// Tracks an exponentially weighted moving average of recent values per channel.
+/// Tracks an exponentially weighted moving average of recent values per channel
 /// A spike fires when the absolute deviation from this predicted value exceeds
 /// the threshold:
 ///
@@ -67,7 +67,7 @@ pub struct PredictiveEncoder {
 }
 
 impl PredictiveEncoder {
-    /// Creates a new `PredictiveEncoder`.
+    /// Creates a new `PredictiveEncoder`
     ///
     /// # Errors
     ///
@@ -135,50 +135,6 @@ impl PredictiveEncoder {
         }
         output
     }
-
-    /// Encode input using neuromodulator-driven gain curves.
-    ///
-    /// Evaluates `gain_curves` against the current `modulators` to produce
-    /// an [`EncodingGains`], then uses the `threshold_scale` component to
-    /// modulate the deviation detection threshold. Values > 1.0 raise the
-    /// effective threshold (less sensitive — larger deviations required to
-    /// spike); values in (0, 1) lower it (more sensitive).
-    ///
-    /// Input is truncated to the number of tracked channels. Expected
-    /// modulator range: any finite f32. Expected gain range after
-    /// sanitization: `[0.0, 10,000.0]`.
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        // Match encode_step_with_modulators: only process channels we track.
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    /// Identical behavior, provided for API symmetry with the [`Encoder`] trait.
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
-    }
 }
 
 impl Encoder for PredictiveEncoder {
@@ -202,6 +158,17 @@ impl Encoder for PredictiveEncoder {
         for threshold in self.thresholds.iter_mut() {
             *threshold = 0.0;
         }
+    }
+}
+
+impl ModulatedEncoder for PredictiveEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
+        self.encode_with_threshold_scale(safe_input, gains.sanitize().threshold_scale)
     }
 }
 

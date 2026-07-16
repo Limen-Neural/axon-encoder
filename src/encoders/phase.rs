@@ -1,16 +1,16 @@
 use crate::prelude::*;
 
-/// Encodes analog values as phase-locked spikes within a repeating oscillation cycle.
+/// Encodes analog values as phase-locked spikes within a repeating oscillation cycle
 ///
 /// Each input channel produces at most one positive spike per call, with the spike
 /// timestamp positioned relative to the current background phase according to the
-/// normalized input value. Higher values map to later phase bins.
+/// normalized input value. Higher values map to later phase bins
 ///
 /// Timestamps are computed as `current_phase + phase_offset`, which keeps ordering
-/// stable *within* a single encode call (higher-value channels get later timestamps).
+/// stable *within* a single encode call (higher-value channels get later timestamps)
 /// Ordering *across* calls is not globally guaranteed, since `phase_offset` can exceed
 /// the per-call phase advance. Cycle-relative phase is recoverable as
-/// `timestamp % cycle_steps`.
+/// `timestamp % cycle_steps`
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PhaseEncoder {
@@ -19,10 +19,10 @@ pub struct PhaseEncoder {
     current_phase: u64,
 }
 
-/// Validates `cycle_steps` and `range`, returning an error message if invalid.
+/// Validates `cycle_steps` and `range`, returning an error message if invalid
 ///
 /// Shared by both `PhaseEncoder::new` (which panics on failure) and the
-/// `Deserialize` impl (which surfaces the message as a deserialization error).
+/// `Deserialize` impl (which surfaces the message as a deserialization error)
 fn validate_params(cycle_steps: u64, range: (f32, f32)) -> Result<(), &'static str> {
     if cycle_steps == 0 {
         return Err("cycle_steps must be greater than 0");
@@ -34,11 +34,11 @@ fn validate_params(cycle_steps: u64, range: (f32, f32)) -> Result<(), &'static s
 }
 
 impl PhaseEncoder {
-    /// Creates a new `PhaseEncoder`.
+    /// Creates a new `PhaseEncoder`
     ///
     /// # Panics
     ///
-    /// Panics if `cycle_steps == 0` or if range bounds are non-finite or `range.0 >= range.1`.
+    /// Panics if `cycle_steps == 0` or if range bounds are non-finite or `range.0 >= range.1`
     pub fn new(cycle_steps: u64, range: (f32, f32)) -> Self {
         if let Err(message) = validate_params(cycle_steps, range) {
             panic!("{message}");
@@ -131,42 +131,6 @@ impl PhaseEncoder {
 
         output
     }
-
-    /// Encode input using neuromodulator-driven gain curves.
-    ///
-    /// Evaluates `gain_curves` against the current `modulators` to produce
-    /// an [`EncodingGains`], then uses the `sensitivity_scale` component to
-    /// modulate the input-to-phase mapping range. Values > 1.0 widen the range
-    /// (less sensitive); values in (0, 1) narrow it (more sensitive).
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        let output =
-            self.encode_current_cycle_with_sensitivity_scale(input, gains.sensitivity_scale);
-        self.advance_phase();
-        output
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    ///
-    /// Identical behavior — provided for API symmetry with the [`Encoder`] trait's
-    /// `encode` / `encode_step` pair.
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        let output =
-            self.encode_current_cycle_with_sensitivity_scale(input, gains.sensitivity_scale);
-        self.advance_phase();
-        output
-    }
 }
 
 impl Encoder for PhaseEncoder {
@@ -186,6 +150,15 @@ impl Encoder for PhaseEncoder {
 
     fn reset(&mut self) {
         self.current_phase = 0;
+    }
+}
+
+impl ModulatedEncoder for PhaseEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        let output = self
+            .encode_current_cycle_with_sensitivity_scale(input, gains.sanitize().sensitivity_scale);
+        self.advance_phase();
+        output
     }
 }
 

@@ -1,11 +1,11 @@
 use crate::prelude::*;
 
-/// Encodes a single analog value across a population of neurons.
+/// Encodes a single analog value across a population of neurons
 ///
 /// Each neuron in the population is "tuned" to a specific preferred value within
 /// the input range. The neuron fires based on a Gaussian-like tuning curve centered
 /// on its preferred value. This creates a distributed representation where multiple
-/// neurons contribute to encoding a single input value.
+/// neurons contribute to encoding a single input value
 ///
 /// # Mathematical Model
 ///
@@ -46,7 +46,7 @@ impl PopulationEncoder {
         }
     }
 
-    /// Returns the number of neurons in the population.
+    /// Returns the number of neurons in the population
     pub fn num_neurons(&self) -> usize {
         self.num_neurons
     }
@@ -66,12 +66,12 @@ impl PopulationEncoder {
         (-(distance * distance) / (2.0 * tuning_width * tuning_width)).exp()
     }
 
-    /// Effective tuning width under a sensitivity gain.
+    /// Effective tuning width under a sensitivity gain
     ///
     /// Scales **≥ 1** narrow the Gaussian (`width / scale`) so high sensitivity is
     /// more selective. Scales in **(0, 1)** keep the base width and rely on rate
     /// scaling in `encode_with_sensitivity_scale` so low (but nonzero) gain
-    /// *suppresses* activity instead of widening toward universal firing.
+    /// *suppresses* activity instead of widening toward universal firing
     fn effective_tuning_width(&self, sensitivity_scale: f32) -> f32 {
         if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
             return self.tuning_width.max(f32::EPSILON);
@@ -118,38 +118,6 @@ impl PopulationEncoder {
         }
         output
     }
-
-    /// Encode input using neuromodulator-driven gain curves.
-    ///
-    /// Evaluates `gain_curves` against the current `modulators` to produce
-    /// an [`EncodingGains`], then uses the `sensitivity_scale` component to
-    /// modulate the population tuning width. Values >= 1.0 narrow the
-    /// Gaussian (more selective); values in (0, 1) suppress firing rate
-    /// without widening.
-    ///
-    /// Expected modulator range: any finite f32. Expected gain range after
-    /// sanitization: `[0.0, 10,000.0]`.
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_sensitivity_scale(input, gains.sensitivity_scale)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    /// Identical behavior, provided for API symmetry with the [`Encoder`] trait.
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_sensitivity_scale(input, gains.sensitivity_scale)
-    }
 }
 
 impl Encoder for PopulationEncoder {
@@ -163,6 +131,12 @@ impl Encoder for PopulationEncoder {
 
     fn reset(&mut self) {
         // No state to reset
+    }
+}
+
+impl ModulatedEncoder for PopulationEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        self.encode_with_sensitivity_scale(input, gains.sanitize().sensitivity_scale)
     }
 }
 
