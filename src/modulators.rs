@@ -179,7 +179,8 @@ impl EncodingGains {
         }
     }
 
-    fn sanitize(self) -> Self {
+    /// Clamps non-finite and out-of-range gain components to safe defaults.
+    pub fn sanitize(self) -> Self {
         Self {
             threshold_scale: sanitize_gain_scale(self.threshold_scale),
             sensitivity_scale: sanitize_gain_scale(self.sensitivity_scale),

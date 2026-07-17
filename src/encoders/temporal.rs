@@ -37,11 +37,11 @@ pub struct TemporalEncoder {
 }
 
 impl TemporalEncoder {
-    /// Creates a new `TemporalEncoder`.
+    /// Creates a new `TemporalEncoder`
     ///
     /// # Panics
     ///
-    /// Panics if `history_depth < 6`.
+    /// Panics if `history_depth < 6`
     pub fn new(
         history_depth: usize,
         change_thresholds: Vec<(f32, u16)>,
@@ -97,48 +97,31 @@ impl TemporalEncoder {
         output
     }
 
-    /// Encode input using neuromodulator-driven gain curves.
+    /// Encodes input using neuromodulator-driven gain curves.
     ///
-    /// Evaluates `gain_curves` against the current `modulators` to produce
-    /// an [`EncodingGains`], then uses the `threshold_scale` component to
-    /// modulate the change-detection threshold. Values > 1.0 raise the
-    /// effective threshold (less sensitive — larger changes required to
-    /// spike); values in (0, 1) lower it (more sensitive).
-    ///
-    /// Input is truncated to the number of tracked channels. Expected
-    /// modulator range: any finite f32. Expected gain range after
-    /// sanitization: `[0.0, 10,000.0]`.
+    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
     pub fn encode_with_modulators(
         &mut self,
         input: &[f32],
         modulators: &NeuroModulators,
         gain_curves: &NeuromodulatorGainCurves,
     ) -> EncodedOutput {
-        // Match encode_step_with_modulators: only process channels we track.
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
+        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
     }
 
     /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    /// Identical behavior, provided for API symmetry with the [`Encoder`] trait.
     pub fn encode_step_with_modulators(
         &mut self,
         input: &[f32],
         modulators: &NeuroModulators,
         gain_curves: &NeuromodulatorGainCurves,
     ) -> EncodedOutput {
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_threshold_scale(safe_input, gains.threshold_scale)
+        <Self as ModulatedEncoder>::encode_step_with_modulators(
+            self,
+            input,
+            modulators,
+            gain_curves,
+        )
     }
 }
 
@@ -160,6 +143,17 @@ impl Encoder for TemporalEncoder {
         for history in self.history.iter_mut() {
             history.clear();
         }
+    }
+}
+
+impl ModulatedEncoder for TemporalEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        let safe_input = if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        };
+        self.encode_with_threshold_scale(safe_input, gains.sanitize().threshold_scale)
     }
 }
 

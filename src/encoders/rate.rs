@@ -132,36 +132,33 @@ impl RateEncoder {
         output
     }
 
-    /// Encode input using neuromodulator-driven gain curves.
+    /// Encodes input using neuromodulator-driven gain curves.
     ///
-    /// Evaluates `gain_curves` against the current `modulators` to produce
-    /// an [`EncodingGains`], then uses the `firing_rate_scale` component to
-    /// modulate the base firing rate. Values > 1.0 increase spike frequency;
-    /// values < 1.0 decrease it.
-    ///
-    /// Expected modulator range: any finite f32. Expected gain range after
-    /// sanitization: `[0.0, 10,000.0]`.
+    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
     pub fn encode_with_modulators(
         &mut self,
         input: &[f32],
         modulators: &NeuroModulators,
         gain_curves: &NeuromodulatorGainCurves,
     ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_with_rate_scale(input, gains.firing_rate_scale)
+        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
     }
 
     /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    /// Uses [`encode_step_with_rate_scale`](Self::encode_step_with_rate_scale)
-    /// for accumulator-based spike generation.
+    ///
+    /// Uses the internal accumulator-based rate scale path for streaming.
     pub fn encode_step_with_modulators(
         &mut self,
         input: &[f32],
         modulators: &NeuroModulators,
         gain_curves: &NeuromodulatorGainCurves,
     ) -> EncodedOutput {
-        let gains = gain_curves.evaluate(modulators);
-        self.encode_step_with_rate_scale(input, gains.firing_rate_scale)
+        <Self as ModulatedEncoder>::encode_step_with_modulators(
+            self,
+            input,
+            modulators,
+            gain_curves,
+        )
     }
 }
 
@@ -178,6 +175,16 @@ impl Encoder for RateEncoder {
         for acc in self.accumulators.iter_mut() {
             *acc = 0.0;
         }
+    }
+}
+
+impl ModulatedEncoder for RateEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        self.encode_with_rate_scale(input, gains.sanitize().firing_rate_scale)
+    }
+
+    fn encode_step_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        self.encode_step_with_rate_scale(input, gains.sanitize().firing_rate_scale)
     }
 }
 
