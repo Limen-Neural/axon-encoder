@@ -12,6 +12,6 @@ pub use derivative::DerivativeEncoder;
 pub use latency::LatencyEncoder;
 pub use phase::PhaseEncoder;
 pub use population::PopulationEncoder;
-pub use predictive::PredictiveEncoder;
+pub use predictive::{PredictiveEncoder, PredictiveEncoderError};
 pub use rate::RateEncoder;
 pub use temporal::TemporalEncoder;

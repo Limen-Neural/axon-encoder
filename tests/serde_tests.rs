@@ -68,7 +68,8 @@ fn test_serde_encoders_and_state() {
     assert_eq!(pop_encoder, deserialized_pop);
 
     // 9. Test PredictiveEncoder
-    let pred_encoder = PredictiveEncoder::new(10, vec![(1.0, 1), (2.0, 2)], 2);
+    let pred_encoder =
+        PredictiveEncoder::new(10, vec![(1.0, 1), (2.0, 2)], 2).expect("valid PredictiveEncoder");
     let serialized_pred = serde_json::to_string(&pred_encoder).unwrap();
     let deserialized_pred: PredictiveEncoder = serde_json::from_str(&serialized_pred).unwrap();
     assert_eq!(pred_encoder, deserialized_pred);

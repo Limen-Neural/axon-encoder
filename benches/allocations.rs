@@ -156,7 +156,8 @@ fn report_temporal_encoder() {
 
 fn report_predictive_encoder() {
     for scale in SCALES {
-        let mut encoder = PredictiveEncoder::new(5, vec![(0.2, 1)], scale);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(0.2, 1)], scale).expect("valid PredictiveEncoder");
         let low = constant_input(scale, 0.0);
         let high = constant_input(scale, 1.0);
 

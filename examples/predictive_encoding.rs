@@ -15,7 +15,8 @@ fn main() {
     //   history_depth         = 10  (rolling window for prediction)
     //   deviation_thresholds  = [(3.0, 1), (8.0, 2)]  (threshold, spike value)
     //   num_channels          = 1
-    let mut encoder = PredictiveEncoder::new(10, vec![(3.0, 1), (8.0, 2)], 1);
+    let mut encoder =
+        PredictiveEncoder::new(10, vec![(3.0, 1), (8.0, 2)], 1).expect("valid PredictiveEncoder");
 
     // Simulate a sensor stream: stable baseline, then anomalies.
     let stream: Vec<f32> = vec![

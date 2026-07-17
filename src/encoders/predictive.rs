@@ -1,5 +1,32 @@
 use crate::prelude::*;
 use std::collections::VecDeque;
+use std::fmt;
+
+/// Errors that can occur when initializing a [`PredictiveEncoder`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredictiveEncoderError {
+    /// `history_depth` was less than 5 (the minimum window used by the predictor).
+    HistoryDepthTooSmall,
+    /// `num_channels` exceeds the `u16` channel-ID range used when emitting spikes.
+    ///
+    /// Valid channel indices are `0..=u16::MAX`, so at most `u16::MAX as usize + 1` channels.
+    NumChannelsTooLarge,
+}
+
+impl fmt::Display for PredictiveEncoderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HistoryDepthTooSmall => write!(f, "history_depth must be at least 5"),
+            Self::NumChannelsTooLarge => write!(
+                f,
+                "num_channels exceeds u16::MAX as usize + 1 (max addressable spike channels)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PredictiveEncoderError {}
 
 /// Encodes based on predictive deviation from expected values.
 ///
@@ -42,21 +69,29 @@ pub struct PredictiveEncoder {
 impl PredictiveEncoder {
     /// Creates a new `PredictiveEncoder`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `history_depth < 5`.
+    /// - [`PredictiveEncoderError::HistoryDepthTooSmall`] if `history_depth < 5`
+    /// - [`PredictiveEncoderError::NumChannelsTooLarge`] if `num_channels > u16::MAX as usize + 1`
+    ///   (spike `channel` IDs are `u16`, so indices must stay in `0..=u16::MAX`)
     pub fn new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
-    ) -> Self {
-        assert!(history_depth >= 5, "history_depth must be at least 5");
-        Self {
+    ) -> Result<Self, PredictiveEncoderError> {
+        if history_depth < 5 {
+            return Err(PredictiveEncoderError::HistoryDepthTooSmall);
+        }
+        // encode_with_threshold_scale maps channel index → u16 via try_from.
+        if num_channels > u16::MAX as usize + 1 {
+            return Err(PredictiveEncoderError::NumChannelsTooLarge);
+        }
+        Ok(Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             thresholds: vec![0.0; num_channels],
             history_depth,
             deviation_thresholds,
-        }
+        })
     }
 
     fn encode_with_threshold_scale(
@@ -196,6 +231,13 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
             )));
         }
 
+        // Mirror `new()`: spike channel IDs are u16 (indices 0..=u16::MAX).
+        if helper.history.len() > u16::MAX as usize + 1 {
+            return Err(serde::de::Error::custom(
+                "num_channels exceeds u16::MAX as usize + 1 (max addressable spike channels)",
+            ));
+        }
+
         if helper.history_depth < 5 {
             return Err(serde::de::Error::custom("history_depth must be at least 5"));
         }
@@ -225,8 +267,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_predictive_encoder_rejects_small_history_depth() {
+        let err = PredictiveEncoder::new(4, vec![(2.0, 1)], 1).err();
+        assert_eq!(err, Some(PredictiveEncoderError::HistoryDepthTooSmall));
+        assert_eq!(
+            PredictiveEncoderError::HistoryDepthTooSmall.to_string(),
+            "history_depth must be at least 5"
+        );
+        assert!(PredictiveEncoder::new(5, vec![(2.0, 1)], 1).is_ok());
+        assert!(PredictiveEncoder::new(0, vec![(2.0, 1)], 1).is_err());
+    }
+
+    #[test]
+    fn test_predictive_encoder_num_channels_u16_range() {
+        let max_ok = u16::MAX as usize + 1;
+        let first_bad = max_ok + 1;
+
+        // First rejected: fails before allocation / without panicking.
+        assert_eq!(
+            PredictiveEncoder::new(5, vec![(0.2, 1)], first_bad).err(),
+            Some(PredictiveEncoderError::NumChannelsTooLarge)
+        );
+        assert!(
+            PredictiveEncoderError::NumChannelsTooLarge
+                .to_string()
+                .contains("u16::MAX")
+        );
+
+        // Accepted maximum: every channel index is representable as u16.
+        let encoder =
+            PredictiveEncoder::new(5, vec![(0.2, 1)], max_ok).expect("max u16 channel count");
+        assert_eq!(encoder.history.len(), max_ok);
+        assert_eq!(encoder.thresholds.len(), max_ok);
+    }
+
+    #[test]
     fn test_predictive_encoder() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 1).expect("valid PredictiveEncoder");
         let _output = encoder.encode(&[1.0]);
         let _output = encoder.encode(&[1.0]);
         let _output = encoder.encode(&[1.0]);
@@ -238,7 +316,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_reset() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode(&[1.0, 2.0]);
         }
@@ -249,7 +328,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_multi_channel() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 3);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 3).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode(&[1.0, 2.0, 3.0]);
         }
@@ -260,7 +340,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_input_truncation() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             // 4 values but only 2 channels tracked — should truncate
             encoder.encode(&[1.0, 2.0, 3.0, 4.0]);
@@ -272,7 +353,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_step_input_truncation() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode_step(&[1.0, 2.0, 3.0]);
         }
@@ -282,7 +364,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_encode_with_modulators() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(5.0, 1)], 1).expect("valid PredictiveEncoder");
         let mods = NeuroModulators {
             acetylcholine: 1.0,
             ..Default::default()
@@ -303,7 +386,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_modulators_reduce_threshold() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(5.0, 1)], 1).expect("valid PredictiveEncoder");
         let modulators = NeuroModulators {
             acetylcholine: 1.0,
             ..Default::default()
@@ -332,7 +416,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_encode_with_modulators_truncate() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(5.0, 1)], 1);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(5.0, 1)], 1).expect("valid PredictiveEncoder");
         let mods = NeuroModulators {
             acetylcholine: 1.0,
             ..Default::default()
@@ -353,7 +438,8 @@ mod tests {
 
     #[test]
     fn test_predictive_encoder_step_shorter_input() {
-        let mut encoder = PredictiveEncoder::new(5, vec![(2.0, 1)], 2);
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
         for _ in 0..6 {
             encoder.encode_step(&[1.0]);
         }
@@ -372,5 +458,43 @@ mod tests {
         }"#;
         let res: Result<PredictiveEncoder, _> = serde_json::from_str(json);
         assert!(res.is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_serde_rejects_too_many_channels() {
+        let max_ok = u16::MAX as usize + 1;
+        let first_bad = max_ok + 1;
+
+        // First rejected: same ceiling as `new()` (untrusted saved state cannot bypass).
+        let history: Vec<Vec<f32>> = vec![vec![]; first_bad];
+        let thresholds = vec![0.0f32; first_bad];
+        let value = serde_json::json!({
+            "history": history,
+            "thresholds": thresholds,
+            "history_depth": 5,
+            "deviation_thresholds": [[0.2, 1]],
+        });
+        let res: Result<PredictiveEncoder, _> = serde_json::from_value(value);
+        assert!(res.is_err());
+        let err = res.err().unwrap().to_string();
+        assert!(
+            err.contains("u16::MAX") || err.contains("num_channels"),
+            "unexpected error: {err}"
+        );
+
+        // Accepted maximum boundary still deserializes.
+        let history_ok: Vec<Vec<f32>> = vec![vec![]; max_ok];
+        let thresholds_ok = vec![0.0f32; max_ok];
+        let value_ok = serde_json::json!({
+            "history": history_ok,
+            "thresholds": thresholds_ok,
+            "history_depth": 5,
+            "deviation_thresholds": [[0.2, 1]],
+        });
+        let enc: PredictiveEncoder =
+            serde_json::from_value(value_ok).expect("max channel count deserializes");
+        assert_eq!(enc.history.len(), max_ok);
+        assert_eq!(enc.thresholds.len(), max_ok);
     }
 }
