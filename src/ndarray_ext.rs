@@ -24,17 +24,17 @@ pub trait NdarrayEncoderExt: Encoder {
     /// accumulated state from earlier rows). For encoders whose `encode_step`
     /// simply delegates to `encode` (e.g. [`DeltaEncoder`](crate::encoders::DeltaEncoder)),
     /// the two methods will produce different results for the same input.
-    fn encode_array2(&mut self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput>
+    fn encode_array2(&self, input: ArrayView2<'_, f32>) -> Vec<EncodedOutput>
     where
         Self: Clone,
     {
         let standard = input.as_standard_layout();
-        let base = self.clone(); // each row gets a fresh clone so state never crosses row boundaries
+        // each row gets a fresh clone so state never crosses row boundaries
         standard
             .rows()
             .into_iter()
             .map(|row| {
-                let mut encoder = base.clone();
+                let mut encoder = self.clone();
                 encoder.encode_array1(row)
             })
             .collect()
@@ -104,7 +104,7 @@ mod tests {
             })
             .collect();
 
-        let mut array_encoder = DeltaEncoder::new(2.0, input.ncols());
+        let array_encoder = DeltaEncoder::new(2.0, input.ncols());
         let actual = array_encoder.encode_array2(input.view());
 
         assert_eq!(actual, expected);
@@ -161,7 +161,7 @@ mod tests {
             })
             .collect();
 
-        let mut array_encoder = DeltaEncoder::new(2.0, 2);
+        let array_encoder = DeltaEncoder::new(2.0, 2);
         let actual = array_encoder.encode_array2(view);
 
         assert_eq!(actual, expected);

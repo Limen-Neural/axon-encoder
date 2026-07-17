@@ -8,6 +8,7 @@ use axon_encoder::prelude::*;
 use ndarray::arr2;
 
 fn main() {
+    println!("Rate encoding with ndarray");
     let input = arr2(&[[0.2_f32, 0.8], [0.7, 0.1], [0.9, 0.9]]);
     let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
 
