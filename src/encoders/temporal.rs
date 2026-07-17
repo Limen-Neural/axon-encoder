@@ -1,10 +1,10 @@
 use crate::prelude::*;
 use std::collections::VecDeque;
 
-/// Encodes temporal patterns by tracking history of values per channel
+/// Encodes temporal patterns by tracking history of values per channel.
 ///
-/// Fires a spike when the rate of change exceeds configurable thresholds
-/// Useful for detecting sudden changes or motion in sensor signals
+/// Fires a spike when the rate of change exceeds configurable thresholds.
+/// Useful for detecting sudden changes or motion in sensor signals.
 ///
 /// # Mathematical Model
 ///
@@ -95,6 +95,33 @@ impl TemporalEncoder {
             }
         }
         output
+    }
+
+    /// Encodes input using neuromodulator-driven gain curves.
+    ///
+    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
+    }
+
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        <Self as ModulatedEncoder>::encode_step_with_modulators(
+            self,
+            input,
+            modulators,
+            gain_curves,
+        )
     }
 }
 

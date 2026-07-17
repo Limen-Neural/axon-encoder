@@ -1,10 +1,10 @@
 use crate::prelude::*;
 
-/// A simple delta-based encoder
+/// A simple delta-based encoder.
 ///
 /// Fires a spike when the absolute difference between the current input and the last
 /// encoded value exceeds a threshold. This is useful for event-based encoding where
-/// only changes in the input signal are relevant
+/// only changes in the input signal are relevant.
 ///
 /// # Mathematical Model
 ///
@@ -66,6 +66,33 @@ impl DeltaEncoder {
         }
         output
     }
+
+    /// Encodes input using neuromodulator-driven gain curves.
+    ///
+    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
+    }
+
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        <Self as ModulatedEncoder>::encode_step_with_modulators(
+            self,
+            input,
+            modulators,
+            gain_curves,
+        )
+    }
 }
 
 impl Encoder for DeltaEncoder {
@@ -95,10 +122,10 @@ impl ModulatedEncoder for DeltaEncoder {
     }
 }
 
-/// Simplified: delta-based spike generation (per feature)
+/// Simplified: delta-based spike generation (per feature).
 ///
-/// This is a utility function that takes a slice of deltas and returns a boolean spike train
-/// It can be used to feed the resulting binary/event sequences into LIF/RSNN layers
+/// This is a utility function that takes a slice of deltas and returns a boolean spike train.
+/// It can be used to feed the resulting binary/event sequences into LIF/RSNN layers.
 pub fn encode_deltas_to_spikes(deltas: &[f32], threshold: f32) -> Vec<bool> {
     deltas.iter().map(|&d| d.abs() > threshold).collect()
 }

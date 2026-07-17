@@ -28,15 +28,15 @@ impl fmt::Display for PredictiveEncoderError {
 
 impl std::error::Error for PredictiveEncoderError {}
 
-/// Encodes based on predictive deviation from expected values
+/// Encodes based on predictive deviation from expected values.
 ///
 /// Maintains a running average (threshold) and fires a spike when the input
 /// deviates significantly from this prediction. Useful for detecting anomalies
-/// or unexpected changes in sensor data
+/// or unexpected changes in sensor data.
 ///
 /// # Mathematical Model
 ///
-/// Tracks an exponentially weighted moving average of recent values per channel
+/// Tracks an exponentially weighted moving average of recent values per channel.
 /// A spike fires when the absolute deviation from this predicted value exceeds
 /// the threshold:
 ///
@@ -134,6 +134,33 @@ impl PredictiveEncoder {
             }
         }
         output
+    }
+
+    /// Encodes input using neuromodulator-driven gain curves.
+    ///
+    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
+    pub fn encode_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
+    }
+
+    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
+    pub fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        <Self as ModulatedEncoder>::encode_step_with_modulators(
+            self,
+            input,
+            modulators,
+            gain_curves,
+        )
     }
 }
 

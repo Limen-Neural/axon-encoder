@@ -29,28 +29,32 @@ pub mod prelude {
 use modulators::{EncodingGains, NeuroModulators, NeuromodulatorGainCurves};
 use types::EncodedOutput;
 
-/// Encoders that can apply neuromodulator-driven gain curves
+/// Encoders that can apply neuromodulator-driven gain curves.
 ///
 /// Object-safe so callers can use `&mut dyn ModulatedEncoder` when the concrete
 /// encoder type is not known at compile time. Implementations map the relevant
 /// component of [`EncodingGains`] to encoder-specific scaling; public modulator
-/// helpers are provided once here
+/// helpers are provided once here.
+///
+/// Concrete encoders also keep inherent `encode_with_modulators` /
+/// `encode_step_with_modulators` wrappers so existing call sites need not import
+/// this trait.
 pub trait ModulatedEncoder: Encoder {
-    /// Encodes input using already evaluated encoding gains
+    /// Encodes input using already evaluated encoding gains.
     ///
     /// Implementations must sanitize `gains` (or the component they use) before
-    /// applying them
+    /// applying them.
     fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput;
 
-    /// Encodes one streaming step using already evaluated encoding gains
+    /// Encodes one streaming step using already evaluated encoding gains.
     ///
     /// Stateful encoders should override this when streaming requires distinct
-    /// state handling from the batch path
+    /// state handling from the batch path.
     fn encode_step_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
         self.encode_with_gains(input, gains)
     }
 
-    /// Encodes input using neuromodulator-driven gain curves
+    /// Encodes input using neuromodulator-driven gain curves.
     fn encode_with_modulators(
         &mut self,
         input: &[f32],
@@ -60,7 +64,7 @@ pub trait ModulatedEncoder: Encoder {
         self.encode_with_gains(input, gain_curves.evaluate(modulators))
     }
 
-    /// Encodes one streaming step using neuromodulator-driven gain curves
+    /// Encodes one streaming step using neuromodulator-driven gain curves.
     fn encode_step_with_modulators(
         &mut self,
         input: &[f32],
@@ -71,13 +75,13 @@ pub trait ModulatedEncoder: Encoder {
     }
 }
 
-/// The core trait for all encoders in this crate
+/// The core trait for all encoders in this crate.
 ///
 /// Encoders convert continuous analog values into discrete spike events for
 /// spiking neural networks (SNNs). Two modes are supported:
 ///
-/// - **Batch mode** (`encode`): Process a complete input vector at once
-/// - **Streaming mode** (`encode_step`): Process incrementally, one step at a time
+/// - **Batch mode** (`encode`): Process a complete input vector at once.
+/// - **Streaming mode** (`encode_step`): Process incrementally, one step at a time.
 ///
 /// # Example
 ///
@@ -94,13 +98,13 @@ pub trait ModulatedEncoder: Encoder {
 /// encoder.reset();
 /// ```
 pub trait Encoder {
-    /// Encodes a slice of analog values into spike events (batch mode)
+    /// Encodes a slice of analog values into spike events (batch mode).
     fn encode(&mut self, input: &[f32]) -> EncodedOutput;
 
-    /// Encodes a single step incrementally (streaming mode)
+    /// Encodes a single step incrementally (streaming mode).
     ///
-    /// By default, this delegates to `encode()` for stateless encoders
-    /// Stateful encoders should override this to maintain state between calls
+    /// By default, this delegates to `encode()` for stateless encoders.
+    /// Stateful encoders should override this to maintain state between calls.
     ///
     /// # Arguments
     ///
