@@ -59,8 +59,71 @@ cargo bench --bench allocations
   usually fine.
 - Real regressions are multi-x slowdowns or consistent multi-percent
   hits across scales.
-- Optional for the PR comment: paste the allocation CSV header plus
-  a few key Criterion lines (Rate / Population / Poisson).
+- Do **not** paste full Criterion logs into PR comments by default
+  (see [How to post results on a PR](#how-to-post-results-on-a-pr)).
+
+### How to post results on a PR
+
+Reviewers and authors should post **human-readable** results, not raw
+IDE/terminal dumps. Prefer **verdict first**, then small tables.
+
+**Do:**
+
+- Lead with **branch tip SHA** and a one-line pass/fail verdict
+- Use markdown tables (Check → Result; Encoder → allocs; Area → Read)
+- Name the **command** once (e.g. `cargo bench --bench allocations`)
+- State host noise (laptop vs dedicated) and that Criterion `change %`
+  is vs a **local baseline**, not necessarily `main`, unless you used
+  `--save-baseline` / `--baseline`
+- For feature PRs, add any extra matrix row (e.g. `--features ndarray`)
+- Put optional raw logs in a `<details>` block only if someone needs them
+
+**Don’t:**
+
+- Paste “Testing started at…”, full sample collection chatter, or
+  hundreds of Criterion lines
+- Use RustRover’s default bench runner flags (`--format=json`,
+  `-Z unstable-options`, `--show-output`) — Criterion uses
+  `harness = false` and rejects those args
+- Claim “regressed” on paths the PR did not touch without a re-run
+
+**Suggested comment titles (one comment each):**
+
+1. `## Local verification (REVIEW.md)` — mandatory + edges + guards + examples  
+2. `## Allocations smoke` — summary table only  
+3. `## Criterion benches` (optional) — highlights table + verdict  
+4. `## Follow-up` (optional) — only if you re-ran a suspicious filter  
+
+**Template (copy/adapt):**
+
+```markdown
+## Local verification (REVIEW.md)
+
+**Branch tip:** `<sha>`  
+**Host:** local Linux (noisy).  
+**Verdict:** All mandatory checks passed.
+
+| Check | Result |
+|-------|--------|
+| `cargo fmt --check` | pass |
+| `cargo test --locked` | pass |
+| `cargo test --features serde --locked` | pass (8 serde tests) |
+| `cargo clippy --all-features -- -D warnings` | pass |
+| `rng::tests` | pass |
+| Edge filters | pass |
+| Regression guards | pass |
+| Examples | pass, no panics |
+| Extra (if any) | e.g. `cargo test --features ndarray` pass |
+
+## Allocations smoke
+
+**Command:** `cargo bench --bench allocations`  
+**Verdict:** Healthy / or call out issues.
+
+| Encoder | @256 | @1k | @10k | Notes |
+|---------|------|-----|------|--------|
+| … | … | … | … | … |
+```
 
 ### Examples (behavioral smoke)
 
@@ -77,6 +140,14 @@ cargo run --color=always --package axon-encoder \
   --example rate_encoding --profile dev
 cargo run --color=always --package axon-encoder \
   --example temporal_encoding --profile dev
+```
+
+When the PR adds or restores the `ndarray` feature:
+
+```bash
+cargo test --features ndarray --locked
+cargo run --color=always --package axon-encoder \
+  --example ndarray_encoding --features ndarray --profile dev
 ```
 
 Each should print its encoder banner without panic.
