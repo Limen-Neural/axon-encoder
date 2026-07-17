@@ -24,6 +24,7 @@ Traditional neural networks process dense, continuous values. Spiking Neural Net
   - **`DeltaEncoder`**: A simple and efficient encoder that fires a spike when the input value changes by a certain amount.
   - **`LatencyEncoder`**: Encodes stronger inputs as earlier spike times within a fixed temporal window.
 - **Extensible**: The `Encoder` trait makes it easy to create your own custom encoders.
+- **Feature-gated `ndarray` helpers**: With the `ndarray` feature enabled, encoders can process `ArrayView1` / `ArrayView2` inputs via `NdarrayEncoderExt` (standard row-major layout is most efficient). Independent row encoding via `encode_array2` requires the encoder type to implement `Clone`.
 - **Lightweight**: Built with minimal dependencies to be fast and easy to integrate into any project.
 
 ## Randomness (stochastic encoders)
@@ -61,6 +62,13 @@ For local development, you can use a path dependency:
 ```toml
 [dependencies]
 axon-encoder = { path = "../axon-encoder" }
+```
+
+To enable direct `ndarray` view helpers (declare `ndarray` yourself so you can construct and name `ArrayView` values):
+```toml
+[dependencies]
+axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder.git", features = ["ndarray"] }
+ndarray = "0.16"
 ```
 
 ## Quick Start
@@ -109,6 +117,11 @@ cargo run --example <example_name>
 For instance, to run the delta encoding example:
 ```bash
 cargo run --example delta_encoding
+```
+
+To run the ndarray example:
+```bash
+cargo run --example ndarray_encoding --features ndarray
 ```
 
 ## A Note for Rust Newcomers

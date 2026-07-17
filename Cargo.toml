@@ -7,17 +7,24 @@ license = "MIT OR Apache-2.0"
 edition = "2024"
 
 [dependencies]
+ndarray = { version = "0.16", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 rand = "0.10.2"
 
 [dev-dependencies]
 criterion = "0.8.2"
 serde_json = "1.0"
+ndarray = "0.16"
 
 [features]
 default = []
+ndarray = ["dep:ndarray"]
 cuda = []
 serde = ["dep:serde"]
+
+[[example]]
+name = "ndarray_encoding"
+required-features = ["ndarray"]
 
 [[bench]]
 name = "encoders"
