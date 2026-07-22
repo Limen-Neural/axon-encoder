@@ -108,7 +108,9 @@ fn print_stats(
 
 fn report_rate_encoder() {
     for scale in SCALES {
-        let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0)).expect("valid RateEncoder");
+        let mut encoder =
+            RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), RateEncoder::DEFAULT_DT_SECONDS)
+                .expect("valid RateEncoder");
         let input = normalized_input(scale);
         encoder.encode_step(&input);
 

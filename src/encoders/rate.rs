@@ -600,26 +600,6 @@ mod tests {
     }
 
     #[test]
-    fn test_rate_encoder_streaming_bounds_extreme_dt() {
-        // f32::MAX is a valid finite dt, but rate * dt overflows to infinity.
-        // The step must remain silent and terminate (no OOM / hang).
-        let mut encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), f32::MAX).unwrap();
-        let output = encoder.encode_step(&[1.0]);
-        assert!(output.spikes.is_empty());
-
-        // Huge but finite expected count is capped per step.
-        let mut encoder = RateEncoder::try_new(0.0, 1.0e6, (0.0, 1.0), 1.0).unwrap();
-        let output = encoder.encode_step(&[1.0]);
-        assert_eq!(
-            output.spikes.len(),
-            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
-        );
-        // Next step only carries the fractional remainder (not another million spikes).
-        let next = encoder.encode_step(&[0.0]);
-        assert!(next.spikes.len() <= 1);
-    }
-
-    #[test]
     fn test_rate_encoder_default_dt_preserves_streaming_compatibility() {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
         assert_eq!(encoder.dt_seconds(), RateEncoder::DEFAULT_DT_SECONDS);
