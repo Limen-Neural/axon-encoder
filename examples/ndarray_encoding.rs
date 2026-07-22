@@ -10,7 +10,8 @@ use ndarray::arr2;
 fn main() {
     println!("Rate encoding with ndarray");
     let input = arr2(&[[0.2_f32, 0.8], [0.7, 0.1], [0.9, 0.9]]);
-    let mut encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0)).expect("valid RateEncoder");
+    let mut encoder =
+        RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), 0.010).expect("valid RateEncoder");
 
     for (row_idx, output) in encoder
         .encode_step_array2(input.view())

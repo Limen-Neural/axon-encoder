@@ -1,13 +1,17 @@
 /// Poisson spike train encoder.
 ///
-/// Generates spike trains with Poisson-distributed timing based on input probability.
-/// Each step generates an independent binary spike (0 or 1) based on the input probability.
+/// Generates spike trains with Poisson-distributed timing based on either a per-step
+/// probability or an explicit firing rate and time step.
 ///
 /// # Mathematical Model
 ///
 /// ```text
+/// // Dimensionless probability input:
 /// probability = clamp(input, 0.0, 1.0)
 /// spike[i] = 1 if random() < probability else 0
+///
+/// // Physical rate input:
+/// probability = 1 - exp(-rate_hz * dt_seconds)
 /// ```
 ///
 /// # When to Use
@@ -28,9 +32,35 @@ pub struct PoissonEncoder {
     pub num_steps: usize,
 }
 
+/// Converts a firing rate in hertz and a time-bin width in seconds into the
+/// per-bin spike probability for a homogeneous Poisson process.
+///
+/// The returned value is `1 - exp(-rate_hz * dt_seconds)`. Non-finite or
+/// non-positive rates produce `0.0`; invalid `dt_seconds` must be rejected by
+/// callers before constructing encoders and is treated as silent here to avoid
+/// producing NaN probabilities in stochastic paths.
+pub fn probability_from_rate_hz(rate_hz: f32, dt_seconds: f32) -> f32 {
+    if !rate_hz.is_finite() || rate_hz <= 0.0 || !dt_seconds.is_finite() || dt_seconds <= 0.0 {
+        0.0
+    } else {
+        (1.0 - (-rate_hz * dt_seconds).exp()).clamp(0.0, 1.0)
+    }
+}
+
 impl PoissonEncoder {
     pub fn new(steps: usize) -> Self {
         Self { num_steps: steps }
+    }
+
+    /// Encodes a firing rate in hertz into a spike train using an explicit time
+    /// step in seconds for each bin.
+    pub fn encode_rate_hz(&self, rate_hz: f32, dt_seconds: f32) -> Vec<u8> {
+        self.encode(probability_from_rate_hz(rate_hz, dt_seconds))
+    }
+
+    /// Encodes a single rate-based step using an explicit time step in seconds.
+    pub fn encode_rate_hz_step(&self, rate_hz: f32, dt_seconds: f32) -> u8 {
+        self.encode_step(probability_from_rate_hz(rate_hz, dt_seconds))
     }
 
     /// Encodes a single probability value into a spike train.
@@ -157,5 +187,25 @@ mod tests {
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| enc.encode(f32::INFINITY)));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rate_probability_uses_explicit_dt_seconds() {
+        let probability = probability_from_rate_hz(10.0, 0.01);
+        let expected = 1.0 - (-0.1_f32).exp();
+        assert!((probability - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn rate_probability_invalid_inputs_are_silent() {
+        for (rate_hz, dt_seconds) in [
+            (0.0, 0.01),
+            (-1.0, 0.01),
+            (f32::NAN, 0.01),
+            (10.0, 0.0),
+            (10.0, f32::NAN),
+        ] {
+            assert_eq!(probability_from_rate_hz(rate_hz, dt_seconds), 0.0);
+        }
     }
 }

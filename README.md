@@ -84,9 +84,9 @@ fn main() {
     let config = EncoderConfig::default(); // Defaults to 256 channels.
 
     // 2. Initialize an encoder. Prefer try_new for typed validation errors;
-    //    RateEncoder::new(...) panics on invalid rates/ranges.
-    //    Maps input values from (0.0, 1.0) to a firing rate between 5–100 Hz.
-    let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0))
+    //    RateEncoder::new(...) panics on invalid rates/ranges/dt.
+    //    Maps (0.0, 1.0) inputs to 5–100 Hz at a 10 ms sampling interval.
+    let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010)
         .expect("valid RateEncoder configuration");
 
     // 3. Create a sample input stimulus.
@@ -106,6 +106,12 @@ fn main() {
     );
 }
 ```
+
+### Rate encoder time semantics
+
+`RateEncoder` treats `base_rate` and `max_rate` as physical firing rates in hertz. New code should prefer `RateEncoder::try_new(base_rate_hz, max_rate_hz, range, dt_seconds)` so the sampling interval is explicit and validated as finite and strictly positive. Stochastic batch encoding converts rates to per-step probabilities with `p = 1 - exp(-rate_hz * dt_seconds)`, while streaming encoding accumulates expected spikes with `phase += rate_hz * dt_seconds`.
+
+For migration compatibility, `RateEncoder::new(base_rate, max_rate, range)` remains available and uses `dt_seconds = 0.1`, preserving the old deterministic `/ 10.0` increment for unit rates.
 
 ## Examples
 

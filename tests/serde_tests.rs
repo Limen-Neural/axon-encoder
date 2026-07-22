@@ -324,3 +324,17 @@ fn test_serde_neuromodulators() {
     let deserialized: NeuroModulators = serde_json::from_str(&serialized).unwrap();
     assert_eq!(nm, deserialized);
 }
+
+#[test]
+fn test_rate_encoder_serde_rejects_invalid_dt_seconds() {
+    let value = serde_json::json!({
+        "base_rate": 0.0,
+        "max_rate": 10.0,
+        "range": [0.0, 1.0],
+        "dt_seconds": 0.0,
+        "accumulators": []
+    });
+
+    let result: Result<RateEncoder, _> = serde_json::from_value(value);
+    assert!(result.is_err());
+}
