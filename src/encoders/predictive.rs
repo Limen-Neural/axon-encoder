@@ -47,22 +47,31 @@ impl From<PredictiveEncoderError> for EncoderError {
     }
 }
 
-/// Encodes based on predictive deviation from expected values.
+/// Encodes based on causal predictive error from expected values.
 ///
-/// Maintains a running average (threshold) and fires a spike when the input
-/// deviates significantly from this prediction. Useful for detecting anomalies
-/// or unexpected changes in sensor data.
+/// This encoder is best understood as an adaptive EWMA anomaly detector with
+/// predictive-coding-style signed error spikes. It keeps per-channel history,
+/// predicts the next sample from prior samples only, and fires a spike when the
+/// signed prediction error is large enough. Positive errors emit
+/// `polarity: true`; negative errors emit `polarity: false`.
 ///
 /// # Mathematical Model
 ///
-/// Tracks an exponentially weighted moving average of recent values per channel.
-/// A spike fires when the absolute deviation from this predicted value exceeds
-/// the threshold:
+/// Tracks an exponentially weighted moving average of recent history means per
+/// channel. The first five samples are a warm-up period: they update history and
+/// initialize the prediction baseline but never emit spikes. After warm-up, each
+/// input is evaluated against the predictor state formed before that input is
+/// inserted, so the current observation cannot leak into its own prediction.
 ///
 /// ```text
-/// threshold[i] = 0.9 * threshold[i] + 0.1 * mean(history[-5:])
-/// deviation = |value - threshold[i]|
-/// spike if deviation > threshold
+/// if history.len() < 5:
+///     push value; initialize prediction when five samples are available; no spike
+/// else:
+///     prediction = threshold[i]
+///     error = value - prediction
+///     spike if |error| > threshold, with polarity = error >= 0
+///     push value
+///     threshold[i] = 0.9 * threshold[i] + 0.1 * mean(history[-5:])
 /// ```
 ///
 /// # When to Use
@@ -156,19 +165,23 @@ impl PredictiveEncoder {
                 break;
             }
             let channel_history = &mut self.history[i];
-            if channel_history.len() == self.history_depth {
-                channel_history.pop_front();
-            }
-            channel_history.push_back(value);
 
             if channel_history.len() < 5 {
+                if channel_history.len() == self.history_depth {
+                    channel_history.pop_front();
+                }
+                channel_history.push_back(value);
+
+                if channel_history.len() == 5 {
+                    self.thresholds[i] = channel_history.iter().rev().take(5).sum::<f32>() / 5.0;
+                }
+
                 continue;
             }
 
-            let recent_avg = channel_history.iter().rev().take(5).sum::<f32>() / 5.0;
-            self.thresholds[i] = 0.9 * self.thresholds[i] + 0.1 * recent_avg;
-
-            let deviation = (value - self.thresholds[i]).abs();
+            let prediction = self.thresholds[i];
+            let error = value - prediction;
+            let deviation = error.abs();
 
             for &(threshold, _spike_val) in self.deviation_thresholds.iter().rev() {
                 if deviation > (threshold * threshold_scale).max(0.0) {
@@ -177,12 +190,20 @@ impl PredictiveEncoder {
                     };
                     output.spikes.push(SpikeEvent {
                         channel,
-                        timestamp: 0,   // Simplified
-                        polarity: true, // Indicates a deviation spike
+                        timestamp: 0,
+                        polarity: error >= 0.0,
                     });
                     break;
                 }
             }
+
+            if channel_history.len() == self.history_depth {
+                channel_history.pop_front();
+            }
+            channel_history.push_back(value);
+
+            let recent_avg = channel_history.iter().rev().take(5).sum::<f32>() / 5.0;
+            self.thresholds[i] = 0.9 * self.thresholds[i] + 0.1 * recent_avg;
         }
         output
     }
@@ -393,6 +414,72 @@ mod tests {
     }
 
     #[test]
+    fn test_predictive_encoder_constant_signal_has_no_cold_start_burst() {
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid PredictiveEncoder");
+
+        for _ in 0..16 {
+            let output = encoder.encode(&[42.0]);
+            assert!(output.spikes.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_predictive_encoder_short_history_warms_up_without_spikes() {
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid PredictiveEncoder");
+
+        for _ in 0..5 {
+            let output = encoder.encode(&[10.0]);
+            assert!(output.spikes.is_empty());
+        }
+
+        assert_eq!(encoder.history[0].len(), 5);
+        assert_eq!(encoder.thresholds[0], 10.0);
+    }
+
+    #[test]
+    fn test_predictive_encoder_positive_step_preserves_positive_polarity() {
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(1.0, 1)], 1).expect("valid PredictiveEncoder");
+        for _ in 0..5 {
+            assert!(encoder.encode(&[1.0]).spikes.is_empty());
+        }
+
+        let output = encoder.encode(&[4.0]);
+        assert_eq!(output.spikes.len(), 1);
+        assert!(output.spikes[0].polarity);
+    }
+
+    #[test]
+    fn test_predictive_encoder_negative_step_preserves_negative_polarity() {
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(1.0, 1)], 1).expect("valid PredictiveEncoder");
+        for _ in 0..5 {
+            assert!(encoder.encode(&[4.0]).spikes.is_empty());
+        }
+
+        let output = encoder.encode(&[1.0]);
+        assert_eq!(output.spikes.len(), 1);
+        assert!(!output.spikes[0].polarity);
+    }
+
+    #[test]
+    fn test_predictive_encoder_trend_uses_prior_prediction_before_update() {
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(0.75, 1)], 1).expect("valid PredictiveEncoder");
+        for value in [1.0, 2.0, 3.0, 4.0, 5.0] {
+            assert!(encoder.encode(&[value]).spikes.is_empty());
+        }
+        assert_eq!(encoder.thresholds[0], 3.0);
+
+        let output = encoder.encode(&[6.0]);
+        assert_eq!(output.spikes.len(), 1);
+        assert!(output.spikes[0].polarity);
+        assert_eq!(encoder.thresholds[0], 3.1);
+    }
+
+    #[test]
     fn test_predictive_encoder_reset() {
         let mut encoder =
             PredictiveEncoder::new(5, vec![(2.0, 1)], 2).expect("valid PredictiveEncoder");
@@ -402,6 +489,23 @@ mod tests {
         encoder.reset();
         assert!(encoder.history.iter().all(|h| h.is_empty()));
         assert!(encoder.thresholds.iter().all(|&t| t == 0.0));
+    }
+
+    #[test]
+    fn test_predictive_encoder_reset_restarts_warmup_without_spikes() {
+        let mut encoder =
+            PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid PredictiveEncoder");
+        for _ in 0..5 {
+            assert!(encoder.encode(&[1.0]).spikes.is_empty());
+        }
+        assert_eq!(encoder.encode(&[10.0]).spikes.len(), 1);
+
+        encoder.reset();
+
+        for _ in 0..5 {
+            assert!(encoder.encode(&[10.0]).spikes.is_empty());
+        }
+        assert_eq!(encoder.thresholds[0], 10.0);
     }
 
     #[test]
