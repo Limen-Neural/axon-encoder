@@ -28,6 +28,17 @@ impl fmt::Display for PredictiveEncoderError {
 
 impl std::error::Error for PredictiveEncoderError {}
 
+impl From<PredictiveEncoderError> for EncoderError {
+    fn from(error: PredictiveEncoderError) -> Self {
+        match error {
+            PredictiveEncoderError::HistoryDepthTooSmall => {
+                EncoderError::HistoryDepthTooSmall { minimum: 5 }
+            }
+            PredictiveEncoderError::NumChannelsTooLarge => EncoderError::NumChannelsTooLarge,
+        }
+    }
+}
+
 /// Encodes based on predictive deviation from expected values.
 ///
 /// Maintains a running average (threshold) and fires a spike when the input
@@ -67,7 +78,11 @@ pub struct PredictiveEncoder {
 }
 
 impl PredictiveEncoder {
-    /// Creates a new `PredictiveEncoder`
+    /// Creates a new `PredictiveEncoder`.
+    ///
+    /// Retains the historical `PredictiveEncoderError` surface for source
+    /// compatibility. Prefer [`try_new`](Self::try_new) for the unified
+    /// [`EncoderError`] type used by other fallible constructors.
     ///
     /// # Errors
     ///
@@ -79,22 +94,31 @@ impl PredictiveEncoder {
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Result<Self, PredictiveEncoderError> {
-        Self::try_new(history_depth, deviation_thresholds, num_channels)
+        Self::try_new(history_depth, deviation_thresholds, num_channels).map_err(|error| {
+            match error {
+                EncoderError::HistoryDepthTooSmall { .. } => {
+                    PredictiveEncoderError::HistoryDepthTooSmall
+                }
+                EncoderError::NumChannelsTooLarge => PredictiveEncoderError::NumChannelsTooLarge,
+                other => panic!("unexpected EncoderError from PredictiveEncoder::try_new: {other}"),
+            }
+        })
     }
 
-    /// Creates a new `PredictiveEncoder`, returning a typed error for invalid configuration.
+    /// Creates a new `PredictiveEncoder`, returning the unified [`EncoderError`].
+    ///
+    /// Prefer this over [`new`](Self::new) when propagating constructor failures
+    /// alongside other encoders via `EncoderError`.
     pub fn try_new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
-    ) -> Result<Self, PredictiveEncoderError> {
+    ) -> Result<Self, EncoderError> {
         if history_depth < 5 {
-            return Err(PredictiveEncoderError::HistoryDepthTooSmall);
+            return Err(EncoderError::HistoryDepthTooSmall { minimum: 5 });
         }
         // encode_with_threshold_scale maps channel index → u16 via try_from.
-        if num_channels > u16::MAX as usize + 1 {
-            return Err(PredictiveEncoderError::NumChannelsTooLarge);
-        }
+        crate::error::validate_channel_count(num_channels)?;
         Ok(Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             thresholds: vec![0.0; num_channels],
@@ -279,6 +303,16 @@ mod tests {
         );
         assert!(PredictiveEncoder::new(5, vec![(2.0, 1)], 1).is_ok());
         assert!(PredictiveEncoder::new(0, vec![(2.0, 1)], 1).is_err());
+
+        // try_new uses the unified EncoderError surface.
+        assert_eq!(
+            PredictiveEncoder::try_new(4, vec![(2.0, 1)], 1).err(),
+            Some(EncoderError::HistoryDepthTooSmall { minimum: 5 })
+        );
+        assert_eq!(
+            PredictiveEncoder::try_new(5, vec![(2.0, 1)], u16::MAX as usize + 2).err(),
+            Some(EncoderError::NumChannelsTooLarge)
+        );
     }
 
     #[test]

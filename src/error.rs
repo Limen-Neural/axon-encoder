@@ -14,6 +14,8 @@ pub enum EncoderError {
     CountMustBePositive { parameter: &'static str },
     /// A threshold/tuning-width style parameter must be finite and positive.
     NonPositiveOrNonFinite { parameter: &'static str },
+    /// A parameter must be finite and non-negative (`>= 0`).
+    NonNegativeFinite { parameter: &'static str },
     /// Channel/neuron count exceeds the `u16` channel-ID range used when emitting spikes.
     NumChannelsTooLarge,
     /// Temporal history depth is too small for the encoder window.
@@ -43,6 +45,9 @@ impl fmt::Display for EncoderError {
             }
             Self::NonPositiveOrNonFinite { parameter } => {
                 write!(f, "{parameter} must be finite and greater than 0")
+            }
+            Self::NonNegativeFinite { parameter } => {
+                write!(f, "{parameter} must be finite and non-negative")
             }
             Self::NumChannelsTooLarge => write!(
                 f,
@@ -84,5 +89,17 @@ pub(crate) fn validate_channel_count(num_channels: usize) -> Result<(), EncoderE
         Ok(())
     } else {
         Err(EncoderError::NumChannelsTooLarge)
+    }
+}
+
+/// Validates that `value` is finite and `>= 0`.
+pub(crate) fn validate_non_negative_finite(
+    parameter: &'static str,
+    value: f32,
+) -> Result<(), EncoderError> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(())
+    } else {
+        Err(EncoderError::NonNegativeFinite { parameter })
     }
 }

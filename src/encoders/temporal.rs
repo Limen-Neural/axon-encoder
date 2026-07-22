@@ -54,6 +54,8 @@ impl TemporalEncoder {
     }
 
     /// Creates a new `TemporalEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// Each threshold in `change_thresholds` must be finite and non-negative.
     pub fn try_new(
         history_depth: usize,
         change_thresholds: Vec<(f32, u16)>,
@@ -61,6 +63,9 @@ impl TemporalEncoder {
     ) -> Result<Self, EncoderError> {
         if history_depth < 6 {
             return Err(EncoderError::HistoryDepthTooSmall { minimum: 6 });
+        }
+        for &(threshold, _) in &change_thresholds {
+            crate::error::validate_non_negative_finite("change_threshold", threshold)?;
         }
         crate::error::validate_channel_count(num_channels)?;
         Ok(Self {
@@ -320,5 +325,18 @@ mod tests {
             TemporalEncoder::try_new(6, vec![(1.0, 1)], u16::MAX as usize + 2).err(),
             Some(EncoderError::NumChannelsTooLarge)
         );
+        assert_eq!(
+            TemporalEncoder::try_new(6, vec![(f32::NAN, 1)], 1).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "change_threshold"
+            })
+        );
+        assert_eq!(
+            TemporalEncoder::try_new(6, vec![(-0.5, 1)], 1).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "change_threshold"
+            })
+        );
+        assert!(TemporalEncoder::try_new(6, vec![(0.0, 1)], 1).is_ok());
     }
 }

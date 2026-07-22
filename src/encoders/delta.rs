@@ -39,12 +39,11 @@ impl DeltaEncoder {
     }
 
     /// Creates a new `DeltaEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// `threshold == 0.0` is valid and means any nonzero change fires a spike
+    /// (`delta > 0`).
     pub fn try_new(threshold: f32, num_channels: usize) -> Result<Self, EncoderError> {
-        if !threshold.is_finite() || threshold <= 0.0 {
-            return Err(EncoderError::NonPositiveOrNonFinite {
-                parameter: "threshold",
-            });
-        }
+        crate::error::validate_non_negative_finite("threshold", threshold)?;
         crate::error::validate_channel_count(num_channels)?;
         Ok(Self {
             last_values: vec![0.0; num_channels],
@@ -288,16 +287,27 @@ mod tests {
         assert_eq!(output.spikes.len(), 1);
     }
     #[test]
+    fn test_delta_encoder_zero_threshold_spikes_on_any_change() {
+        let mut encoder = DeltaEncoder::new(0.0, 1);
+        encoder.encode(&[0.0]);
+        let output = encoder.encode(&[0.01]);
+        assert_eq!(output.spikes.len(), 1);
+        let quiet = encoder.encode(&[0.01]);
+        assert!(quiet.spikes.is_empty());
+    }
+
+    #[test]
     fn test_delta_encoder_try_new_validation() {
+        assert!(DeltaEncoder::try_new(0.0, 1).is_ok());
         assert_eq!(
-            DeltaEncoder::try_new(0.0, 1).err(),
-            Some(EncoderError::NonPositiveOrNonFinite {
+            DeltaEncoder::try_new(-1.0, 1).err(),
+            Some(EncoderError::NonNegativeFinite {
                 parameter: "threshold"
             })
         );
         assert_eq!(
             DeltaEncoder::try_new(f32::NAN, 1).err(),
-            Some(EncoderError::NonPositiveOrNonFinite {
+            Some(EncoderError::NonNegativeFinite {
                 parameter: "threshold"
             })
         );

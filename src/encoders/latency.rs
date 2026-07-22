@@ -21,18 +21,18 @@ impl LatencyEncoder {
     ///
     /// # Panics
     ///
-    /// Panics if `max_latency == 0`, `range.0 >= range.1`, or either bound is non-finite.
+    /// Panics if `range.0 >= range.1` or either bound is non-finite.
+    ///
+    /// `max_latency == 0` is valid and emits every spike at timestamp `0`
+    /// (instantaneous response).
     pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
         Self::try_new(max_latency, range).unwrap_or_else(|error| panic!("{error}"))
     }
 
     /// Creates a new `LatencyEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// `max_latency == 0` is accepted and maps every input to timestamp `0`.
     pub fn try_new(max_latency: u64, range: (f32, f32)) -> Result<Self, EncoderError> {
-        if max_latency == 0 {
-            return Err(EncoderError::WindowMustBePositive {
-                parameter: "max_latency",
-            });
-        }
         crate::error::validate_range("range", range)?;
         Ok(Self { max_latency, range })
     }
@@ -358,13 +358,16 @@ mod tests {
         assert!(output.spikes.iter().all(|s| s.timestamp == 0));
     }
     #[test]
+    fn latency_encoder_supports_zero_max_latency() {
+        let mut encoder = LatencyEncoder::new(0, (0.0, 1.0));
+        let output = encoder.encode(&[0.0, 0.5, 1.0]);
+        assert_eq!(output.spikes.len(), 3);
+        assert!(output.spikes.iter().all(|s| s.timestamp == 0));
+    }
+
+    #[test]
     fn latency_encoder_try_new_rejects_invalid_configuration() {
-        assert_eq!(
-            LatencyEncoder::try_new(0, (0.0, 1.0)).err(),
-            Some(EncoderError::WindowMustBePositive {
-                parameter: "max_latency"
-            })
-        );
+        assert!(LatencyEncoder::try_new(0, (0.0, 1.0)).is_ok());
         assert_eq!(
             LatencyEncoder::try_new(1, (1.0, 1.0)).err(),
             Some(EncoderError::InvalidRange { parameter: "range" })

@@ -55,17 +55,11 @@ impl RateEncoder {
     }
 
     /// Creates a new `RateEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// Rates must be finite and non-negative, with `base_rate <= max_rate`.
     pub fn try_new(base_rate: f32, max_rate: f32, range: (f32, f32)) -> Result<Self, EncoderError> {
-        if !base_rate.is_finite() {
-            return Err(EncoderError::NonFiniteRate {
-                parameter: "base_rate",
-            });
-        }
-        if !max_rate.is_finite() {
-            return Err(EncoderError::NonFiniteRate {
-                parameter: "max_rate",
-            });
-        }
+        crate::error::validate_non_negative_finite("base_rate", base_rate)?;
+        crate::error::validate_non_negative_finite("max_rate", max_rate)?;
         if base_rate > max_rate {
             return Err(EncoderError::RateOrder);
         }
@@ -420,13 +414,25 @@ mod tests {
     fn test_rate_encoder_try_new_validation() {
         assert_eq!(
             RateEncoder::try_new(f32::NAN, 1.0, (0.0, 1.0)).err(),
-            Some(EncoderError::NonFiniteRate {
+            Some(EncoderError::NonNegativeFinite {
                 parameter: "base_rate"
             })
         );
         assert_eq!(
             RateEncoder::try_new(0.0, f32::INFINITY, (0.0, 1.0)).err(),
-            Some(EncoderError::NonFiniteRate {
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "max_rate"
+            })
+        );
+        assert_eq!(
+            RateEncoder::try_new(-5.0, 10.0, (0.0, 1.0)).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "base_rate"
+            })
+        );
+        assert_eq!(
+            RateEncoder::try_new(0.0, -1.0, (0.0, 1.0)).err(),
+            Some(EncoderError::NonNegativeFinite {
                 parameter: "max_rate"
             })
         );
