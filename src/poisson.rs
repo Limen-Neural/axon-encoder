@@ -204,8 +204,36 @@ mod tests {
             (f32::NAN, 0.01),
             (10.0, 0.0),
             (10.0, f32::NAN),
+            (10.0, -0.01),
+            (f32::INFINITY, 0.01),
+            (10.0, f32::INFINITY),
         ] {
             assert_eq!(probability_from_rate_hz(rate_hz, dt_seconds), 0.0);
         }
+    }
+
+    #[test]
+    fn encode_rate_hz_uses_probability_from_rate() {
+        let enc = PoissonEncoder::new(200);
+        // High rate * dt saturates probability to ~1.0 so every bin spikes.
+        let spikes = enc.encode_rate_hz(1_000.0, 1.0);
+        assert_eq!(spikes.len(), 200);
+        assert!(spikes.iter().all(|&s| s == 1));
+
+        // Zero / invalid rates produce a silent train.
+        let silent = enc.encode_rate_hz(0.0, 0.01);
+        assert!(silent.iter().all(|&s| s == 0));
+    }
+
+    #[test]
+    fn encode_rate_hz_step_returns_binary() {
+        let enc = PoissonEncoder::new(1);
+        assert_eq!(enc.encode_rate_hz_step(0.0, 0.01), 0);
+        // Saturated rate almost always spikes; sample enough to be robust.
+        let mut ones = 0;
+        for _ in 0..50 {
+            ones += enc.encode_rate_hz_step(1_000.0, 1.0) as usize;
+        }
+        assert_eq!(ones, 50);
     }
 }
