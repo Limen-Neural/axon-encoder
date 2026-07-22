@@ -94,15 +94,15 @@ impl PredictiveEncoder {
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Result<Self, PredictiveEncoderError> {
-        Self::try_new(history_depth, deviation_thresholds, num_channels).map_err(|error| {
-            match error {
+        Self::try_new(history_depth, deviation_thresholds, num_channels).map_err(
+            |error| match error {
                 EncoderError::HistoryDepthTooSmall { .. } => {
                     PredictiveEncoderError::HistoryDepthTooSmall
                 }
                 EncoderError::NumChannelsTooLarge => PredictiveEncoderError::NumChannelsTooLarge,
                 other => panic!("unexpected EncoderError from PredictiveEncoder::try_new: {other}"),
-            }
-        })
+            },
+        )
     }
 
     /// Creates a new `PredictiveEncoder`, returning the unified [`EncoderError`].
