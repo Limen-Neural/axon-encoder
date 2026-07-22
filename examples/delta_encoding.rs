@@ -14,7 +14,7 @@ fn main() {
     // Create a delta encoder:
     //   threshold    = 3.0  (minimum change magnitude to trigger a spike)
     //   num_channels = 2
-    let mut encoder = DeltaEncoder::new(3.0, 2);
+    let mut encoder = DeltaEncoder::try_new(3.0, 2).expect("valid DeltaEncoder");
 
     // Simulated two-channel time series with occasional large jumps.
     let readings: Vec<[f32; 2]> = vec![

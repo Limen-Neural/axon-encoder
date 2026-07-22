@@ -29,7 +29,8 @@ fn bench_rate_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("RateEncoder::encode");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = RateEncoder::new(5.0, 100.0, (0.0, 1.0));
+            let mut encoder =
+                RateEncoder::try_new(5.0, 100.0, (0.0, 1.0)).expect("valid RateEncoder");
             let input = normalized_input(size);
             b.iter(|| black_box(encoder.encode(black_box(&input))));
         });
@@ -41,7 +42,8 @@ fn bench_rate_encoder_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("RateEncoder::encode_step");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = RateEncoder::new(5.0, 100.0, (0.0, 1.0));
+            let mut encoder =
+                RateEncoder::try_new(5.0, 100.0, (0.0, 1.0)).expect("valid RateEncoder");
             let input = normalized_input(size);
             encoder.encode_step(&input);
 
@@ -58,7 +60,8 @@ fn bench_population_encoder(c: &mut Criterion) {
             BenchmarkId::from_parameter(neurons),
             &neurons,
             |b, &neurons| {
-                let mut encoder = PopulationEncoder::new(neurons, (50.0, 100.0), 10.0);
+                let mut encoder = PopulationEncoder::try_new(neurons, (50.0, 100.0), 10.0)
+                    .expect("valid PopulationEncoder");
                 let input = [75.0_f32];
                 b.iter(|| black_box(encoder.encode(black_box(&input))));
             },
@@ -71,7 +74,7 @@ fn bench_delta_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("DeltaEncoder::encode");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = DeltaEncoder::new(0.1, size);
+            let mut encoder = DeltaEncoder::try_new(0.1, size).expect("valid DeltaEncoder");
             let input = shifted_input(size, 0.25);
             b.iter(|| black_box(encoder.encode(black_box(&input))));
         });
@@ -83,7 +86,7 @@ fn bench_delta_encoder_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("DeltaEncoder::encode_step");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = DeltaEncoder::new(0.1, size);
+            let mut encoder = DeltaEncoder::try_new(0.1, size).expect("valid DeltaEncoder");
             let baseline = normalized_input(size);
             let shifted = shifted_input(size, 0.25);
             let mut use_shifted = true;
@@ -104,7 +107,8 @@ fn bench_temporal_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemporalEncoder::encode");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = TemporalEncoder::new(6, vec![(0.2, 1)], size);
+            let mut encoder =
+                TemporalEncoder::try_new(6, vec![(0.2, 1)], size).expect("valid TemporalEncoder");
             let input = normalized_input(size);
             b.iter(|| black_box(encoder.encode(black_box(&input))));
         });
@@ -116,7 +120,8 @@ fn bench_temporal_encoder_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("TemporalEncoder::encode_step");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder = TemporalEncoder::new(6, vec![(0.2, 1)], size);
+            let mut encoder =
+                TemporalEncoder::try_new(6, vec![(0.2, 1)], size).expect("valid TemporalEncoder");
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];
@@ -141,8 +146,8 @@ fn bench_predictive_encoder(c: &mut Criterion) {
     let mut group = c.benchmark_group("PredictiveEncoder::encode");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder =
-                PredictiveEncoder::new(5, vec![(0.2, 1)], size).expect("valid PredictiveEncoder");
+            let mut encoder = PredictiveEncoder::try_new(5, vec![(0.2, 1)], size)
+                .expect("valid PredictiveEncoder");
             // Cycle low/high so thresholds keep adapting (static input converges and under-measures).
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
@@ -167,8 +172,8 @@ fn bench_predictive_encoder_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("PredictiveEncoder::encode_step");
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let mut encoder =
-                PredictiveEncoder::new(5, vec![(0.2, 1)], size).expect("valid PredictiveEncoder");
+            let mut encoder = PredictiveEncoder::try_new(5, vec![(0.2, 1)], size)
+                .expect("valid PredictiveEncoder");
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];

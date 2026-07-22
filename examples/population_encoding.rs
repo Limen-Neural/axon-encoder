@@ -15,7 +15,8 @@ fn main() {
     //   num_neurons  = 20    (size of the neural population)
     //   input_range  = (0.0, 100.0)
     //   tuning_width = 10.0  (standard deviation of Gaussian tuning curves)
-    let mut encoder = PopulationEncoder::new(20, (0.0, 100.0), 10.0);
+    let mut encoder =
+        PopulationEncoder::try_new(20, (0.0, 100.0), 10.0).expect("valid PopulationEncoder");
     let num_neurons = encoder.num_neurons();
 
     let test_values = [10.0, 50.0, 90.0];

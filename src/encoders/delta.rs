@@ -24,18 +24,32 @@ use crate::prelude::*;
 /// - `threshold`: Minimum change required to trigger a spike
 /// - `num_channels`: Number of input channels to track
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DeltaEncoder {
     last_values: Vec<f32>,
     threshold: f32,
 }
 
 impl DeltaEncoder {
+    /// Creates a new `DeltaEncoder`, panicking if configuration is invalid.
+    ///
+    /// Prefer [`try_new`](Self::try_new) for typed validation errors.
     pub fn new(threshold: f32, num_channels: usize) -> Self {
-        Self {
+        Self::try_new(threshold, num_channels).expect("invalid DeltaEncoder configuration")
+    }
+
+    /// Creates a new `DeltaEncoder`, returning an [`EncoderError`] for invalid configuration.
+    pub fn try_new(threshold: f32, num_channels: usize) -> Result<Self, EncoderError> {
+        if !threshold.is_finite() || threshold <= 0.0 {
+            return Err(EncoderError::NonPositiveOrNonFinite {
+                parameter: "threshold",
+            });
+        }
+        crate::error::validate_channel_count(num_channels)?;
+        Ok(Self {
             last_values: vec![0.0; num_channels],
             threshold,
-        }
+        })
     }
 
     fn encode_with_threshold_scale(
@@ -92,6 +106,28 @@ impl DeltaEncoder {
             modulators,
             gain_curves,
         )
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for DeltaEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            last_values: Vec<f32>,
+            threshold: f32,
+        }
+        let helper = Helper::deserialize(deserializer)?;
+        let mut encoder = Self::try_new(helper.threshold, helper.last_values.len())
+            .map_err(serde::de::Error::custom)?;
+        if helper.last_values.iter().any(|value| !value.is_finite()) {
+            return Err(serde::de::Error::custom("last_values must be finite"));
+        }
+        encoder.last_values = helper.last_values;
+        Ok(encoder)
     }
 }
 
@@ -250,5 +286,24 @@ mod tests {
         encoder.encode(&[0.0]);
         let output = encoder.encode_with_threshold_scale(&[0.01], 0.0);
         assert_eq!(output.spikes.len(), 1);
+    }
+    #[test]
+    fn test_delta_encoder_try_new_validation() {
+        assert_eq!(
+            DeltaEncoder::try_new(0.0, 1).err(),
+            Some(EncoderError::NonPositiveOrNonFinite {
+                parameter: "threshold"
+            })
+        );
+        assert_eq!(
+            DeltaEncoder::try_new(f32::NAN, 1).err(),
+            Some(EncoderError::NonPositiveOrNonFinite {
+                parameter: "threshold"
+            })
+        );
+        assert_eq!(
+            DeltaEncoder::try_new(1.0, u16::MAX as usize + 2).err(),
+            Some(EncoderError::NumChannelsTooLarge)
+        );
     }
 }

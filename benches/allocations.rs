@@ -108,7 +108,7 @@ fn print_stats(
 
 fn report_rate_encoder() {
     for scale in SCALES {
-        let mut encoder = RateEncoder::new(5.0, 100.0, (0.0, 1.0));
+        let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0)).expect("valid RateEncoder");
         let input = normalized_input(scale);
         encoder.encode_step(&input);
 
@@ -119,7 +119,8 @@ fn report_rate_encoder() {
 
 fn report_population_encoder() {
     for neurons in SCALES {
-        let mut encoder = PopulationEncoder::new(neurons, (50.0, 100.0), 10.0);
+        let mut encoder = PopulationEncoder::try_new(neurons, (50.0, 100.0), 10.0)
+            .expect("valid PopulationEncoder");
         let input = [75.0_f32];
 
         let stats = measure_operation(|| encoder.encode(&input));
@@ -129,7 +130,7 @@ fn report_population_encoder() {
 
 fn report_delta_encoder() {
     for scale in SCALES {
-        let mut encoder = DeltaEncoder::new(0.1, scale);
+        let mut encoder = DeltaEncoder::try_new(0.1, scale).expect("valid DeltaEncoder");
         let baseline = normalized_input(scale);
         let shifted = shifted_input(scale, 0.25);
         encoder.encode_step(&baseline);
@@ -141,7 +142,8 @@ fn report_delta_encoder() {
 
 fn report_temporal_encoder() {
     for scale in SCALES {
-        let mut encoder = TemporalEncoder::new(6, vec![(0.2, 1)], scale);
+        let mut encoder =
+            TemporalEncoder::try_new(6, vec![(0.2, 1)], scale).expect("valid TemporalEncoder");
         let low = constant_input(scale, 0.0);
         let high = constant_input(scale, 1.0);
 
@@ -157,7 +159,7 @@ fn report_temporal_encoder() {
 fn report_predictive_encoder() {
     for scale in SCALES {
         let mut encoder =
-            PredictiveEncoder::new(5, vec![(0.2, 1)], scale).expect("valid PredictiveEncoder");
+            PredictiveEncoder::try_new(5, vec![(0.2, 1)], scale).expect("valid PredictiveEncoder");
         let low = constant_input(scale, 0.0);
         let high = constant_input(scale, 1.0);
 

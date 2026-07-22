@@ -79,6 +79,15 @@ impl PredictiveEncoder {
         deviation_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Result<Self, PredictiveEncoderError> {
+        Self::try_new(history_depth, deviation_thresholds, num_channels)
+    }
+
+    /// Creates a new `PredictiveEncoder`, returning a typed error for invalid configuration.
+    pub fn try_new(
+        history_depth: usize,
+        deviation_thresholds: Vec<(f32, u16)>,
+        num_channels: usize,
+    ) -> Result<Self, PredictiveEncoderError> {
         if history_depth < 5 {
             return Err(PredictiveEncoderError::HistoryDepthTooSmall);
         }

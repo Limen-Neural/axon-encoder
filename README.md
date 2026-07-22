@@ -164,3 +164,11 @@ This project is dual-licensed under either:
 - MIT License ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
+
+## Encoder construction errors
+
+Public encoder types provide `try_new(...)` constructors for runtime configuration
+validation. Prefer these fallible constructors in library/application code so
+invalid rates, ranges, window sizes, thresholds, and channel counts are reported
+as typed errors instead of panics. The legacy `new(...)` constructors remain for
+source compatibility and panic with a clear message when validation fails.
