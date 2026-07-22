@@ -63,7 +63,7 @@ impl RateEncoder {
         if base_rate > max_rate {
             return Err(EncoderError::RateOrder);
         }
-        crate::error::validate_range("range", range)?;
+        crate::error::validate_range_f32_span("range", range)?;
         Ok(Self {
             base_rate,
             max_rate,
@@ -200,8 +200,16 @@ impl<'de> serde::Deserialize<'de> for RateEncoder {
         let helper = Helper::deserialize(deserializer)?;
         let mut encoder = Self::try_new(helper.base_rate, helper.max_rate, helper.range)
             .map_err(serde::de::Error::custom)?;
-        if helper.accumulators.iter().any(|value| !value.is_finite()) {
-            return Err(serde::de::Error::custom("accumulators must be finite"));
+        // Streaming state keeps each accumulator in [0, 1). Reject out-of-range
+        // values so a loaded encoder cannot emit spikes without input drive.
+        if helper
+            .accumulators
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0 || *value >= 1.0)
+        {
+            return Err(serde::de::Error::custom(
+                "accumulators must be finite and in [0.0, 1.0)",
+            ));
         }
         encoder.accumulators = helper.accumulators;
         Ok(encoder)
@@ -444,5 +452,27 @@ mod tests {
             RateEncoder::try_new(0.0, 1.0, (1.0, 1.0)).err(),
             Some(EncoderError::InvalidRange { parameter: "range" })
         );
+        assert_eq!(
+            RateEncoder::try_new(0.0, 1.0, (f32::MIN, f32::MAX)).err(),
+            Some(EncoderError::InvalidRange { parameter: "range" })
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_rate_encoder_serde_rejects_out_of_range_accumulators() {
+        let oversized =
+            r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[5.0]}"#;
+        let res: Result<RateEncoder, _> = serde_json::from_str(oversized);
+        assert!(res.is_err());
+
+        let negative =
+            r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[-0.1]}"#;
+        let res: Result<RateEncoder, _> = serde_json::from_str(negative);
+        assert!(res.is_err());
+
+        let ok = r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[0.5]}"#;
+        let res: Result<RateEncoder, _> = serde_json::from_str(ok);
+        assert!(res.is_ok());
     }
 }

@@ -31,38 +31,40 @@ impl TryFrom<DerivativeEncoderRepr> for DerivativeEncoder {
                 r.thresholds.len()
             ));
         }
-        if r.thresholds.len() > u16::MAX as usize + 1 {
-            return Err("too many channels (max 65536)".into());
-        }
-        if r.thresholds.iter().any(|v| !v.is_finite()) {
-            return Err("thresholds must be finite".into());
-        }
         if r.last_values.iter().any(|v| !v.is_finite()) {
             return Err("last_values must be finite".into());
         }
-        Ok(Self {
-            last_values: r.last_values,
-            thresholds: r.thresholds,
-        })
+        let mut encoder = Self::try_new(r.thresholds).map_err(|error| error.to_string())?;
+        encoder.last_values = r.last_values;
+        Ok(encoder)
     }
 }
 
 impl DerivativeEncoder {
-    /// Creates a new `DerivativeEncoder` with specific thresholds for each channel.
+    /// Creates a new `DerivativeEncoder`, panicking if configuration is invalid.
+    ///
+    /// Prefer [`try_new`](Self::try_new) for typed validation errors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any threshold is non-finite/negative or the channel count is too large.
     pub fn new(thresholds: Vec<f32>) -> Self {
-        assert!(
-            thresholds.len() <= u16::MAX as usize + 1,
-            "too many channels (max 65536)"
-        );
-        assert!(
-            thresholds.iter().all(|v| v.is_finite()),
-            "thresholds must be finite"
-        );
+        Self::try_new(thresholds).expect("invalid DerivativeEncoder configuration")
+    }
+
+    /// Creates a new `DerivativeEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// Each threshold must be finite and non-negative; channel count must fit `u16` IDs.
+    pub fn try_new(thresholds: Vec<f32>) -> Result<Self, EncoderError> {
+        crate::error::validate_channel_count(thresholds.len())?;
+        for &threshold in &thresholds {
+            crate::error::validate_non_negative_finite("threshold", threshold)?;
+        }
         let num_channels = thresholds.len();
-        Self {
+        Ok(Self {
             last_values: vec![0.0; num_channels],
             thresholds,
-        }
+        })
     }
 }
 
@@ -169,6 +171,27 @@ mod tests {
         });
         let res: Result<DerivativeEncoder, _> = serde_json::from_value(value);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_derivative_encoder_try_new_validation() {
+        assert!(DerivativeEncoder::try_new(vec![0.0, 1.0]).is_ok());
+        assert_eq!(
+            DerivativeEncoder::try_new(vec![f32::NAN]).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "threshold"
+            })
+        );
+        assert_eq!(
+            DerivativeEncoder::try_new(vec![-1.0]).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "threshold"
+            })
+        );
+        assert_eq!(
+            DerivativeEncoder::try_new(vec![1.0; u16::MAX as usize + 2]).err(),
+            Some(EncoderError::NumChannelsTooLarge)
+        );
     }
 }
 

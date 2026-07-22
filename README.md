@@ -178,7 +178,7 @@ Constructor conventions:
 
 - Most encoders: `try_new(...) -> Result<Self, EncoderError>`; legacy
   `new(...)` panics on invalid configuration (e.g. `RateEncoder::new`,
-  `LatencyEncoder::new`, `DeltaEncoder::new`).
+  `LatencyEncoder::new`, `DeltaEncoder::new`, `DerivativeEncoder::new`).
 - `PredictiveEncoder` is the exception: `new(...)` already returns
   `Result<Self, PredictiveEncoderError>` for source compatibility, while
   `try_new(...)` returns the unified `EncoderError`.

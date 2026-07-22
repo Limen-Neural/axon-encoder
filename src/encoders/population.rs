@@ -58,7 +58,7 @@ impl PopulationEncoder {
             });
         }
         crate::error::validate_channel_count(num_neurons)?;
-        crate::error::validate_range("input_range", input_range)?;
+        crate::error::validate_range_f32_span("input_range", input_range)?;
         if !tuning_width.is_finite() || tuning_width <= 0.0 {
             return Err(EncoderError::NonPositiveOrNonFinite {
                 parameter: "tuning_width",

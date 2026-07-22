@@ -84,6 +84,24 @@ pub(crate) fn validate_range(
     }
 }
 
+/// Like [`validate_range`], but also rejects spans that overflow f32 arithmetic
+/// (e.g. `(f32::MIN, f32::MAX)` → span is `+inf`).
+///
+/// Use for encoders that normalize with f32 division (`RateEncoder`,
+/// `PopulationEncoder`). Latency/Phase normalize in f64 and may accept wider
+/// finite bounds.
+pub(crate) fn validate_range_f32_span(
+    parameter: &'static str,
+    range: (f32, f32),
+) -> Result<(), EncoderError> {
+    validate_range(parameter, range)?;
+    if (range.1 - range.0).is_finite() {
+        Ok(())
+    } else {
+        Err(EncoderError::InvalidRange { parameter })
+    }
+}
+
 pub(crate) fn validate_channel_count(num_channels: usize) -> Result<(), EncoderError> {
     if num_channels <= MAX_SPIKE_CHANNELS {
         Ok(())
