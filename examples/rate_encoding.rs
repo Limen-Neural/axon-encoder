@@ -10,7 +10,7 @@ fn main() {
         config.input_channels, config.output_channels
     );
 
-    let mut encoder = RateEncoder::new(5.0, 100.0, (0.0, 1.0));
+    let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0)).expect("valid RateEncoder");
 
     let inputs: Vec<f32> = (0..config.input_channels)
         .map(|i| i as f32 / (config.input_channels - 1) as f32)

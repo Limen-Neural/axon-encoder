@@ -10,7 +10,7 @@
 use axon_encoder::prelude::*;
 
 fn main() {
-    let mut encoder = LatencyEncoder::new(12, (0.0, 1.0));
+    let mut encoder = LatencyEncoder::try_new(12, (0.0, 1.0)).expect("valid LatencyEncoder");
     let input = [-0.2, 0.1, 0.5, 0.9, 1.3];
     let output = encoder.encode(&input);
 

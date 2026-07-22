@@ -34,7 +34,7 @@ use crate::prelude::*;
 /// - `max_rate`: Maximum firing rate (Hz equivalent) when input is at range maximum
 /// - `range`: Tuple of (min, max) input values
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RateEncoder {
     base_rate: f32,
     max_rate: f32,
@@ -43,13 +43,33 @@ pub struct RateEncoder {
 }
 
 impl RateEncoder {
+    /// Creates a new `RateEncoder`, panicking if configuration is invalid.
+    ///
+    /// Prefer [`try_new`](Self::try_new) for typed validation errors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if rates are non-finite, `base_rate > max_rate`, or `range` is invalid.
     pub fn new(base_rate: f32, max_rate: f32, range: (f32, f32)) -> Self {
-        Self {
+        Self::try_new(base_rate, max_rate, range).expect("invalid RateEncoder configuration")
+    }
+
+    /// Creates a new `RateEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// Rates must be finite and non-negative, with `base_rate <= max_rate`.
+    pub fn try_new(base_rate: f32, max_rate: f32, range: (f32, f32)) -> Result<Self, EncoderError> {
+        crate::error::validate_non_negative_finite("base_rate", base_rate)?;
+        crate::error::validate_non_negative_finite("max_rate", max_rate)?;
+        if base_rate > max_rate {
+            return Err(EncoderError::RateOrder);
+        }
+        crate::error::validate_range_f32_span("range", range)?;
+        Ok(Self {
             base_rate,
             max_rate,
             range,
             accumulators: Vec::new(),
-        }
+        })
     }
 
     fn normalize(&self, value: f32) -> f32 {
@@ -159,6 +179,40 @@ impl RateEncoder {
             modulators,
             gain_curves,
         )
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for RateEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            base_rate: f32,
+            max_rate: f32,
+            range: (f32, f32),
+            #[serde(default)]
+            accumulators: Vec<f32>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+        let mut encoder = Self::try_new(helper.base_rate, helper.max_rate, helper.range)
+            .map_err(serde::de::Error::custom)?;
+        // Streaming state keeps each accumulator in [0, 1). Reject out-of-range
+        // values so a loaded encoder cannot emit spikes without input drive.
+        if helper
+            .accumulators
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0 || *value >= 1.0)
+        {
+            return Err(serde::de::Error::custom(
+                "accumulators must be finite and in [0.0, 1.0)",
+            ));
+        }
+        encoder.accumulators = helper.accumulators;
+        Ok(encoder)
     }
 }
 
@@ -363,5 +417,62 @@ mod tests {
         encoder.reset();
         let recovered = encoder.encode_step_with_rate_scale(&[1.0], 1.0);
         assert_eq!(recovered.spikes.len(), 1);
+    }
+    #[test]
+    fn test_rate_encoder_try_new_validation() {
+        assert_eq!(
+            RateEncoder::try_new(f32::NAN, 1.0, (0.0, 1.0)).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "base_rate"
+            })
+        );
+        assert_eq!(
+            RateEncoder::try_new(0.0, f32::INFINITY, (0.0, 1.0)).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "max_rate"
+            })
+        );
+        assert_eq!(
+            RateEncoder::try_new(-5.0, 10.0, (0.0, 1.0)).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "base_rate"
+            })
+        );
+        assert_eq!(
+            RateEncoder::try_new(0.0, -1.0, (0.0, 1.0)).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "max_rate"
+            })
+        );
+        assert_eq!(
+            RateEncoder::try_new(2.0, 1.0, (0.0, 1.0)).err(),
+            Some(EncoderError::RateOrder)
+        );
+        assert_eq!(
+            RateEncoder::try_new(0.0, 1.0, (1.0, 1.0)).err(),
+            Some(EncoderError::InvalidRange { parameter: "range" })
+        );
+        assert_eq!(
+            RateEncoder::try_new(0.0, 1.0, (f32::MIN, f32::MAX)).err(),
+            Some(EncoderError::InvalidRange { parameter: "range" })
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_rate_encoder_serde_rejects_out_of_range_accumulators() {
+        let oversized =
+            r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[5.0]}"#;
+        let res: Result<RateEncoder, _> = serde_json::from_str(oversized);
+        assert!(res.is_err());
+
+        let negative =
+            r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[-0.1]}"#;
+        let res: Result<RateEncoder, _> = serde_json::from_str(negative);
+        assert!(res.is_err());
+
+        let ok = r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[0.5]}"#;
+        let res: Result<RateEncoder, _> = serde_json::from_str(ok);
+        assert!(res.is_ok());
     }
 }

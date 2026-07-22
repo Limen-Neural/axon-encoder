@@ -15,7 +15,8 @@ fn main() {
     //   history_depth      = 10  (number of past values to track)
     //   change_thresholds  = [(2.0, 1), (5.0, 2)]  (threshold, spike value)
     //   num_channels       = 2
-    let mut encoder = TemporalEncoder::new(10, vec![(2.0, 1), (5.0, 2)], 2);
+    let mut encoder =
+        TemporalEncoder::try_new(10, vec![(2.0, 1), (5.0, 2)], 2).expect("valid TemporalEncoder");
 
     // Simulate a stable period followed by sudden change on channel 0.
     let stable_readings = [[1.0, 5.0], [1.1, 5.1], [1.0, 4.9], [1.2, 5.0], [1.0, 5.2]];

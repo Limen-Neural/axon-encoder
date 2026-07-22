@@ -4,6 +4,7 @@
 
 pub mod encoder;
 pub mod encoders;
+pub mod error;
 pub mod modulators;
 #[cfg(feature = "ndarray")]
 pub mod ndarray_ext;
@@ -11,6 +12,7 @@ pub mod poisson;
 pub mod rng;
 pub mod types;
 
+pub use error::EncoderError;
 #[cfg(feature = "ndarray")]
 pub use ndarray_ext::NdarrayEncoderExt;
 
@@ -19,6 +21,7 @@ pub mod prelude {
     pub use crate::ModulatedEncoder;
     pub use crate::encoder::*;
     pub use crate::encoders::*;
+    pub use crate::error::*;
     pub use crate::modulators::*;
     #[cfg(feature = "ndarray")]
     pub use crate::ndarray_ext::NdarrayEncoderExt;
@@ -87,8 +90,9 @@ pub trait ModulatedEncoder: Encoder {
 ///
 /// ```rust
 /// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
 ///
-/// let mut encoder = RateEncoder::new(5.0, 50.0, (0.0, 1.0));
+/// let mut encoder = RateEncoder::try_new(5.0, 50.0, (0.0, 1.0))?;
 /// let input = [0.25, 0.75, 0.5];
 ///
 /// // Batch encoding
@@ -96,6 +100,8 @@ pub trait ModulatedEncoder: Encoder {
 ///
 /// // Reset for streaming (if using stateful encoder)
 /// encoder.reset();
+/// # Ok(())
+/// # }
 /// ```
 pub trait Encoder {
     /// Encodes a slice of analog values into spike events (batch mode).

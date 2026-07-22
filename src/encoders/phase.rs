@@ -23,32 +23,35 @@ pub struct PhaseEncoder {
 ///
 /// Shared by both `PhaseEncoder::new` (which panics on failure) and the
 /// `Deserialize` impl (which surfaces the message as a deserialization error)
-fn validate_params(cycle_steps: u64, range: (f32, f32)) -> Result<(), &'static str> {
+fn validate_params(cycle_steps: u64, range: (f32, f32)) -> Result<(), EncoderError> {
     if cycle_steps == 0 {
-        return Err("cycle_steps must be greater than 0");
+        return Err(EncoderError::WindowMustBePositive {
+            parameter: "cycle_steps",
+        });
     }
-    if !range.0.is_finite() || !range.1.is_finite() || range.0 >= range.1 {
-        return Err("range min must be less than range max and both must be finite");
-    }
-    Ok(())
+    crate::error::validate_range("range", range)
 }
 
 impl PhaseEncoder {
-    /// Creates a new `PhaseEncoder`
+    /// Creates a new `PhaseEncoder`, panicking if configuration is invalid.
+    ///
+    /// Prefer [`try_new`](Self::try_new) for typed validation errors.
     ///
     /// # Panics
     ///
-    /// Panics if `cycle_steps == 0` or if range bounds are non-finite or `range.0 >= range.1`
+    /// Panics if `cycle_steps == 0` or if range bounds are non-finite or `range.0 >= range.1`.
     pub fn new(cycle_steps: u64, range: (f32, f32)) -> Self {
-        if let Err(message) = validate_params(cycle_steps, range) {
-            panic!("{message}");
-        }
+        Self::try_new(cycle_steps, range).unwrap_or_else(|error| panic!("{error}"))
+    }
 
-        Self {
+    /// Creates a new `PhaseEncoder`, returning an [`EncoderError`] for invalid configuration.
+    pub fn try_new(cycle_steps: u64, range: (f32, f32)) -> Result<Self, EncoderError> {
+        validate_params(cycle_steps, range)?;
+        Ok(Self {
             cycle_steps,
             range,
             current_phase: 0,
-        }
+        })
     }
 
     fn normalize(&self, value: f32) -> f64 {
@@ -306,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "range min must be less than range max")]
+    #[should_panic(expected = "range must be finite and min must be less than max")]
     fn test_invalid_range_rejected() {
         let _ = PhaseEncoder::new(8, (1.0, 1.0));
     }
@@ -422,5 +425,18 @@ mod tests {
         assert_eq!(output.spikes.len(), 2);
         assert_eq!(output.spikes[0].channel, 0);
         assert_eq!(output.spikes[1].channel, 2);
+    }
+    #[test]
+    fn test_phase_encoder_try_new_validation() {
+        assert_eq!(
+            PhaseEncoder::try_new(0, (0.0, 1.0)).err(),
+            Some(EncoderError::WindowMustBePositive {
+                parameter: "cycle_steps"
+            })
+        );
+        assert_eq!(
+            PhaseEncoder::try_new(1, (1.0, 1.0)).err(),
+            Some(EncoderError::InvalidRange { parameter: "range" })
+        );
     }
 }

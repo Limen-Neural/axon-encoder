@@ -37,22 +37,42 @@ pub struct TemporalEncoder {
 }
 
 impl TemporalEncoder {
-    /// Creates a new `TemporalEncoder`
+    /// Creates a new `TemporalEncoder`, panicking if configuration is invalid.
+    ///
+    /// Prefer [`try_new`](Self::try_new) for typed validation errors.
     ///
     /// # Panics
     ///
-    /// Panics if `history_depth < 6`
+    /// Panics if `history_depth < 6` or `num_channels` is unsupported.
     pub fn new(
         history_depth: usize,
         change_thresholds: Vec<(f32, u16)>,
         num_channels: usize,
     ) -> Self {
-        assert!(history_depth >= 6, "history_depth must be at least 6");
-        Self {
+        Self::try_new(history_depth, change_thresholds, num_channels)
+            .expect("invalid TemporalEncoder configuration")
+    }
+
+    /// Creates a new `TemporalEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// Each threshold in `change_thresholds` must be finite and non-negative.
+    pub fn try_new(
+        history_depth: usize,
+        change_thresholds: Vec<(f32, u16)>,
+        num_channels: usize,
+    ) -> Result<Self, EncoderError> {
+        if history_depth < 6 {
+            return Err(EncoderError::HistoryDepthTooSmall { minimum: 6 });
+        }
+        for &(threshold, _) in &change_thresholds {
+            crate::error::validate_non_negative_finite("change_threshold", threshold)?;
+        }
+        crate::error::validate_channel_count(num_channels)?;
+        Ok(Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             history_depth,
             change_thresholds,
-        }
+        })
     }
 
     fn encode_with_threshold_scale(
@@ -175,7 +195,17 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
         let helper = Helper::deserialize(deserializer)?;
 
         if helper.history_depth < 6 {
-            return Err(serde::de::Error::custom("history_depth must be at least 6"));
+            return Err(serde::de::Error::custom(
+                EncoderError::HistoryDepthTooSmall { minimum: 6 },
+            ));
+        }
+        crate::error::validate_channel_count(helper.history.len())
+            .map_err(serde::de::Error::custom)?;
+
+        // Match try_new: reject non-finite / negative thresholds on load.
+        for &(threshold, _) in &helper.change_thresholds {
+            crate::error::validate_non_negative_finite("change_threshold", threshold)
+                .map_err(serde::de::Error::custom)?;
         }
 
         for (i, deque) in helper.history.iter().enumerate() {
@@ -290,5 +320,52 @@ mod tests {
         }"#;
         let res: Result<TemporalEncoder, _> = serde_json::from_str(json);
         assert!(res.is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_serde_rejects_invalid_thresholds() {
+        let negative = r#"{
+            "history": [[]],
+            "history_depth": 6,
+            "change_thresholds": [[-0.5, 1]]
+        }"#;
+        let res: Result<TemporalEncoder, _> = serde_json::from_str(negative);
+        assert!(
+            res.is_err(),
+            "negative change_threshold must fail deserialize"
+        );
+
+        let ok = r#"{
+            "history": [[]],
+            "history_depth": 6,
+            "change_thresholds": [[0.0, 1], [1.5, 2]]
+        }"#;
+        let res: Result<TemporalEncoder, _> = serde_json::from_str(ok);
+        assert!(res.is_ok());
+    }
+    #[test]
+    fn test_temporal_encoder_try_new_validation() {
+        assert_eq!(
+            TemporalEncoder::try_new(5, vec![(1.0, 1)], 1).err(),
+            Some(EncoderError::HistoryDepthTooSmall { minimum: 6 })
+        );
+        assert_eq!(
+            TemporalEncoder::try_new(6, vec![(1.0, 1)], u16::MAX as usize + 2).err(),
+            Some(EncoderError::NumChannelsTooLarge)
+        );
+        assert_eq!(
+            TemporalEncoder::try_new(6, vec![(f32::NAN, 1)], 1).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "change_threshold"
+            })
+        );
+        assert_eq!(
+            TemporalEncoder::try_new(6, vec![(-0.5, 1)], 1).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "change_threshold"
+            })
+        );
+        assert!(TemporalEncoder::try_new(6, vec![(0.0, 1)], 1).is_ok());
     }
 }

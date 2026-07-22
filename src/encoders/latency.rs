@@ -15,18 +15,26 @@ pub struct LatencyEncoder {
 }
 
 impl LatencyEncoder {
-    /// Creates a new `LatencyEncoder`
+    /// Creates a new `LatencyEncoder`, panicking if configuration is invalid.
+    ///
+    /// Prefer [`try_new`](Self::try_new) for typed validation errors.
     ///
     /// # Panics
     ///
-    /// Panics if `range.0 >= range.1` or if either bound is non-finite
+    /// Panics if `range.0 >= range.1` or either bound is non-finite.
+    ///
+    /// `max_latency == 0` is valid and emits every spike at timestamp `0`
+    /// (instantaneous response).
     pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
-        assert!(
-            range.0.is_finite() && range.1.is_finite() && range.0 < range.1,
-            "range must be finite and min must be less than max"
-        );
+        Self::try_new(max_latency, range).unwrap_or_else(|error| panic!("{error}"))
+    }
 
-        Self { max_latency, range }
+    /// Creates a new `LatencyEncoder`, returning an [`EncoderError`] for invalid configuration.
+    ///
+    /// `max_latency == 0` is accepted and maps every input to timestamp `0`.
+    pub fn try_new(max_latency: u64, range: (f32, f32)) -> Result<Self, EncoderError> {
+        crate::error::validate_range("range", range)?;
+        Ok(Self { max_latency, range })
     }
 
     fn normalize(&self, value: f32) -> f64 {
@@ -158,22 +166,7 @@ impl<'de> serde::Deserialize<'de> for LatencyEncoder {
 
         let helper = Helper::deserialize(deserializer)?;
 
-        if !helper.range.0.is_finite()
-            || !helper.range.1.is_finite()
-            || !matches!(
-                helper.range.0.partial_cmp(&helper.range.1),
-                Some(std::cmp::Ordering::Less)
-            )
-        {
-            return Err(serde::de::Error::custom(
-                "range must be finite and min must be less than max",
-            ));
-        }
-
-        Ok(Self {
-            max_latency: helper.max_latency,
-            range: helper.range,
-        })
+        Self::try_new(helper.max_latency, helper.range).map_err(serde::de::Error::custom)
     }
 }
 
@@ -271,16 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn latency_encoder_supports_zero_max_latency() {
-        let mut encoder = LatencyEncoder::new(0, (0.0, 1.0));
-
-        let output = encoder.encode(&[-1.0, 0.5, 2.0]);
-
-        assert_eq!(output.spikes.len(), 3);
-        assert!(output.spikes.iter().all(|spike| spike.timestamp == 0));
-    }
-
-    #[test]
     fn latency_encoder_nan_maps_to_max_latency() {
         let mut encoder = LatencyEncoder::new(7, (0.0, 1.0));
 
@@ -373,5 +356,21 @@ mod tests {
         let output = encoder.encode_with_modulators(&[0.5, f32::NAN], &mods, &curves);
         assert_eq!(output.spikes.len(), 2);
         assert!(output.spikes.iter().all(|s| s.timestamp == 0));
+    }
+    #[test]
+    fn latency_encoder_supports_zero_max_latency() {
+        let mut encoder = LatencyEncoder::new(0, (0.0, 1.0));
+        let output = encoder.encode(&[0.0, 0.5, 1.0]);
+        assert_eq!(output.spikes.len(), 3);
+        assert!(output.spikes.iter().all(|s| s.timestamp == 0));
+    }
+
+    #[test]
+    fn latency_encoder_try_new_rejects_invalid_configuration() {
+        assert!(LatencyEncoder::try_new(0, (0.0, 1.0)).is_ok());
+        assert_eq!(
+            LatencyEncoder::try_new(1, (1.0, 1.0)).err(),
+            Some(EncoderError::InvalidRange { parameter: "range" })
+        );
     }
 }

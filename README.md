@@ -83,10 +83,11 @@ fn main() {
     //    You can customize this to match your input data.
     let config = EncoderConfig::default(); // Defaults to 256 channels.
 
-    // 2. Initialize an encoder. Let's use a RateEncoder.
-    //    It will map input values from a range of (0.0, 1.0) to a firing
-    //    rate between 5 Hz and 100 Hz.
-    let mut encoder = RateEncoder::new(5.0, 100.0, (0.0, 1.0));
+    // 2. Initialize an encoder. Prefer try_new for typed validation errors;
+    //    RateEncoder::new(...) panics on invalid rates/ranges.
+    //    Maps input values from (0.0, 1.0) to a firing rate between 5–100 Hz.
+    let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0))
+        .expect("valid RateEncoder configuration");
 
     // 3. Create a sample input stimulus.
     //    Here, we create a simple ramp from 0.0 to 1.0.
@@ -164,3 +165,20 @@ This project is dual-licensed under either:
 - MIT License ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
+
+## Encoder construction errors
+
+Public encoder types provide `try_new(...)` constructors for runtime configuration
+validation. Prefer these fallible constructors in library/application code so
+invalid rates, ranges, window sizes, thresholds, and channel counts are reported
+as typed [`EncoderError`](https://docs.rs/axon-encoder/latest/axon_encoder/enum.EncoderError.html)
+values instead of panics.
+
+Constructor conventions:
+
+- Most encoders: `try_new(...) -> Result<Self, EncoderError>`; legacy
+  `new(...)` panics on invalid configuration (e.g. `RateEncoder::new`,
+  `LatencyEncoder::new`, `DeltaEncoder::new`, `DerivativeEncoder::new`).
+- `PredictiveEncoder` is the exception: `new(...)` already returns
+  `Result<Self, PredictiveEncoderError>` for source compatibility, while
+  `try_new(...)` returns the unified `EncoderError`.

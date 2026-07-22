@@ -231,6 +231,32 @@ fn test_serde_validation_failures() {
     }"#;
     let res: Result<PhaseEncoder, _> = serde_json::from_str(invalid_phase_json);
     assert!(res.is_err());
+
+    // 8. Newly fallible encoders apply constructor validation on deserialize.
+    let invalid_rate_json =
+        r#"{"base_rate":2.0,"max_rate":1.0,"range":[0.0,1.0],"accumulators":[]}"#;
+    let res: Result<RateEncoder, _> = serde_json::from_str(invalid_rate_json);
+    assert!(res.is_err());
+
+    // threshold == 0 is valid (any nonzero change spikes); reject negatives.
+    let zero_delta_json = r#"{"last_values":[0.0],"threshold":0.0}"#;
+    let res: Result<DeltaEncoder, _> = serde_json::from_str(zero_delta_json);
+    assert!(res.is_ok());
+    let invalid_delta_json = r#"{"last_values":[0.0],"threshold":-1.0}"#;
+    let res: Result<DeltaEncoder, _> = serde_json::from_str(invalid_delta_json);
+    assert!(res.is_err());
+
+    let invalid_population_json = r#"{"num_neurons":0,"input_range":[0.0,1.0],"tuning_width":0.1}"#;
+    let res: Result<PopulationEncoder, _> = serde_json::from_str(invalid_population_json);
+    assert!(res.is_err());
+
+    // max_latency == 0 is valid (instantaneous spikes at t=0).
+    let zero_latency_json = r#"{"max_latency":0,"range":[0.0,1.0]}"#;
+    let res: Result<LatencyEncoder, _> = serde_json::from_str(zero_latency_json);
+    assert!(res.is_ok());
+    let invalid_latency_json = r#"{"max_latency":1,"range":[1.0,1.0]}"#;
+    let res: Result<LatencyEncoder, _> = serde_json::from_str(invalid_latency_json);
+    assert!(res.is_err());
 }
 
 #[test]

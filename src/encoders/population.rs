@@ -30,7 +30,7 @@ use crate::prelude::*;
 /// - `input_range`: Tuple of (min, max) input values
 /// - `tuning_width`: Controls how broadly neurons respond (larger = wider spread)
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PopulationEncoder {
     num_neurons: usize,
     input_range: (f32, f32),
@@ -38,12 +38,37 @@ pub struct PopulationEncoder {
 }
 
 impl PopulationEncoder {
+    /// Creates a new `PopulationEncoder`, panicking if configuration is invalid.
+    ///
+    /// Prefer [`try_new`](Self::try_new) for typed validation errors.
     pub fn new(num_neurons: usize, input_range: (f32, f32), tuning_width: f32) -> Self {
-        Self {
+        Self::try_new(num_neurons, input_range, tuning_width)
+            .expect("invalid PopulationEncoder configuration")
+    }
+
+    /// Creates a new `PopulationEncoder`, returning an [`EncoderError`] for invalid configuration.
+    pub fn try_new(
+        num_neurons: usize,
+        input_range: (f32, f32),
+        tuning_width: f32,
+    ) -> Result<Self, EncoderError> {
+        if num_neurons == 0 {
+            return Err(EncoderError::CountMustBePositive {
+                parameter: "num_neurons",
+            });
+        }
+        crate::error::validate_channel_count(num_neurons)?;
+        crate::error::validate_range_f32_span("input_range", input_range)?;
+        if !tuning_width.is_finite() || tuning_width <= 0.0 {
+            return Err(EncoderError::NonPositiveOrNonFinite {
+                parameter: "tuning_width",
+            });
+        }
+        Ok(Self {
             num_neurons,
             input_range,
             tuning_width,
-        }
+        })
     }
 
     /// Returns the number of neurons in the population
@@ -144,6 +169,24 @@ impl PopulationEncoder {
             modulators,
             gain_curves,
         )
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for PopulationEncoder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            num_neurons: usize,
+            input_range: (f32, f32),
+            tuning_width: f32,
+        }
+        let helper = Helper::deserialize(deserializer)?;
+        Self::try_new(helper.num_neurons, helper.input_range, helper.tuning_width)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -338,5 +381,30 @@ mod tests {
 
         encoder.reset();
         assert_eq!(encoder.num_neurons(), 10);
+    }
+    #[test]
+    fn test_population_encoder_try_new_validation() {
+        assert_eq!(
+            PopulationEncoder::try_new(0, (0.0, 1.0), 0.1).err(),
+            Some(EncoderError::CountMustBePositive {
+                parameter: "num_neurons"
+            })
+        );
+        assert_eq!(
+            PopulationEncoder::try_new(u16::MAX as usize + 2, (0.0, 1.0), 0.1).err(),
+            Some(EncoderError::NumChannelsTooLarge)
+        );
+        assert_eq!(
+            PopulationEncoder::try_new(1, (1.0, 1.0), 0.1).err(),
+            Some(EncoderError::InvalidRange {
+                parameter: "input_range"
+            })
+        );
+        assert_eq!(
+            PopulationEncoder::try_new(1, (0.0, 1.0), 0.0).err(),
+            Some(EncoderError::NonPositiveOrNonFinite {
+                parameter: "tuning_width"
+            })
+        );
     }
 }
