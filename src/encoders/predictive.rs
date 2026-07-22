@@ -12,6 +12,8 @@ pub enum PredictiveEncoderError {
     ///
     /// Valid channel indices are `0..=u16::MAX`, so at most `u16::MAX as usize + 1` channels.
     NumChannelsTooLarge,
+    /// A deviation threshold was non-finite or negative.
+    InvalidDeviationThreshold,
 }
 
 impl fmt::Display for PredictiveEncoderError {
@@ -22,6 +24,9 @@ impl fmt::Display for PredictiveEncoderError {
                 f,
                 "num_channels exceeds u16::MAX as usize + 1 (max addressable spike channels)"
             ),
+            Self::InvalidDeviationThreshold => {
+                write!(f, "deviation_threshold must be finite and non-negative")
+            }
         }
     }
 }
@@ -35,6 +40,9 @@ impl From<PredictiveEncoderError> for EncoderError {
                 EncoderError::HistoryDepthTooSmall { minimum: 5 }
             }
             PredictiveEncoderError::NumChannelsTooLarge => EncoderError::NumChannelsTooLarge,
+            PredictiveEncoderError::InvalidDeviationThreshold => EncoderError::NonNegativeFinite {
+                parameter: "deviation_threshold",
+            },
         }
     }
 }
@@ -89,6 +97,8 @@ impl PredictiveEncoder {
     /// - [`PredictiveEncoderError::HistoryDepthTooSmall`] if `history_depth < 5`
     /// - [`PredictiveEncoderError::NumChannelsTooLarge`] if `num_channels > u16::MAX as usize + 1`
     ///   (spike `channel` IDs are `u16`, so indices must stay in `0..=u16::MAX`)
+    /// - [`PredictiveEncoderError::InvalidDeviationThreshold`] if any threshold is
+    ///   non-finite or negative
     pub fn new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
@@ -100,6 +110,9 @@ impl PredictiveEncoder {
                     PredictiveEncoderError::HistoryDepthTooSmall
                 }
                 EncoderError::NumChannelsTooLarge => PredictiveEncoderError::NumChannelsTooLarge,
+                EncoderError::NonNegativeFinite {
+                    parameter: "deviation_threshold",
+                } => PredictiveEncoderError::InvalidDeviationThreshold,
                 other => panic!("unexpected EncoderError from PredictiveEncoder::try_new: {other}"),
             },
         )
@@ -108,7 +121,9 @@ impl PredictiveEncoder {
     /// Creates a new `PredictiveEncoder`, returning the unified [`EncoderError`].
     ///
     /// Prefer this over [`new`](Self::new) when propagating constructor failures
-    /// alongside other encoders via `EncoderError`.
+    /// alongside other encoders via `EncoderError`. Each `deviation_threshold`
+    /// must be finite and non-negative (same rule as
+    /// [`TemporalEncoder::try_new`](crate::encoders::TemporalEncoder::try_new)).
     pub fn try_new(
         history_depth: usize,
         deviation_thresholds: Vec<(f32, u16)>,
@@ -116,6 +131,9 @@ impl PredictiveEncoder {
     ) -> Result<Self, EncoderError> {
         if history_depth < 5 {
             return Err(EncoderError::HistoryDepthTooSmall { minimum: 5 });
+        }
+        for &(threshold, _) in &deviation_thresholds {
+            crate::error::validate_non_negative_finite("deviation_threshold", threshold)?;
         }
         // encode_with_threshold_scale maps channel index → u16 via try_from.
         crate::error::validate_channel_count(num_channels)?;
@@ -269,6 +287,12 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
             return Err(serde::de::Error::custom("history_depth must be at least 5"));
         }
 
+        // Match try_new: reject non-finite / negative deviation thresholds on load.
+        for &(threshold, _) in &helper.deviation_thresholds {
+            crate::error::validate_non_negative_finite("deviation_threshold", threshold)
+                .map_err(serde::de::Error::custom)?;
+        }
+
         for (i, deque) in helper.history.iter().enumerate() {
             if deque.len() > helper.history_depth {
                 return Err(serde::de::Error::custom(format!(
@@ -313,6 +337,23 @@ mod tests {
             PredictiveEncoder::try_new(5, vec![(2.0, 1)], u16::MAX as usize + 2).err(),
             Some(EncoderError::NumChannelsTooLarge)
         );
+        assert_eq!(
+            PredictiveEncoder::try_new(5, vec![(f32::NAN, 1)], 1).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "deviation_threshold"
+            })
+        );
+        assert_eq!(
+            PredictiveEncoder::try_new(5, vec![(-1.0, 1)], 1).err(),
+            Some(EncoderError::NonNegativeFinite {
+                parameter: "deviation_threshold"
+            })
+        );
+        assert_eq!(
+            PredictiveEncoder::new(5, vec![(-1.0, 1)], 1).err(),
+            Some(PredictiveEncoderError::InvalidDeviationThreshold)
+        );
+        assert!(PredictiveEncoder::try_new(5, vec![(0.0, 1)], 1).is_ok());
     }
 
     #[test]
