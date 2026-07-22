@@ -202,6 +202,12 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
         crate::error::validate_channel_count(helper.history.len())
             .map_err(serde::de::Error::custom)?;
 
+        // Match try_new: reject non-finite / negative thresholds on load.
+        for &(threshold, _) in &helper.change_thresholds {
+            crate::error::validate_non_negative_finite("change_threshold", threshold)
+                .map_err(serde::de::Error::custom)?;
+        }
+
         for (i, deque) in helper.history.iter().enumerate() {
             if deque.len() > helper.history_depth {
                 return Err(serde::de::Error::custom(format!(
@@ -314,6 +320,29 @@ mod tests {
         }"#;
         let res: Result<TemporalEncoder, _> = serde_json::from_str(json);
         assert!(res.is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_serde_rejects_invalid_thresholds() {
+        let negative = r#"{
+            "history": [[]],
+            "history_depth": 6,
+            "change_thresholds": [[-0.5, 1]]
+        }"#;
+        let res: Result<TemporalEncoder, _> = serde_json::from_str(negative);
+        assert!(
+            res.is_err(),
+            "negative change_threshold must fail deserialize"
+        );
+
+        let ok = r#"{
+            "history": [[]],
+            "history_depth": 6,
+            "change_thresholds": [[0.0, 1], [1.5, 2]]
+        }"#;
+        let res: Result<TemporalEncoder, _> = serde_json::from_str(ok);
+        assert!(res.is_ok());
     }
     #[test]
     fn test_temporal_encoder_try_new_validation() {
