@@ -166,10 +166,8 @@ impl PredictiveEncoder {
             }
             let channel_history = &mut self.history[i];
 
+            // Warm-up: history_depth is always >= 5, so no eviction can fire here.
             if channel_history.len() < 5 {
-                if channel_history.len() == self.history_depth {
-                    channel_history.pop_front();
-                }
                 channel_history.push_back(value);
 
                 if channel_history.len() == 5 {
