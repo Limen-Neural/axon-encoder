@@ -204,9 +204,16 @@ impl RateEncoder {
         // Any remaining whole spikes stay queued for subsequent steps.
     }
 
+    fn rate_scale_is_active(rate_scale: f32) -> bool {
+        rate_scale.is_finite() && rate_scale > 0.0
+    }
+
     fn encode_step_with_rate_scale(&mut self, input: &[f32], rate_scale: f32) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        if input.is_empty() || !rate_scale.is_finite() || rate_scale <= 0.0 {
+        if input.is_empty() {
+            return output;
+        }
+        if !Self::rate_scale_is_active(rate_scale) {
             return output;
         }
 
