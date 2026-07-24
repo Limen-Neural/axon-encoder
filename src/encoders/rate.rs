@@ -385,12 +385,8 @@ impl Encoder for RateEncoder {
     }
 
     fn reset(&mut self) {
-        for phase in self.phases.iter_mut() {
-            *phase = 0.0;
-        }
-        for pending in self.pending_spikes.iter_mut() {
-            *pending = 0;
-        }
+        self.phases.fill(0.0);
+        self.pending_spikes.fill(0);
     }
 }
 
