@@ -282,13 +282,15 @@ impl RateEncoder {
             let Ok(channel) = u16::try_from(i) else {
                 break;
             };
-            // Inactive / non-finite gain: do not accumulate new expected spikes,
-            // but still drain any existing pending backlog so silence does not
-            // freeze a pre-silence high-rate queue for a later burst.
-            if active {
-                let increment = self.streaming_increment(value, rate_scale);
-                self.apply_streaming_increment(i, increment);
+            if !active {
+                // Documented silence (`firing_rate_scale = 0`): no spikes and
+                // drop backlog so a later non-zero gain cannot burst old debt.
+                self.pending_spikes[i] = 0;
+                self.phases[i] = 0.0;
+                continue;
             }
+            let increment = self.streaming_increment(value, rate_scale);
+            self.apply_streaming_increment(i, increment);
             self.emit_capped_channel_spikes(channel, i, &mut output);
         }
 
@@ -823,25 +825,22 @@ mod tests {
     }
 
     #[test]
-    fn test_rate_encoder_inactive_gain_drains_pending() {
+    fn test_rate_encoder_inactive_gain_clears_pending() {
         let mut encoder = RateEncoder::try_new(0.0, 1.0e6, (0.0, 1.0), 1.0).unwrap();
         let first = encoder.encode_step(&[1.0]);
         assert_eq!(
             first.spikes.len(),
             RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
         );
-        let before = encoder.pending_spikes[0];
-        assert!(before > 0);
-        // Zero gain must not freeze the queue: still drain the cap amount.
+        assert!(encoder.pending_spikes[0] > 0);
+        // Zero gain = documented silence: no spikes, backlog discarded.
         let silenced = encoder.encode_step_with_rate_scale(&[0.0], 0.0);
-        assert_eq!(
-            silenced.spikes.len(),
-            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
-        );
-        assert_eq!(
-            encoder.pending_spikes[0],
-            before - RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP as u64
-        );
+        assert!(silenced.spikes.is_empty());
+        assert_eq!(encoder.pending_spikes[0], 0);
+        assert_eq!(encoder.phases[0], 0.0);
+        // After silence, a quiet identity step must not emit frozen backlog.
+        let quiet = encoder.encode_step(&[0.0]);
+        assert!(quiet.spikes.is_empty());
     }
 
     #[test]
