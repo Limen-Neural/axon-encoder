@@ -49,7 +49,7 @@ pub struct RateEncoder {
     max_rate: f32,
     range: (f32, f32),
     dt_seconds: f32,
-    accumulators: Vec<f32>,
+    accumulators: Vec<f64>,
 }
 
 impl RateEncoder {
@@ -168,9 +168,10 @@ impl RateEncoder {
     /// Cap on spikes emitted per channel per streaming step.
     ///
     /// Bounds allocation when `rate_hz * dt_seconds` is huge. Remaining whole
-    /// spikes stay in the accumulator and drain on later `encode_step` calls
-    /// (no permanent loss of expected spike count). Non-finite increments are
-    /// skipped so the emission loop always terminates.
+    /// spikes stay in the `f64` accumulator and drain on later `encode_step`
+    /// calls (no permanent loss of expected spike count; `f64` keeps integer
+    /// precision past `2^24` where `f32` would stall). Non-finite increments
+    /// are skipped so the emission loop always terminates.
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
 
     fn streaming_increment(&self, value: f32, rate_scale: f32) -> Option<f32> {
@@ -226,7 +227,7 @@ impl RateEncoder {
             let Some(increment) = self.streaming_increment(value, rate_scale) else {
                 continue;
             };
-            self.accumulators[i] += increment;
+            self.accumulators[i] += f64::from(increment);
             self.emit_capped_channel_spikes(channel, i, &mut output);
         }
 
@@ -277,7 +278,7 @@ impl<'de> serde::Deserialize<'de> for RateEncoder {
             #[serde(default = "RateEncoder::default_dt_seconds")]
             dt_seconds: f32,
             #[serde(default)]
-            accumulators: Vec<f32>,
+            accumulators: Vec<f64>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -290,13 +291,15 @@ impl<'de> serde::Deserialize<'de> for RateEncoder {
         .map_err(serde::de::Error::custom)?;
         // Streaming state keeps each accumulator in [0, 1). Reject out-of-range
         // values so a loaded encoder cannot emit spikes without input drive.
+        // Allow values >= 1.0: whole spikes may be queued after a per-step emission
+        // cap. Reject only non-finite or negative state.
         if helper
             .accumulators
             .iter()
-            .any(|value| !value.is_finite() || *value < 0.0 || *value >= 1.0)
+            .any(|value| !value.is_finite() || *value < 0.0)
         {
             return Err(serde::de::Error::custom(
-                "accumulators must be finite and in [0.0, 1.0)",
+                "accumulators must be finite and non-negative",
             ));
         }
         encoder.accumulators = helper.accumulators;
@@ -576,19 +579,51 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn test_rate_encoder_serde_rejects_out_of_range_accumulators() {
-        let oversized =
-            r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[5.0]}"#;
-        let res: Result<RateEncoder, _> = serde_json::from_str(oversized);
-        assert!(res.is_err());
+        // Backlog whole spikes (>= 1.0) must round-trip after a capped step.
+        let backlog = r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[5.0]}"#;
+        let res: Result<RateEncoder, _> = serde_json::from_str(backlog);
+        assert!(res.is_ok());
 
         let negative =
             r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[-0.1]}"#;
         let res: Result<RateEncoder, _> = serde_json::from_str(negative);
         assert!(res.is_err());
 
+        let non_finite =
+            r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"accumulators":[null]}"#;
+        // JSON null is a type error
+        let res: Result<RateEncoder, _> = serde_json::from_str(non_finite);
+        assert!(res.is_err());
+
         let ok = r#"{"base_rate":0.0,"max_rate":10.0,"range":[0.0,1.0],"dt_seconds":0.1,"accumulators":[0.5]}"#;
         let res: Result<RateEncoder, _> = serde_json::from_str(ok);
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_rate_encoder_large_backlog_drains_with_f64() {
+        // Above ~2^24, f32 cannot subtract 1.0; f64 accumulators must still drain.
+        let mut encoder = RateEncoder::try_new(0.0, 20_000_000.0, (0.0, 1.0), 1.0).unwrap();
+        let first = encoder.encode_step(&[1.0]);
+        assert_eq!(
+            first.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
+        // Quiet step must continue draining the same cap amount.
+        let second = encoder.encode_step(&[0.0]);
+        assert_eq!(
+            second.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
+        // After many drain steps, total emitted should exceed a single cap.
+        let mut total = first.spikes.len() + second.spikes.len();
+        for _ in 0..10 {
+            total += encoder.encode_step(&[0.0]).spikes.len();
+        }
+        assert!(
+            total > RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP * 2,
+            "backlog should keep draining across steps, total={total}"
+        );
     }
 
     #[test]
