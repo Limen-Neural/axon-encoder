@@ -56,7 +56,10 @@ pub struct RateEncoder {
     #[cfg_attr(feature = "serde", serde(rename = "accumulators"))]
     phases: Vec<f64>,
     /// Exact whole-spike backlog per channel (drainable past f64's `2^53` cliff).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pending_spikes: Vec<u64>,
 }
 
@@ -133,6 +136,30 @@ impl RateEncoder {
         ((value - self.range.0) / (self.range.1 - self.range.0)).clamp(0.0, 1.0)
     }
 
+    /// Effective firing rate in Hz after range mapping and gain scale.
+    ///
+    /// Positive overflow of the f32 product (large finite `max_rate` × high
+    /// `rate_scale`) saturates to `f32::MAX` instead of becoming `+inf`, so the
+    /// stochastic path does not treat the strongest inputs as silent via
+    /// non-finite rejection in [`probability_from_rate_hz`].
+    fn effective_rate_hz(&self, value: f32, rate_scale: f32) -> f32 {
+        let normalized = f64::from(self.normalize(value));
+        let base = f64::from(self.base_rate)
+            + normalized * (f64::from(self.max_rate) - f64::from(self.base_rate));
+        let rate = base * f64::from(rate_scale);
+        if rate.is_finite() {
+            if rate <= 0.0 {
+                0.0
+            } else {
+                rate.min(f64::from(f32::MAX)) as f32
+            }
+        } else if rate.is_sign_positive() {
+            f32::MAX
+        } else {
+            0.0
+        }
+    }
+
     fn ensure_accumulators(&mut self, num_channels: usize) {
         if self.phases.len() < num_channels {
             self.phases.resize(num_channels, 0.0);
@@ -177,8 +204,7 @@ impl RateEncoder {
             return;
         }
         let (whole, frac) = Self::split_whole_and_frac(sum);
-        self.pending_spikes[channel_idx] =
-            self.pending_spikes[channel_idx].saturating_add(whole);
+        self.pending_spikes[channel_idx] = self.pending_spikes[channel_idx].saturating_add(whole);
         self.phases[channel_idx] = frac;
     }
 
@@ -199,11 +225,8 @@ impl RateEncoder {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
                 break;
             };
-            let normalized = self.normalize(value);
-            let rate =
-                (self.base_rate + normalized * (self.max_rate - self.base_rate)) * rate_scale;
-            let probability =
-                crate::poisson::probability_from_rate_hz(rate.max(0.0), self.dt_seconds);
+            let rate = self.effective_rate_hz(value, rate_scale);
+            let probability = crate::poisson::probability_from_rate_hz(rate, self.dt_seconds);
 
             if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
                 output.spikes.push(SpikeEvent {
@@ -227,10 +250,7 @@ impl RateEncoder {
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
 
     fn streaming_increment(&self, value: f32, rate_scale: f32) -> Option<f32> {
-        let normalized = self.normalize(value);
-        let rate_hz = ((self.base_rate + normalized * (self.max_rate - self.base_rate))
-            * rate_scale)
-            .max(0.0);
+        let rate_hz = self.effective_rate_hz(value, rate_scale);
         let increment = rate_hz * self.dt_seconds;
         // Non-finite increments (e.g. rate * f32::MAX) must not poison state.
         increment.is_finite().then_some(increment)
@@ -358,10 +378,7 @@ impl<'de> serde::Deserialize<'de> for RateEncoder {
                 "accumulators must be finite and non-negative",
             ));
         }
-        let n = helper
-            .accumulators
-            .len()
-            .max(helper.pending_spikes.len());
+        let n = helper.accumulators.len().max(helper.pending_spikes.len());
         encoder.phases = vec![0.0; n];
         encoder.pending_spikes = vec![0; n];
         for i in 0..n {
@@ -781,6 +798,26 @@ mod tests {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
         assert_eq!(encoder.dt_seconds(), RateEncoder::DEFAULT_DT_SECONDS);
         assert_eq!(encoder.encode_step(&[1.0]).spikes.len(), 1);
+    }
+
+    #[test]
+    fn test_rate_encoder_overflowed_gain_rate_saturates_not_silent() {
+        // max_rate * MAX_GAIN_SCALE (1e4) overflows f32 multiplication to +inf
+        // when max_rate is ~1e35. Saturated effective rate must yield p ≈ 1, not
+        // the non-finite-rate silence path in probability_from_rate_hz.
+        let mut encoder = RateEncoder::try_new(0.0, 1.0e35, (0.0, 1.0), 0.01).unwrap();
+        let gains = EncodingGains {
+            firing_rate_scale: 1.0e4,
+            ..Default::default()
+        };
+        let mut spikes = 0usize;
+        for _ in 0..32 {
+            spikes += encoder.encode_with_gains(&[1.0], gains).spikes.len();
+        }
+        assert!(
+            spikes >= 28,
+            "overflowed modulated rate should saturate near p=1, got {spikes}/32 spikes"
+        );
     }
 
     #[test]
