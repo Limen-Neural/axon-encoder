@@ -49,7 +49,15 @@ pub struct RateEncoder {
     max_rate: f32,
     range: (f32, f32),
     dt_seconds: f32,
-    accumulators: Vec<f64>,
+    /// Fractional phase per channel, kept in `[0, 1)`.
+    ///
+    /// Serialized as `accumulators` for backward compatibility with earlier
+    /// checkpoints that stored a single combined float per channel.
+    #[cfg_attr(feature = "serde", serde(rename = "accumulators"))]
+    phases: Vec<f64>,
+    /// Exact whole-spike backlog per channel (drainable past f64's `2^53` cliff).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    pending_spikes: Vec<u64>,
 }
 
 impl RateEncoder {
@@ -97,7 +105,8 @@ impl RateEncoder {
             max_rate,
             range,
             dt_seconds,
-            accumulators: Vec::new(),
+            phases: Vec::new(),
+            pending_spikes: Vec::new(),
         })
     }
 
@@ -125,9 +134,52 @@ impl RateEncoder {
     }
 
     fn ensure_accumulators(&mut self, num_channels: usize) {
-        if self.accumulators.len() < num_channels {
-            self.accumulators.resize(num_channels, 0.0);
+        if self.phases.len() < num_channels {
+            self.phases.resize(num_channels, 0.0);
+            self.pending_spikes.resize(num_channels, 0);
         }
+    }
+
+    /// Split a non-negative finite value into exact whole spikes + fractional phase.
+    ///
+    /// Values at or above `u64::MAX` saturate the whole-spike count (pathological
+    /// rates); the fractional part is then zero.
+    fn split_whole_and_frac(value: f64) -> (u64, f64) {
+        if !value.is_finite() || value <= 0.0 {
+            return (0, 0.0);
+        }
+        if value < 1.0 {
+            return (0, value);
+        }
+        // u64::MAX as f64 rounds to 2^64; every finite f32 increment is well
+        // below that once cast through f64, but keep the guard for serde loads.
+        if value >= u64::MAX as f64 {
+            return (u64::MAX, 0.0);
+        }
+        let whole = value.trunc() as u64;
+        let frac = value - whole as f64;
+        // Keep phase in [0, 1). At the edge of exact-integer range the subtraction
+        // can land slightly outside due to rounding; fold that into whole spikes.
+        if frac >= 1.0 {
+            (whole.saturating_add(1), 0.0)
+        } else if frac < 0.0 {
+            (whole, 0.0)
+        } else {
+            (whole, frac)
+        }
+    }
+
+    fn apply_streaming_increment(&mut self, channel_idx: usize, increment: f32) {
+        let sum = self.phases[channel_idx] + f64::from(increment);
+        if !sum.is_finite() {
+            // Pathological overflow of phase + increment; drop this step's add
+            // rather than poison state (phase stays valid in [0, 1)).
+            return;
+        }
+        let (whole, frac) = Self::split_whole_and_frac(sum);
+        self.pending_spikes[channel_idx] =
+            self.pending_spikes[channel_idx].saturating_add(whole);
+        self.phases[channel_idx] = frac;
     }
 
     fn encode_with_rate_scale(&mut self, input: &[f32], rate_scale: f32) -> EncodedOutput {
@@ -168,10 +220,10 @@ impl RateEncoder {
     /// Cap on spikes emitted per channel per streaming step.
     ///
     /// Bounds allocation when `rate_hz * dt_seconds` is huge. Remaining whole
-    /// spikes stay in the `f64` accumulator and drain on later `encode_step`
-    /// calls (no permanent loss of expected spike count; `f64` keeps integer
-    /// precision past `2^24` where `f32` would stall). Non-finite increments
-    /// are skipped so the emission loop always terminates.
+    /// spikes stay in the exact `u64` pending queue and drain on later
+    /// `encode_step` calls (no permanent loss of expected spike count, and no
+    /// stall past f64's `2^53` integer cliff where `acc -= 1.0` would no-op).
+    /// Non-finite increments are skipped so the emission loop always terminates.
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
 
     fn streaming_increment(&self, value: f32, rate_scale: f32) -> Option<f32> {
@@ -190,18 +242,19 @@ impl RateEncoder {
         channel_idx: usize,
         output: &mut EncodedOutput,
     ) {
-        let mut emitted = 0usize;
-        while self.accumulators[channel_idx] >= 1.0
-            && emitted < Self::MAX_SPIKES_PER_CHANNEL_PER_STEP
-        {
+        let pending = self.pending_spikes[channel_idx];
+        if pending == 0 {
+            return;
+        }
+        let emit = pending.min(Self::MAX_SPIKES_PER_CHANNEL_PER_STEP as u64) as usize;
+        for _ in 0..emit {
             output.spikes.push(SpikeEvent {
                 channel,
                 timestamp: 0,
                 polarity: true,
             });
-            self.accumulators[channel_idx] -= 1.0;
-            emitted += 1;
         }
+        self.pending_spikes[channel_idx] = pending - emit as u64;
         // Any remaining whole spikes stay queued for subsequent steps.
     }
 
@@ -227,7 +280,7 @@ impl RateEncoder {
             let Some(increment) = self.streaming_increment(value, rate_scale) else {
                 continue;
             };
-            self.accumulators[i] += f64::from(increment);
+            self.apply_streaming_increment(i, increment);
             self.emit_capped_channel_spikes(channel, i, &mut output);
         }
 
@@ -277,8 +330,13 @@ impl<'de> serde::Deserialize<'de> for RateEncoder {
             range: (f32, f32),
             #[serde(default = "RateEncoder::default_dt_seconds")]
             dt_seconds: f32,
+            /// Legacy combined float (phase + whole spikes) and/or fractional phase.
             #[serde(default)]
             accumulators: Vec<f64>,
+            /// Exact whole-spike backlog (new format). Folded with any whole part
+            /// still present in `accumulators` for forward/backward compatibility.
+            #[serde(default)]
+            pending_spikes: Vec<u64>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -289,10 +347,8 @@ impl<'de> serde::Deserialize<'de> for RateEncoder {
             helper.dt_seconds,
         )
         .map_err(serde::de::Error::custom)?;
-        // Streaming state keeps each accumulator in [0, 1). Reject out-of-range
-        // values so a loaded encoder cannot emit spikes without input drive.
-        // Allow values >= 1.0: whole spikes may be queued after a per-step emission
-        // cap. Reject only non-finite or negative state.
+        // Allow values >= 1.0 in `accumulators` (legacy combined representation).
+        // Reject only non-finite or negative state.
         if helper
             .accumulators
             .iter()
@@ -302,7 +358,19 @@ impl<'de> serde::Deserialize<'de> for RateEncoder {
                 "accumulators must be finite and non-negative",
             ));
         }
-        encoder.accumulators = helper.accumulators;
+        let n = helper
+            .accumulators
+            .len()
+            .max(helper.pending_spikes.len());
+        encoder.phases = vec![0.0; n];
+        encoder.pending_spikes = vec![0; n];
+        for i in 0..n {
+            let combined = helper.accumulators.get(i).copied().unwrap_or(0.0);
+            let (whole_from_acc, phase) = Self::split_whole_and_frac(combined);
+            let pending = helper.pending_spikes.get(i).copied().unwrap_or(0);
+            encoder.phases[i] = phase;
+            encoder.pending_spikes[i] = pending.saturating_add(whole_from_acc);
+        }
         Ok(encoder)
     }
 }
@@ -317,8 +385,11 @@ impl Encoder for RateEncoder {
     }
 
     fn reset(&mut self) {
-        for acc in self.accumulators.iter_mut() {
-            *acc = 0.0;
+        for phase in self.phases.iter_mut() {
+            *phase = 0.0;
+        }
+        for pending in self.pending_spikes.iter_mut() {
+            *pending = 0;
         }
     }
 }
@@ -601,8 +672,8 @@ mod tests {
     }
 
     #[test]
-    fn test_rate_encoder_large_backlog_drains_with_f64() {
-        // Above ~2^24, f32 cannot subtract 1.0; f64 accumulators must still drain.
+    fn test_rate_encoder_large_backlog_drains_exactly() {
+        // Above ~2^24, f32 cannot subtract 1.0; u64 pending must still drain.
         let mut encoder = RateEncoder::try_new(0.0, 20_000_000.0, (0.0, 1.0), 1.0).unwrap();
         let first = encoder.encode_step(&[1.0]);
         assert_eq!(
@@ -623,6 +694,66 @@ mod tests {
         assert!(
             total > RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP * 2,
             "backlog should keep draining across steps, total={total}"
+        );
+    }
+
+    #[test]
+    fn test_rate_encoder_backlog_drains_above_f64_precision() {
+        // Above 2^53, f64 `acc -= 1.0` is a no-op. Exact u64 pending must still
+        // decrease so quiet steps eventually exhaust the queue instead of
+        // emitting the 1024-spike cap forever.
+        //
+        // Seed a modest backlog via serde (above one cap, well below 2^53 so the
+        // test finishes quickly) and a huge runtime increment past 2^53.
+        #[cfg(feature = "serde")]
+        {
+            let seeded: RateEncoder = serde_json::from_str(
+                r#"{"base_rate":0.0,"max_rate":1.0,"range":[0.0,1.0],"dt_seconds":1.0,"accumulators":[2500.0]}"#,
+            )
+            .unwrap();
+            let mut encoder = seeded;
+            let first = encoder.encode_step(&[0.0]);
+            assert_eq!(
+                first.spikes.len(),
+                RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+            );
+            let second = encoder.encode_step(&[0.0]);
+            assert_eq!(
+                second.spikes.len(),
+                RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+            );
+            // 2500 - 2*1024 = 452 remaining
+            let third = encoder.encode_step(&[0.0]);
+            assert_eq!(third.spikes.len(), 452);
+            let fourth = encoder.encode_step(&[0.0]);
+            assert!(
+                fourth.spikes.is_empty(),
+                "backlog must fully drain rather than emit forever"
+            );
+        }
+
+        // Runtime path: 1e16 Hz × 1 s is past f64's exact integer range.
+        let mut encoder = RateEncoder::try_new(0.0, 1.0e16, (0.0, 1.0), 1.0).unwrap();
+        let first = encoder.encode_step(&[1.0]);
+        assert_eq!(
+            first.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
+        // Pending must decrease exactly by the cap each quiet step (not stall).
+        let before = encoder.pending_spikes[0];
+        assert!(
+            before > RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP as u64,
+            "expected a large exact backlog, got {before}"
+        );
+        let quiet = encoder.encode_step(&[0.0]);
+        assert_eq!(
+            quiet.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
+        assert_eq!(
+            encoder.pending_spikes[0],
+            before - RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP as u64,
+            "u64 pending must decrement exactly past the f64 precision cliff"
         );
     }
 
