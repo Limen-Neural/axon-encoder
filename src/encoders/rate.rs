@@ -142,7 +142,13 @@ impl RateEncoder {
     /// `rate_scale`) saturates to `f32::MAX` instead of becoming `+inf`, so the
     /// stochastic path does not treat the strongest inputs as silent via
     /// non-finite rejection in [`probability_from_rate_hz`].
+    ///
+    /// Non-finite sensor values (`NaN` / ±∞) return `0.0` (silence) rather than
+    /// mapping to max rate via the positive-overflow branch.
     fn effective_rate_hz(&self, value: f32, rate_scale: f32) -> f32 {
+        if !value.is_finite() {
+            return 0.0;
+        }
         let normalized = f64::from(self.normalize(value));
         let base = f64::from(self.base_rate)
             + normalized * (f64::from(self.max_rate) - f64::from(self.base_rate));
@@ -153,7 +159,8 @@ impl RateEncoder {
             } else {
                 rate.min(f64::from(f32::MAX)) as f32
             }
-        } else if rate.is_sign_positive() {
+        } else if rate.is_infinite() && rate.is_sign_positive() {
+            // True +∞ only — not NaN (NaN has a positive sign bit in IEEE).
             f32::MAX
         } else {
             0.0
@@ -196,11 +203,25 @@ impl RateEncoder {
         }
     }
 
-    fn apply_streaming_increment(&mut self, channel_idx: usize, increment: f32) {
-        let sum = self.phases[channel_idx] + f64::from(increment);
+    fn apply_streaming_increment(&mut self, channel_idx: usize, increment: f64) {
+        if !increment.is_finite() {
+            if increment.is_infinite() && increment.is_sign_positive() {
+                // Saturate backlog rather than skip (rate×dt overflow path).
+                self.pending_spikes[channel_idx] = u64::MAX;
+                self.phases[channel_idx] = 0.0;
+            }
+            // NaN / −∞: leave state unchanged.
+            return;
+        }
+        if increment <= 0.0 {
+            return;
+        }
+        let sum = self.phases[channel_idx] + increment;
         if !sum.is_finite() {
-            // Pathological overflow of phase + increment; drop this step's add
-            // rather than poison state (phase stays valid in [0, 1)).
+            if sum.is_infinite() && sum.is_sign_positive() {
+                self.pending_spikes[channel_idx] = u64::MAX;
+                self.phases[channel_idx] = 0.0;
+            }
             return;
         }
         let (whole, frac) = Self::split_whole_and_frac(sum);
@@ -249,11 +270,24 @@ impl RateEncoder {
     /// Non-finite increments are skipped so the emission loop always terminates.
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
 
-    fn streaming_increment(&self, value: f32, rate_scale: f32) -> Option<f32> {
+    /// Expected spikes for one streaming step: `rate_hz * dt_seconds` in f64.
+    ///
+    /// Wider precision avoids silent drops when the f32 product would overflow
+    /// to `+inf` (e.g. large finite rate × large finite dt). Positive overflow
+    /// of the f64 product still saturates rather than skipping the step.
+    fn streaming_increment(&self, value: f32, rate_scale: f32) -> f64 {
         let rate_hz = self.effective_rate_hz(value, rate_scale);
-        let increment = rate_hz * self.dt_seconds;
-        // Non-finite increments (e.g. rate * f32::MAX) must not poison state.
-        increment.is_finite().then_some(increment)
+        if rate_hz <= 0.0 {
+            return 0.0;
+        }
+        let product = f64::from(rate_hz) * f64::from(self.dt_seconds);
+        if product.is_finite() {
+            product.max(0.0)
+        } else if product.is_infinite() && product.is_sign_positive() {
+            f64::INFINITY
+        } else {
+            0.0
+        }
     }
 
     fn emit_capped_channel_spikes(
@@ -287,20 +321,21 @@ impl RateEncoder {
         if input.is_empty() {
             return output;
         }
-        if !Self::rate_scale_is_active(rate_scale) {
-            return output;
-        }
 
         self.ensure_accumulators(input.len());
+        let active = Self::rate_scale_is_active(rate_scale);
 
         for (i, &value) in input.iter().enumerate() {
             let Ok(channel) = u16::try_from(i) else {
                 break;
             };
-            let Some(increment) = self.streaming_increment(value, rate_scale) else {
-                continue;
-            };
-            self.apply_streaming_increment(i, increment);
+            // Inactive / non-finite gain: do not accumulate new expected spikes,
+            // but still drain any existing pending backlog so silence does not
+            // freeze a pre-silence high-rate queue for a later burst.
+            if active {
+                let increment = self.streaming_increment(value, rate_scale);
+                self.apply_streaming_increment(i, increment);
+            }
             self.emit_capped_channel_spikes(channel, i, &mut output);
         }
 
@@ -772,11 +807,15 @@ mod tests {
 
     #[test]
     fn test_rate_encoder_streaming_bounds_extreme_dt() {
-        // f32::MAX is a valid finite dt, but rate * dt overflows to infinity.
-        // The step must remain silent and terminate (no OOM / hang).
+        // f32::MAX is a valid finite dt; f32 rate*dt would be +inf and was
+        // previously dropped. f64 product stays finite and enqueues under the
+        // per-step cap (must terminate, no OOM / hang).
         let mut encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), f32::MAX).unwrap();
         let output = encoder.encode_step(&[1.0]);
-        assert!(output.spikes.is_empty());
+        assert_eq!(
+            output.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
 
         // Huge but finite expected count is capped per step; remainder is queued.
         let mut encoder = RateEncoder::try_new(0.0, 1.0e6, (0.0, 1.0), 1.0).unwrap();
@@ -790,6 +829,65 @@ mod tests {
         assert_eq!(
             next.spikes.len(),
             RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
+    }
+
+    #[test]
+    fn test_rate_encoder_nan_input_is_silent() {
+        let mut encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), 0.1).unwrap();
+        let batch = encoder.encode(&[f32::NAN]);
+        assert!(
+            batch.spikes.is_empty(),
+            "NaN sensor values must not map to max-rate / p≈1"
+        );
+        let step = encoder.encode_step(&[f32::NAN]);
+        assert!(step.spikes.is_empty());
+        assert_eq!(
+            encoder.pending_spikes.first().copied().unwrap_or(0),
+            0,
+            "NaN must not seed a huge pending backlog"
+        );
+        // Finite input after NaN still works (state not poisoned).
+        let ok = encoder.encode_step(&[1.0]);
+        assert_eq!(ok.spikes.len(), 1);
+    }
+
+    #[test]
+    fn test_rate_encoder_rate_dt_product_saturates_not_silent() {
+        // max_rate ≈ 1e38, dt=10: f32 product overflows to +inf; f64 product
+        // remains finite and must enqueue under the cap.
+        let mut encoder = RateEncoder::try_new(0.0, 1.0e38, (0.0, 1.0), 10.0).unwrap();
+        let first = encoder.encode_step(&[1.0]);
+        assert_eq!(
+            first.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP,
+            "rate×dt f32 overflow must not silence streaming"
+        );
+        assert!(
+            encoder.pending_spikes[0] > 0,
+            "expected a queued backlog after the per-step cap"
+        );
+    }
+
+    #[test]
+    fn test_rate_encoder_inactive_gain_drains_pending() {
+        let mut encoder = RateEncoder::try_new(0.0, 1.0e6, (0.0, 1.0), 1.0).unwrap();
+        let first = encoder.encode_step(&[1.0]);
+        assert_eq!(
+            first.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
+        let before = encoder.pending_spikes[0];
+        assert!(before > 0);
+        // Zero gain must not freeze the queue: still drain the cap amount.
+        let silenced = encoder.encode_step_with_rate_scale(&[0.0], 0.0);
+        assert_eq!(
+            silenced.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
+        assert_eq!(
+            encoder.pending_spikes[0],
+            before - RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP as u64
         );
     }
 
