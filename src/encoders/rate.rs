@@ -66,7 +66,8 @@ impl RateEncoder {
     ///
     /// # Panics
     ///
-    /// Panics if rates, range, or the default time step are invalid.
+    /// Panics if rates or range are invalid (`dt_seconds` is always the valid
+    /// default `0.1`, so callers cannot panic via the time step).
     pub fn new(base_rate: f32, max_rate: f32, range: (f32, f32)) -> Self {
         Self::try_new(base_rate, max_rate, range, Self::DEFAULT_DT_SECONDS)
             .expect("invalid RateEncoder configuration")

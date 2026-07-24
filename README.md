@@ -84,7 +84,7 @@ fn main() {
     let config = EncoderConfig::default(); // Defaults to 256 channels.
 
     // 2. Initialize an encoder. Prefer try_new for typed validation errors;
-    //    RateEncoder::new(...) panics on invalid rates/ranges/dt.
+    //    RateEncoder::new(...) panics on invalid rates/ranges (dt defaults to 0.1).
     //    Maps (0.0, 1.0) inputs to 5–100 Hz at a 10 ms sampling interval.
     let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010)
         .expect("valid RateEncoder configuration");

@@ -11,7 +11,7 @@
 /// spike[i] = 1 if random() < probability else 0
 ///
 /// // Physical rate input:
-/// probability = 1 - exp(-rate_hz * dt_seconds)
+/// probability = 1 - exp(-rate_hz * dt_seconds)  // via -exp_m1(-x) in f32
 /// ```
 ///
 /// # When to Use
@@ -35,15 +35,19 @@ pub struct PoissonEncoder {
 /// Converts a firing rate in hertz and a time-bin width in seconds into the
 /// per-bin spike probability for a homogeneous Poisson process.
 ///
-/// The returned value is `1 - exp(-rate_hz * dt_seconds)`. Non-finite or
-/// non-positive rates produce `0.0`; invalid `dt_seconds` must be rejected by
-/// callers before constructing encoders and is treated as silent here to avoid
-/// producing NaN probabilities in stochastic paths.
+/// Mathematically this is `1 - exp(-rate_hz * dt_seconds)`. The implementation
+/// uses `exp_m1` so tiny products (high sample rate, low Hz) stay nonzero in
+/// `f32` instead of rounding to `0.0`. Non-finite or non-positive rates produce
+/// `0.0`; invalid `dt_seconds` is treated as silent here so stochastic paths
+/// never emit NaN probabilities (callers should still validate `dt_seconds`
+/// when constructing encoders).
 pub fn probability_from_rate_hz(rate_hz: f32, dt_seconds: f32) -> f32 {
     if !rate_hz.is_finite() || rate_hz <= 0.0 || !dt_seconds.is_finite() || dt_seconds <= 0.0 {
         0.0
     } else {
-        (1.0 - (-rate_hz * dt_seconds).exp()).clamp(0.0, 1.0)
+        // 1 - exp(-x) == -exp_m1(-x); exp_m1 stays accurate for tiny x in f32.
+        let x = rate_hz * dt_seconds;
+        (-(-x).exp_m1()).clamp(0.0, 1.0)
     }
 }
 
@@ -192,8 +196,22 @@ mod tests {
     #[test]
     fn rate_probability_uses_explicit_dt_seconds() {
         let probability = probability_from_rate_hz(10.0, 0.01);
-        let expected = 1.0 - (-0.1_f32).exp();
+        // Match the exp_m1 implementation (equivalent to 1 - exp(-x) for this x).
+        let expected = -(-0.1_f32).exp_m1();
         assert!((probability - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tiny_rate_dt_product_stays_positive() {
+        // 1 Hz at 10 ns: naive 1 - exp(-x) rounds to 0 in f32; exp_m1 keeps it > 0.
+        let probability = probability_from_rate_hz(1.0, 1e-8);
+        assert!(
+            probability > 0.0,
+            "tiny rate*dt must remain a positive Poisson probability, got {probability}"
+        );
+        assert!(probability < 1e-6);
+        // Sanity: also smaller than the large-x path.
+        assert!(probability < probability_from_rate_hz(1.0, 0.1));
     }
 
     #[test]
