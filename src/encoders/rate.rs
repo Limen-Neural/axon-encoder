@@ -138,13 +138,9 @@ impl RateEncoder {
 
     /// Effective firing rate in Hz after range mapping and gain scale.
     ///
-    /// Positive overflow of the f32 product (large finite `max_rate` × high
-    /// `rate_scale`) saturates to `f32::MAX` instead of becoming `+inf`, so the
-    /// stochastic path does not treat the strongest inputs as silent via
-    /// non-finite rejection in [`probability_from_rate_hz`].
-    ///
-    /// Non-finite sensor values (`NaN` / ±∞) return `0.0` (silence) rather than
-    /// mapping to max rate via the positive-overflow branch.
+    /// Always returns a finite non-negative `f32`: non-finite inputs silence,
+    /// and positive overflow saturates to `f32::MAX` (so batch encoding does not
+    /// treat strong modulated rates as silent via non-finite rejection).
     fn effective_rate_hz(&self, value: f32, rate_scale: f32) -> f32 {
         if !value.is_finite() {
             return 0.0;
@@ -153,18 +149,11 @@ impl RateEncoder {
         let base = f64::from(self.base_rate)
             + normalized * (f64::from(self.max_rate) - f64::from(self.base_rate));
         let rate = base * f64::from(rate_scale);
-        if rate.is_finite() {
-            if rate <= 0.0 {
-                0.0
-            } else {
-                rate.min(f64::from(f32::MAX)) as f32
-            }
-        } else if rate.is_infinite() && rate.is_sign_positive() {
-            // True +∞ only — not NaN (NaN has a positive sign bit in IEEE).
-            f32::MAX
-        } else {
-            0.0
+        // NaN comparisons are false → 0.0; +∞ > 0 → MAX; finite values clamp.
+        if !rate.is_finite() {
+            return if rate > 0.0 { f32::MAX } else { 0.0 };
         }
+        rate.clamp(0.0, f64::from(f32::MAX)) as f32
     }
 
     fn ensure_accumulators(&mut self, num_channels: usize) {
@@ -174,56 +163,27 @@ impl RateEncoder {
         }
     }
 
-    /// Split a non-negative finite value into exact whole spikes + fractional phase.
-    ///
-    /// Values at or above `u64::MAX` saturate the whole-spike count (pathological
-    /// rates); the fractional part is then zero.
+    /// Split a finite non-negative value into whole spikes + fractional phase.
     fn split_whole_and_frac(value: f64) -> (u64, f64) {
-        if !value.is_finite() || value <= 0.0 {
-            return (0, 0.0);
-        }
+        debug_assert!(value.is_finite() && value >= 0.0);
         if value < 1.0 {
             return (0, value);
         }
-        // u64::MAX as f64 rounds to 2^64; every finite f32 increment is well
-        // below that once cast through f64, but keep the guard for serde loads.
         if value >= u64::MAX as f64 {
             return (u64::MAX, 0.0);
         }
         let whole = value.trunc() as u64;
-        let frac = value - whole as f64;
-        // Keep phase in [0, 1). At the edge of exact-integer range the subtraction
-        // can land slightly outside due to rounding; fold that into whole spikes.
-        if frac >= 1.0 {
-            (whole.saturating_add(1), 0.0)
-        } else if frac < 0.0 {
-            (whole, 0.0)
-        } else {
-            (whole, frac)
-        }
+        let frac = (value - whole as f64).clamp(0.0, 1.0 - f64::EPSILON);
+        (whole, frac)
     }
 
+    /// Apply a finite non-negative expected-spike increment to channel state.
     fn apply_streaming_increment(&mut self, channel_idx: usize, increment: f64) {
-        if !increment.is_finite() {
-            if increment.is_infinite() && increment.is_sign_positive() {
-                // Saturate backlog rather than skip (rate×dt overflow path).
-                self.pending_spikes[channel_idx] = u64::MAX;
-                self.phases[channel_idx] = 0.0;
-            }
-            // NaN / −∞: leave state unchanged.
-            return;
-        }
         if increment <= 0.0 {
             return;
         }
-        let sum = self.phases[channel_idx] + increment;
-        if !sum.is_finite() {
-            if sum.is_infinite() && sum.is_sign_positive() {
-                self.pending_spikes[channel_idx] = u64::MAX;
-                self.phases[channel_idx] = 0.0;
-            }
-            return;
-        }
+        // Cap so phase + increment stays finite and within the u64 backlog range.
+        let sum = (self.phases[channel_idx] + increment).min(u64::MAX as f64);
         let (whole, frac) = Self::split_whole_and_frac(sum);
         self.pending_spikes[channel_idx] = self.pending_spikes[channel_idx].saturating_add(whole);
         self.phases[channel_idx] = frac;
@@ -270,24 +230,17 @@ impl RateEncoder {
     /// Non-finite increments are skipped so the emission loop always terminates.
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
 
-    /// Expected spikes for one streaming step: `rate_hz * dt_seconds` in f64.
+    /// Expected spikes for one streaming step (`rate_hz * dt_seconds` in f64).
     ///
-    /// Wider precision avoids silent drops when the f32 product would overflow
-    /// to `+inf` (e.g. large finite rate × large finite dt). Positive overflow
-    /// of the f64 product still saturates rather than skipping the step.
+    /// Always finite and non-negative; saturates at `u64::MAX`. Using f64 avoids
+    /// silent drops when the f32 product would overflow to `+inf`.
     fn streaming_increment(&self, value: f32, rate_scale: f32) -> f64 {
         let rate_hz = self.effective_rate_hz(value, rate_scale);
         if rate_hz <= 0.0 {
             return 0.0;
         }
-        let product = f64::from(rate_hz) * f64::from(self.dt_seconds);
-        if product.is_finite() {
-            product.max(0.0)
-        } else if product.is_infinite() && product.is_sign_positive() {
-            f64::INFINITY
-        } else {
-            0.0
-        }
+        // rate_hz and dt_seconds are finite → product is finite in f64.
+        (f64::from(rate_hz) * f64::from(self.dt_seconds)).clamp(0.0, u64::MAX as f64)
     }
 
     fn emit_capped_channel_spikes(
