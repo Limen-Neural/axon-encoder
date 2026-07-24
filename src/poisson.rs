@@ -1,13 +1,17 @@
 /// Poisson spike train encoder.
 ///
-/// Generates spike trains with Poisson-distributed timing based on input probability.
-/// Each step generates an independent binary spike (0 or 1) based on the input probability.
+/// Generates spike trains with Poisson-distributed timing based on either a per-step
+/// probability or an explicit firing rate and time step.
 ///
 /// # Mathematical Model
 ///
 /// ```text
+/// // Dimensionless probability input:
 /// probability = clamp(input, 0.0, 1.0)
 /// spike[i] = 1 if random() < probability else 0
+///
+/// // Physical rate input:
+/// probability = 1 - exp(-rate_hz * dt_seconds)  // via -exp_m1(-x) in f32
 /// ```
 ///
 /// # When to Use
@@ -28,9 +32,42 @@ pub struct PoissonEncoder {
     pub num_steps: usize,
 }
 
+/// Converts a firing rate in hertz and a time-bin width in seconds into the
+/// per-bin spike probability for a homogeneous Poisson process.
+///
+/// Mathematically this is `1 - exp(-rate_hz * dt_seconds)`. The implementation
+/// uses `exp_m1` so tiny products (high sample rate, low Hz) stay nonzero in
+/// `f32` instead of rounding to `0.0`. Non-finite or non-positive rates produce
+/// `0.0`; invalid `dt_seconds` is treated as silent here so stochastic paths
+/// never emit NaN probabilities (callers should still validate `dt_seconds`
+/// when constructing encoders).
+fn rate_dt_produces_spikes(rate_hz: f32, dt_seconds: f32) -> bool {
+    rate_hz.is_finite() && rate_hz > 0.0 && dt_seconds.is_finite() && dt_seconds > 0.0
+}
+
+pub fn probability_from_rate_hz(rate_hz: f32, dt_seconds: f32) -> f32 {
+    if !rate_dt_produces_spikes(rate_hz, dt_seconds) {
+        return 0.0;
+    }
+    // 1 - exp(-x) == -exp_m1(-x); exp_m1 stays accurate for tiny x in f32.
+    let x = rate_hz * dt_seconds;
+    (-(-x).exp_m1()).clamp(0.0, 1.0)
+}
+
 impl PoissonEncoder {
     pub fn new(steps: usize) -> Self {
         Self { num_steps: steps }
+    }
+
+    /// Encodes a firing rate in hertz into a spike train using an explicit time
+    /// step in seconds for each bin.
+    pub fn encode_rate_hz(&self, rate_hz: f32, dt_seconds: f32) -> Vec<u8> {
+        self.encode(probability_from_rate_hz(rate_hz, dt_seconds))
+    }
+
+    /// Encodes a single rate-based step using an explicit time step in seconds.
+    pub fn encode_rate_hz_step(&self, rate_hz: f32, dt_seconds: f32) -> u8 {
+        self.encode_step(probability_from_rate_hz(rate_hz, dt_seconds))
     }
 
     /// Encodes a single probability value into a spike train.
@@ -157,5 +194,67 @@ mod tests {
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| enc.encode(f32::INFINITY)));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rate_probability_uses_explicit_dt_seconds() {
+        let probability = probability_from_rate_hz(10.0, 0.01);
+        // Match the exp_m1 implementation (equivalent to 1 - exp(-x) for this x).
+        let expected = -(-0.1_f32).exp_m1();
+        assert!((probability - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tiny_rate_dt_product_stays_positive() {
+        // 1 Hz at 10 ns: naive 1 - exp(-x) rounds to 0 in f32; exp_m1 keeps it > 0.
+        let probability = probability_from_rate_hz(1.0, 1e-8);
+        assert!(
+            probability > 0.0,
+            "tiny rate*dt must remain a positive Poisson probability, got {probability}"
+        );
+        assert!(probability < 1e-6);
+        // Sanity: also smaller than the large-x path.
+        assert!(probability < probability_from_rate_hz(1.0, 0.1));
+    }
+
+    #[test]
+    fn rate_probability_invalid_inputs_are_silent() {
+        for (rate_hz, dt_seconds) in [
+            (0.0, 0.01),
+            (-1.0, 0.01),
+            (f32::NAN, 0.01),
+            (10.0, 0.0),
+            (10.0, f32::NAN),
+            (10.0, -0.01),
+            (f32::INFINITY, 0.01),
+            (10.0, f32::INFINITY),
+        ] {
+            assert_eq!(probability_from_rate_hz(rate_hz, dt_seconds), 0.0);
+        }
+    }
+
+    #[test]
+    fn encode_rate_hz_uses_probability_from_rate() {
+        let enc = PoissonEncoder::new(200);
+        // High rate * dt saturates probability to ~1.0 so every bin spikes.
+        let spikes = enc.encode_rate_hz(1_000.0, 1.0);
+        assert_eq!(spikes.len(), 200);
+        assert!(spikes.iter().all(|&s| s == 1));
+
+        // Zero / invalid rates produce a silent train.
+        let silent = enc.encode_rate_hz(0.0, 0.01);
+        assert!(silent.iter().all(|&s| s == 0));
+    }
+
+    #[test]
+    fn encode_rate_hz_step_returns_binary() {
+        let enc = PoissonEncoder::new(1);
+        assert_eq!(enc.encode_rate_hz_step(0.0, 0.01), 0);
+        // Saturated rate almost always spikes; sample enough to be robust.
+        let mut ones = 0;
+        for _ in 0..50 {
+            ones += enc.encode_rate_hz_step(1_000.0, 1.0) as usize;
+        }
+        assert_eq!(ones, 50);
     }
 }

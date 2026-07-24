@@ -30,7 +30,8 @@ fn bench_rate_encoder(c: &mut Criterion) {
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut encoder =
-                RateEncoder::try_new(5.0, 100.0, (0.0, 1.0)).expect("valid RateEncoder");
+                RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), RateEncoder::DEFAULT_DT_SECONDS)
+                    .expect("valid RateEncoder");
             let input = normalized_input(size);
             b.iter(|| black_box(encoder.encode(black_box(&input))));
         });
@@ -43,7 +44,8 @@ fn bench_rate_encoder_step(c: &mut Criterion) {
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut encoder =
-                RateEncoder::try_new(5.0, 100.0, (0.0, 1.0)).expect("valid RateEncoder");
+                RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), RateEncoder::DEFAULT_DT_SECONDS)
+                    .expect("valid RateEncoder");
             let input = normalized_input(size);
             encoder.encode_step(&input);
 
