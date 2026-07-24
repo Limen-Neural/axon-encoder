@@ -41,14 +41,17 @@ pub struct PoissonEncoder {
 /// `0.0`; invalid `dt_seconds` is treated as silent here so stochastic paths
 /// never emit NaN probabilities (callers should still validate `dt_seconds`
 /// when constructing encoders).
+fn rate_dt_produces_spikes(rate_hz: f32, dt_seconds: f32) -> bool {
+    rate_hz.is_finite() && rate_hz > 0.0 && dt_seconds.is_finite() && dt_seconds > 0.0
+}
+
 pub fn probability_from_rate_hz(rate_hz: f32, dt_seconds: f32) -> f32 {
-    if !rate_hz.is_finite() || rate_hz <= 0.0 || !dt_seconds.is_finite() || dt_seconds <= 0.0 {
-        0.0
-    } else {
-        // 1 - exp(-x) == -exp_m1(-x); exp_m1 stays accurate for tiny x in f32.
-        let x = rate_hz * dt_seconds;
-        (-(-x).exp_m1()).clamp(0.0, 1.0)
+    if !rate_dt_produces_spikes(rate_hz, dt_seconds) {
+        return 0.0;
     }
+    // 1 - exp(-x) == -exp_m1(-x); exp_m1 stays accurate for tiny x in f32.
+    let x = rate_hz * dt_seconds;
+    (-(-x).exp_m1()).clamp(0.0, 1.0)
 }
 
 impl PoissonEncoder {

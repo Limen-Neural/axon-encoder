@@ -165,21 +165,48 @@ impl RateEncoder {
         output
     }
 
-    /// Hard cap on spikes emitted per channel per streaming step.
+    /// Cap on spikes emitted per channel per streaming step.
     ///
-    /// Prevents OOM when `rate_hz * dt_seconds` is enormous (or infinite): the
-    /// naive `while accumulator >= 1.0 { emit; -= 1.0 }` loop never progresses
-    /// for non-finite accumulators and would allocate unbounded spikes for huge
-    /// finite increments.
+    /// Bounds allocation when `rate_hz * dt_seconds` is huge. Remaining whole
+    /// spikes stay in the accumulator and drain on later `encode_step` calls
+    /// (no permanent loss of expected spike count). Non-finite increments are
+    /// skipped so the emission loop always terminates.
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
+
+    fn streaming_increment(&self, value: f32, rate_scale: f32) -> Option<f32> {
+        let normalized = self.normalize(value);
+        let rate_hz = ((self.base_rate + normalized * (self.max_rate - self.base_rate))
+            * rate_scale)
+            .max(0.0);
+        let increment = rate_hz * self.dt_seconds;
+        // Non-finite increments (e.g. rate * f32::MAX) must not poison state.
+        increment.is_finite().then_some(increment)
+    }
+
+    fn emit_capped_channel_spikes(
+        &mut self,
+        channel: u16,
+        channel_idx: usize,
+        output: &mut EncodedOutput,
+    ) {
+        let mut emitted = 0usize;
+        while self.accumulators[channel_idx] >= 1.0
+            && emitted < Self::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        {
+            output.spikes.push(SpikeEvent {
+                channel,
+                timestamp: 0,
+                polarity: true,
+            });
+            self.accumulators[channel_idx] -= 1.0;
+            emitted += 1;
+        }
+        // Any remaining whole spikes stay queued for subsequent steps.
+    }
 
     fn encode_step_with_rate_scale(&mut self, input: &[f32], rate_scale: f32) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        if input.is_empty() {
-            return output;
-        }
-        // Non-finite / non-positive scales must not poison accumulators with NaN.
-        if !rate_scale.is_finite() || rate_scale <= 0.0 {
+        if input.is_empty() || !rate_scale.is_finite() || rate_scale <= 0.0 {
             return output;
         }
 
@@ -187,36 +214,13 @@ impl RateEncoder {
 
         for (i, &value) in input.iter().enumerate() {
             let Ok(channel) = u16::try_from(i) else {
-                // Remaining channels exceed u16::MAX; stop rather than wrap.
                 break;
             };
-            let normalized = self.normalize(value);
-            let rate_hz = ((self.base_rate + normalized * (self.max_rate - self.base_rate))
-                * rate_scale)
-                .max(0.0);
-            let increment = rate_hz * self.dt_seconds;
-            // Non-finite increments (e.g. rate * f32::MAX) would poison state and
-            // hang the emission loop; treat them as silent steps.
-            if !increment.is_finite() {
+            let Some(increment) = self.streaming_increment(value, rate_scale) else {
                 continue;
-            }
+            };
             self.accumulators[i] += increment;
-
-            let mut emitted = 0usize;
-            while self.accumulators[i] >= 1.0 && emitted < Self::MAX_SPIKES_PER_CHANNEL_PER_STEP {
-                output.spikes.push(SpikeEvent {
-                    channel,
-                    timestamp: 0,
-                    polarity: true,
-                });
-                self.accumulators[i] -= 1.0;
-                emitted += 1;
-            }
-            // Drop any remaining whole spikes beyond the cap; keep the fractional
-            // remainder so future steps still make progress.
-            if self.accumulators[i] >= 1.0 {
-                self.accumulators[i] = self.accumulators[i].fract().max(0.0);
-            }
+            self.emit_capped_channel_spikes(channel, i, &mut output);
         }
 
         output
@@ -588,16 +592,19 @@ mod tests {
         let output = encoder.encode_step(&[1.0]);
         assert!(output.spikes.is_empty());
 
-        // Huge but finite expected count is capped per step.
+        // Huge but finite expected count is capped per step; remainder is queued.
         let mut encoder = RateEncoder::try_new(0.0, 1.0e6, (0.0, 1.0), 1.0).unwrap();
         let output = encoder.encode_step(&[1.0]);
         assert_eq!(
             output.spikes.len(),
             RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
         );
-        // Next step only carries the fractional remainder (not another million spikes).
+        // Undispatched whole spikes remain and drain on later quiet steps.
         let next = encoder.encode_step(&[0.0]);
-        assert!(next.spikes.len() <= 1);
+        assert_eq!(
+            next.spikes.len(),
+            RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP
+        );
     }
 
     #[test]
