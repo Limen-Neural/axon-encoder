@@ -8,6 +8,21 @@ They match the suite used to sign off PR #37 (rmems, 2026-07-15) and are
 **required** for security-oriented PRs such as PR #50 so merge thrash
 cannot land “green CI” while deleting product surface.
 
+## MSRV pin rule
+
+`Cargo.toml` `rust-version`, `rust-toolchain.toml` `channel`, and the
+`toolchain:` string in `.github/workflows/ci.yml` must stay **identical**
+(currently **1.97.1**). CI fails if they drift (issue #67 / LIM-1014).
+
+To bump MSRV:
+
+1. Set the new version in all three places above.
+2. Run the mandatory commands below on that toolchain
+   (`rustup run <ver> cargo test --locked`, etc.).
+3. Confirm GitHub Actions matrix (Linux / macOS / Windows) is green.
+
+Do not bump only one pin.
+
 ## When to run
 
 - Before every push that changes encoder / modulator / RNG code
