@@ -8,6 +8,19 @@
 
 `axon-encoder` provides a collection of algorithms to convert real-world, continuous data (like sensor readings, telemetry, or control signals) into spikes—the event-based signals that SNNs understand. This process, known as sensory encoding, is the first step in building powerful and efficient neuromorphic systems.
 
+## Requirements
+
+| | |
+| --- | --- |
+| **MSRV** | **Rust 1.97.1** (`rust-version` in `Cargo.toml`) |
+| **Edition** | 2024 |
+| **Pin** | [`rust-toolchain.toml`](rust-toolchain.toml) (channel `1.97.1`) |
+
+CI installs the same toolchain on **Linux, macOS, and Windows**. Keep
+`Cargo.toml` `rust-version`, `rust-toolchain.toml`, and the version string in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) identical (the CI job
+fails if they drift). See [REVIEW.md](REVIEW.md) for the bump procedure.
+
 ## What is Sensory Encoding?
 
 Traditional neural networks process dense, continuous values. Spiking Neural Networks, on the other hand, are event-driven: they process sparse, discrete "spikes" that occur at specific points in time.
