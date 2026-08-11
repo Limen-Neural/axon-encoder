@@ -35,30 +35,47 @@ jobs:
           toolchain: 1.97.1
           components: clippy, rustfmt
 
-      # shell: bash so the awk script runs on Windows runners too.
+      # shell: bash so the script runs on Windows runners too.
       - name: Verify MSRV pins agree
         shell: bash
         run: |
           set -euo pipefail
-          cargo_rv=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          toolchain_ch=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          # Extract from the Install Rust step's `toolchain:` input (not a hardcoded mirror).
+          strip_cr() { tr -d '\r'; }
+          cargo_rv=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' | strip_cr)
+          toolchain_ch=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/' | strip_cr)
+          # Extract from the "Install Rust" step only (not a later/earlier
+          # dtolnay/rust-toolchain job). Strip CR for CRLF checkouts.
+          # Cap scan so a missing toolchain: fails instead of wandering.
           ci_rv=$(awk '
-            /uses: dtolnay\/rust-toolchain@/ { in_rt = 1; next }
+            BEGIN { want = 0; in_rt = 0; lines = 0 }
+            {
+              sub(/\r$/, "")
+            }
+            /^[[:space:]]*- name:[[:space:]]*Install Rust/ { want = 1; next }
+            want && /uses: dtolnay\/rust-toolchain@/ { in_rt = 1; next }
             in_rt && /^[[:space:]]*toolchain:[[:space:]]*/ {
               sub(/^[[:space:]]*toolchain:[[:space:]]*/, "")
               sub(/[[:space:]]*$/, "")
               print
-              exit
+              exit 0
             }
-            in_rt && /^[[:space:]]*- name:/ { exit }
-          ' .github/workflows/ci.yml)
-          test -n "$ci_rv"
+            want {
+              lines++
+              if (lines > 20) exit 1
+              if (/^[[:space:]]*- name:/) exit 1
+            }
+          ' .github/workflows/ci.yml) || true
+          if [ -z "${ci_rv:-}" ]; then
+            echo "ERROR: Failed to extract toolchain: from Install Rust step in .github/workflows/ci.yml" >&2
+            exit 1
+          fi
           echo "Cargo.toml rust-version=$cargo_rv"
           echo "rust-toolchain.toml channel=$toolchain_ch"
           echo "ci.yml pin=$ci_rv"
-          test "$cargo_rv" = "$toolchain_ch"
-          test "$cargo_rv" = "$ci_rv"
+          if [ "$cargo_rv" != "$toolchain_ch" ] || [ "$cargo_rv" != "$ci_rv" ]; then
+            echo "ERROR: MSRV pins disagree (must be identical)." >&2
+            exit 1
+          fi
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2
@@ -72,6 +89,9 @@ jobs:
 
       - name: Run tests (default features)
         run: cargo test --locked
+
+      - name: Run tests (serde feature)
+        run: cargo test --features serde --locked
 
       - name: Run tests (all features)
         run: cargo test --all-features --locked
