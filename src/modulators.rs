@@ -17,8 +17,11 @@ fn sanitize_gain_scale(scale: f32) -> f32 {
 
 /// Neuromodulator levels consumed by gain curves.
 ///
-/// Levels are non-negative scalars; call [`NeuroModulators::decay`] between
-/// steps to apply fixed exponential decay.
+/// Fields are public `f32` values with no constructor validation. Callers
+/// typically keep levels ≥ 0; negative values are not rejected here. When a
+/// level is fed through a [`GainCurve`], it is clamped to that curve's input
+/// range before interpolation. Call [`NeuroModulators::decay`] between steps
+/// for the fixed exponential decay schedule (decay floors at 0).
 ///
 /// # Examples
 ///
@@ -31,6 +34,7 @@ fn sanitize_gain_scale(scale: f32) -> f32 {
 /// };
 /// mods.decay();
 /// assert!(mods.dopamine < 1.0);
+/// assert!(mods.dopamine >= 0.0);
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

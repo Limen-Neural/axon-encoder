@@ -30,9 +30,9 @@ use crate::prelude::*;
 /// use axon_encoder::prelude::*;
 /// # fn main() -> Result<(), EncoderError> {
 /// let mut enc = DeltaEncoder::try_new(0.1, 2)?;
-/// // First sample establishes baseline; no large delta yet.
-/// let _ = enc.encode(&[0.0, 0.0]);
-/// let out = enc.encode(&[0.5, 0.0]); // channel 0 crossed threshold
+/// // Baseline starts at zeros; last_values update only when a spike fires.
+/// // A jump of 0.5 from 0 exceeds threshold 0.1 on channel 0.
+/// let out = enc.encode(&[0.5, 0.0]);
 /// assert!(!out.spikes.is_empty());
 /// # Ok(())
 /// # }
