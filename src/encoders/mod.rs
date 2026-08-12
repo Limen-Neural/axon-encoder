@@ -7,6 +7,9 @@ pub mod predictive;
 pub mod rate;
 pub mod temporal;
 
+#[cfg(test)]
+pub(crate) mod property_support;
+
 pub use delta::{DeltaEncoder, encode_deltas_to_spikes};
 pub use derivative::DerivativeEncoder;
 pub use latency::LatencyEncoder;

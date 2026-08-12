@@ -418,46 +418,14 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
+    use crate::encoders::property_support::{
+        TRIALS, assert_unique_channel_spikes, sample_gain_scale, sample_input_value,
+        sample_positive_finite, scale_is_inactive,
+    };
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
 
     const SEED: u64 = 0xAE69_0002;
-    const TRIALS: usize = 256;
-
-    fn sample_positive_finite(rng: &mut StdRng) -> f32 {
-        let table = [
-            1e-3_f32, 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0,
-        ];
-        table[rng.random_range(0..table.len())]
-    }
-
-    fn sample_sensitivity(rng: &mut StdRng) -> f32 {
-        match rng.random_range(0u8..10) {
-            0 => 0.0,
-            1 => -1.0,
-            2 => f32::NAN,
-            3 => f32::INFINITY,
-            4 => f32::NEG_INFINITY,
-            5 => 1e-6,
-            6 => 0.25,
-            7 => 2.0,
-            _ => 1.0,
-        }
-    }
-
-    fn sample_input_value(rng: &mut StdRng, range: (f32, f32)) -> f32 {
-        match rng.random_range(0u8..10) {
-            0 => f32::NAN,
-            1 => f32::INFINITY,
-            2 => f32::NEG_INFINITY,
-            3 => range.0 - 50.0,
-            4 => range.1 + 50.0,
-            5 => range.0,
-            6 => range.1,
-            7 => (range.0 + range.1) * 0.5,
-            _ => range.0 + rng.random::<f32>() * (range.1 - range.0),
-        }
-    }
 
     fn sample_valid_encoder(rng: &mut StdRng) -> PopulationEncoder {
         loop {
@@ -471,15 +439,23 @@ mod property_tests {
         }
     }
 
+    fn assert_active_population_spikes(trial: usize, out: &EncodedOutput, n_neurons: usize) {
+        assert!(
+            out.spikes.len() <= n_neurons,
+            "trial {trial}: spikes {} > num_neurons {n_neurons}",
+            out.spikes.len()
+        );
+        assert_unique_channel_spikes(&out.spikes, n_neurons);
+    }
+
     #[test]
     fn prop_population_silence_and_spike_bounds() {
         let mut rng = StdRng::seed_from_u64(SEED);
         for trial in 0..TRIALS {
             let mut encoder = sample_valid_encoder(&mut rng);
             let n_neurons = encoder.num_neurons();
-            let sensitivity = sample_sensitivity(&mut rng);
+            let sensitivity = sample_gain_scale(&mut rng);
 
-            // Empty input always silent.
             let empty = encoder.encode_with_sensitivity_scale(&[], sensitivity);
             assert!(
                 empty.spikes.is_empty(),
@@ -489,35 +465,14 @@ mod property_tests {
             let value = sample_input_value(&mut rng, (0.0, 100.0));
             let out = encoder.encode_with_sensitivity_scale(&[value], sensitivity);
 
-            if !sensitivity.is_finite() || sensitivity <= 0.0 {
+            if scale_is_inactive(sensitivity) {
                 assert!(
                     out.spikes.is_empty(),
                     "trial {trial}: inactive sensitivity={sensitivity:?} must silence"
                 );
                 continue;
             }
-
-            assert!(
-                out.spikes.len() <= n_neurons,
-                "trial {trial}: spikes {} > num_neurons {n_neurons}",
-                out.spikes.len()
-            );
-
-            let mut seen = std::collections::BTreeSet::new();
-            for spike in &out.spikes {
-                assert!(
-                    (spike.channel as usize) < n_neurons,
-                    "trial {trial}: channel {} >= num_neurons {n_neurons}",
-                    spike.channel
-                );
-                assert!(
-                    seen.insert(spike.channel),
-                    "trial {trial}: duplicate channel {}",
-                    spike.channel
-                );
-                assert_eq!(spike.timestamp, 0);
-                assert!(spike.polarity);
-            }
+            assert_active_population_spikes(trial, &out, n_neurons);
         }
     }
 
@@ -527,17 +482,12 @@ mod property_tests {
         for trial in 0..TRIALS {
             let encoder = sample_valid_encoder(&mut rng);
             let value = sample_input_value(&mut rng, (0.0, 100.0));
-            // Skip non-finite probe values — rate helper is only defined for
-            // real distances used by encode after the first input is taken.
             if !value.is_finite() {
                 continue;
             }
-            let sens = sample_sensitivity(&mut rng);
-            let width = encoder.effective_tuning_width(if sens.is_finite() && sens > 0.0 {
-                sens
-            } else {
-                1.0
-            });
+            let sens = sample_gain_scale(&mut rng);
+            let width =
+                encoder.effective_tuning_width(if scale_is_inactive(sens) { 1.0 } else { sens });
             assert!(
                 width.is_finite() && width > 0.0,
                 "trial {trial}: effective width {width}"
@@ -558,7 +508,7 @@ mod property_tests {
         for _ in 0..TRIALS {
             let mut encoder = sample_valid_encoder(&mut rng);
             let value = sample_input_value(&mut rng, (-50.0, 50.0));
-            let sens = sample_sensitivity(&mut rng);
+            let sens = sample_gain_scale(&mut rng);
             let _ = encoder.encode_with_sensitivity_scale(&[value], sens);
             let _ = encoder.encode(&[value]);
             let _ = encoder.encode_step(&[value]);
