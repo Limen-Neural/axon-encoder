@@ -26,6 +26,20 @@
 /// differs from other encoders (`EncodedOutput`). It operates in a different mode:
 /// the input is a single probability (0.0 to 1.0) and the output is a spike train
 /// over multiple time steps.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+///
+/// let enc = PoissonEncoder::new(32);
+/// let train = enc.encode(0.0); // never spikes
+/// assert_eq!(train.len(), 32);
+/// assert!(train.iter().all(|&b| b == 0));
+///
+/// let p = probability_from_rate_hz(50.0, 0.001);
+/// assert!((0.0..=1.0).contains(&p));
+/// ```
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PoissonEncoder {

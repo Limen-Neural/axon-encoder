@@ -42,6 +42,20 @@ use types::EncodedOutput;
 /// Concrete encoders also keep inherent `encode_with_modulators` /
 /// `encode_step_with_modulators` wrappers so existing call sites need not import
 /// this trait.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = RateEncoder::try_new(5.0, 50.0, (0.0, 1.0), 0.01)?;
+/// let mods = NeuroModulators::default();
+/// let curves = NeuromodulatorGainCurves::default(); // identity gains
+/// let out = enc.encode_with_modulators(&[0.8], &mods, &curves);
+/// assert!(out.spikes.len() <= 1);
+/// # Ok(())
+/// # }
+/// ```
 pub trait ModulatedEncoder: Encoder {
     /// Encodes input using already evaluated encoding gains.
     ///

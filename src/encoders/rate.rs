@@ -42,6 +42,19 @@ use crate::prelude::*;
 /// `dt_seconds = 0.1`, which preserves the old deterministic `/ 10.0`
 /// increment for unit rates. Prefer [`RateEncoder::try_new`] for new code that
 /// wants explicit time-step configuration and validation.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010)?;
+/// let out = enc.encode(&[0.0, 0.5, 1.0]);
+/// // Stochastic batch mode: at most one spike per channel.
+/// assert!(out.spikes.len() <= 3);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RateEncoder {

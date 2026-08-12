@@ -28,6 +28,20 @@ use std::collections::VecDeque;
 /// - `history_depth`: How many past values to track per channel
 /// - `change_thresholds`: Vec of (threshold, spike_value) pairs - fires when change exceeds threshold
 /// - `num_channels`: Number of input channels
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// // history_depth must be at least 6 for the dual-window change detector.
+/// let mut enc = TemporalEncoder::try_new(6, vec![(0.5, 1)], 1)?;
+/// for v in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0] {
+///     let _ = enc.encode_step(&[v]);
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TemporalEncoder {

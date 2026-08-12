@@ -39,6 +39,22 @@ impl EncoderState {
     }
 }
 
+/// Rate-style membrane encoder driven by a fixed embedding vector.
+///
+/// Accumulates normalized embedding components into per-channel membrane
+/// potentials and emits a spike when the threshold is crossed (soft reset).
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::encoder::{EmbeddingEncoderConfig, EmbeddingRateEncoder, EncoderState};
+///
+/// let enc = EmbeddingRateEncoder::new(&[0.5, 1.0], EmbeddingEncoderConfig { v_th: 0.4 });
+/// let state = EncoderState::new_zeros(2);
+/// let (out, next) = enc.forward(&state);
+/// assert!(!out.spikes.is_empty());
+/// assert_eq!(next.membrane_potentials.len(), 2);
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "EmbeddingRateEncoderRepr"))]

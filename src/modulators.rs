@@ -15,6 +15,23 @@ fn sanitize_gain_scale(scale: f32) -> f32 {
     scale.clamp(MIN_GAIN_SCALE, MAX_GAIN_SCALE)
 }
 
+/// Neuromodulator levels consumed by gain curves.
+///
+/// Levels are non-negative scalars; call [`NeuroModulators::decay`] between
+/// steps to apply fixed exponential decay.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+///
+/// let mut mods = NeuroModulators {
+///     dopamine: 1.0,
+///     ..Default::default()
+/// };
+/// mods.decay();
+/// assert!(mods.dopamine < 1.0);
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NeuroModulators {
@@ -33,6 +50,17 @@ impl NeuroModulators {
     }
 }
 
+/// Piecewise-linear map from a modulator level to a gain scale.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+///
+/// // Map level 0..1 to gain 1..2 (identity at mid-point is 1.5).
+/// let curve = GainCurve::new((0.0, 1.0), (1.0, 2.0));
+/// assert!((curve.evaluate(0.5) - 1.5).abs() < 1e-5);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GainCurve {
@@ -160,6 +188,19 @@ pub struct ModulatorGainCurves {
 /// - `latency_scale = 0.0` → max_latency is 0 → all spikes at timestamp 0 (instant response)
 ///
 /// This asymmetry is intentional and reflects the physical semantics of each component.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+///
+/// let gains = EncodingGains {
+///     firing_rate_scale: 0.0, // silence rate-based paths
+///     ..EncodingGains::identity()
+/// }
+/// .sanitize();
+/// assert_eq!(gains.firing_rate_scale, 0.0);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EncodingGains {
@@ -229,6 +270,29 @@ impl Default for EncodingGains {
     }
 }
 
+/// Per-neuromodulator gain curves composing into [`EncodingGains`].
+///
+/// Default curves are all identity (no modulation).
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+///
+/// let curves = NeuromodulatorGainCurves {
+///     tempo: ModulatorGainCurves {
+///         sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+///         ..Default::default()
+///     },
+///     ..Default::default()
+/// };
+/// let mods = NeuroModulators {
+///     tempo: 1.0,
+///     ..Default::default()
+/// };
+/// let gains = curves.evaluate(&mods);
+/// assert!(gains.sensitivity_scale > 1.0);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NeuromodulatorGainCurves {

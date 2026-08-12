@@ -23,6 +23,20 @@ use crate::prelude::*;
 ///
 /// - `threshold`: Minimum change required to trigger a spike
 /// - `num_channels`: Number of input channels to track
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = DeltaEncoder::try_new(0.1, 2)?;
+/// // First sample establishes baseline; no large delta yet.
+/// let _ = enc.encode(&[0.0, 0.0]);
+/// let out = enc.encode(&[0.5, 0.0]); // channel 0 crossed threshold
+/// assert!(!out.spikes.is_empty());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DeltaEncoder {

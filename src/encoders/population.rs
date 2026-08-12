@@ -29,6 +29,19 @@ use crate::prelude::*;
 /// - `num_neurons`: Number of neurons in the population per input channel
 /// - `input_range`: Tuple of (min, max) input values
 /// - `tuning_width`: Controls how broadly neurons respond (larger = wider spread)
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = PopulationEncoder::try_new(8, (0.0, 1.0), 0.15)?;
+/// // Population encoders take a single scalar in the first channel.
+/// let out = enc.encode(&[0.5]);
+/// assert!(out.spikes.len() <= 8);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PopulationEncoder {
