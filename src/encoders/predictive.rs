@@ -85,6 +85,22 @@ impl From<PredictiveEncoderError> for EncoderError {
 /// - `history_depth`: Number of past values to track per channel
 /// - `deviation_thresholds`: Vec of (threshold, spike_value) pairs
 /// - `num_channels`: Number of input channels
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = PredictiveEncoder::try_new(8, vec![(0.5, 1)], 1)?;
+/// // First five samples warm up without spikes.
+/// for v in [1.0, 1.0, 1.0, 1.0, 1.0] {
+///     assert!(enc.encode_step(&[v]).spikes.is_empty());
+/// }
+/// // A large jump after warm-up can emit a prediction-error spike.
+/// let _ = enc.encode_step(&[3.0]);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PredictiveEncoder {

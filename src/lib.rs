@@ -42,6 +42,43 @@ use types::EncodedOutput;
 /// Concrete encoders also keep inherent `encode_with_modulators` /
 /// `encode_step_with_modulators` wrappers so existing call sites need not import
 /// this trait.
+///
+/// # Examples
+///
+/// Prefer the **streaming** path for doctests: batch `encode_with_modulators` is
+/// stochastic, while `encode_step_with_modulators` on rate encoders is deterministic.
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = RateEncoder::try_new(0.0, 100.0, (0.0, 1.0), 0.01)?;
+/// let mods = NeuroModulators {
+///     dopamine: 1.0,
+///     ..Default::default()
+/// };
+/// let curves = NeuromodulatorGainCurves {
+///     dopamine: ModulatorGainCurves {
+///         firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+///         ..Default::default()
+///     },
+///     ..Default::default()
+/// };
+/// // Accumulates rate_hz * dt; at unit input with elevated gain, a spike fires soon.
+/// let mut saw_spike = false;
+/// for _ in 0..20 {
+///     if !enc
+///         .encode_step_with_modulators(&[1.0], &mods, &curves)
+///         .spikes
+///         .is_empty()
+///     {
+///         saw_spike = true;
+///         break;
+///     }
+/// }
+/// assert!(saw_spike);
+/// # Ok(())
+/// # }
+/// ```
 pub trait ModulatedEncoder: Encoder {
     /// Encodes input using already evaluated encoding gains.
     ///

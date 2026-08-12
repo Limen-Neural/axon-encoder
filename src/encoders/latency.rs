@@ -6,7 +6,20 @@ use crate::prelude::*;
 /// determined by the input strength within the configured range. Stronger
 /// inputs fire earlier. Values below the range minimum map to the latest
 /// possible spike at `max_latency`, and values above the range maximum map to
-/// timestamp `0`
+/// timestamp `0`.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = LatencyEncoder::try_new(10, (0.0, 1.0))?;
+/// let out = enc.encode(&[1.0, 0.0]); // strong → early, weak → late
+/// assert_eq!(out.spikes.len(), 2);
+/// assert!(out.spikes[0].timestamp <= out.spikes[1].timestamp);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LatencyEncoder {

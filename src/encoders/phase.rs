@@ -10,7 +10,19 @@ use crate::prelude::*;
 /// stable *within* a single encode call (higher-value channels get later timestamps)
 /// Ordering *across* calls is not globally guaranteed, since `phase_offset` can exceed
 /// the per-call phase advance. Cycle-relative phase is recoverable as
-/// `timestamp % cycle_steps`
+/// `timestamp % cycle_steps`.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = PhaseEncoder::try_new(16, (0.0, 1.0))?;
+/// let out = enc.encode(&[0.0, 1.0]);
+/// assert_eq!(out.spikes.len(), 2);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PhaseEncoder {

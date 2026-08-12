@@ -4,6 +4,20 @@ use crate::prelude::*;
 ///
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
+///
+/// # Examples
+///
+/// ```rust
+/// use axon_encoder::prelude::*;
+/// # fn main() -> Result<(), EncoderError> {
+/// let mut enc = DerivativeEncoder::try_new(vec![0.2])?;
+/// let _ = enc.encode_step(&[0.0]); // seed previous sample
+/// let out = enc.encode_step(&[0.5]); // +0.5 change exceeds threshold
+/// assert_eq!(out.spikes.len(), 1);
+/// assert!(out.spikes[0].polarity);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "DerivativeEncoderRepr"))]
