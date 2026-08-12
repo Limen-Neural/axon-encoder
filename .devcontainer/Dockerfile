@@ -24,6 +24,7 @@ RUN useradd -m -s /bin/bash -u 1000 vscode \
 USER vscode
 ENV CARGO_HOME=/home/vscode/.cargo
 # Do not override RUSTUP_HOME — empty home rustup would force a re-download.
-# Prepend CARGO_HOME/bin so `cargo install` tools are on PATH.
-ENV PATH=/home/vscode/.cargo/bin:/usr/local/cargo/bin:${PATH}
+# Keep PATH aligned with CARGO_HOME so later `cargo install` / rustup proxies resolve.
+ENV PATH=${CARGO_HOME}/bin:/usr/local/cargo/bin:${PATH}
 WORKDIR /workspace
+
