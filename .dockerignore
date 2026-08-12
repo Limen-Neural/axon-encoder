@@ -1,9 +1,12 @@
-# Build context hygiene — Docker does not honor .gitignore.
+# Docker does not honor .gitignore — keep this aligned with local junk / secrets.
 target/
 .git/
 .github/
 .devcontainer/
+
+# Tooling / local agent state
 .idea/
+.vscode/
 .worktrees/
 .beads/
 .swarm/
@@ -11,6 +14,13 @@ target/
 .cline/
 .opencode/
 .codacy/
+.kilo/
+.kilocode/
+.cursor/
+.devin/
+.cache/
+
+# Secrets / credentials
 .env
 .env.*
 **/.env
@@ -19,11 +29,23 @@ target/
 *.key
 **/auth.json
 **/*credentials*
-docs/
+
+# Local data / caches (mirror .gitignore)
+node_modules/
+dist/
+build/
+neuromorphic_data/
+remotes.txt
+__pycache__/
 *.log
+.DS_Store
+
+# CI / analysis noise
 .codecov.yml
 .codacy.yml
 qodana.yaml
+docs/
+
 **/*.md
 !README.md
 !REVIEW.md
