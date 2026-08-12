@@ -906,3 +906,153 @@ mod tests {
         }
     }
 }
+
+/// Property-style suites for rate / silence / bound contracts (#69 / LIM-1016).
+///
+/// Uses a seeded [`StdRng`] to sample configurations and inputs so failures are
+/// reproducible. Encoder-internal spike draws still use the process RNG; the
+/// invariants asserted here are independent of those draws.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::encoders::property_support::{
+        TRIALS, assert_unique_channel_spikes, sample_gain_scale, sample_input_value,
+        sample_positive_finite, scale_is_inactive,
+    };
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
+
+    /// Fixed seed so CI and local failures replay identically.
+    const SEED: u64 = 0xAE69_0001;
+
+    fn sample_valid_encoder(rng: &mut StdRng) -> RateEncoder {
+        loop {
+            let base = sample_positive_finite(rng) * rng.random::<f32>();
+            let max = base + sample_positive_finite(rng);
+            let lo = rng.random_range(-50.0_f32..50.0);
+            let hi = lo + sample_positive_finite(rng);
+            let dt = sample_positive_finite(rng).clamp(1e-4, 1.0);
+            if let Ok(enc) = RateEncoder::try_new(base, max, (lo, hi), dt) {
+                return enc;
+            }
+        }
+    }
+
+    fn sample_input_vec(rng: &mut StdRng, n: usize, range: (f32, f32)) -> Vec<f32> {
+        (0..n).map(|_| sample_input_value(rng, range)).collect()
+    }
+
+    fn assert_both_silent(trial: usize, batch: &EncodedOutput, step: &EncodedOutput, why: &str) {
+        assert!(
+            batch.spikes.is_empty() && step.spikes.is_empty(),
+            "trial {trial}: {why}"
+        );
+    }
+
+    fn assert_active_batch_bounds(trial: usize, batch: &EncodedOutput, n_channels: usize) {
+        assert!(
+            batch.spikes.len() <= n_channels,
+            "trial {trial}: batch spikes {} > channels {n_channels}",
+            batch.spikes.len()
+        );
+        assert_unique_channel_spikes(&batch.spikes, n_channels);
+    }
+
+    fn assert_active_step_bounds(trial: usize, step: &EncodedOutput, n_channels: usize) {
+        let max_step = RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP.saturating_mul(n_channels);
+        assert!(
+            step.spikes.len() <= max_step,
+            "trial {trial}: step spikes {} exceed bound {max_step}",
+            step.spikes.len()
+        );
+        for spike in &step.spikes {
+            assert!((spike.channel as usize) < n_channels);
+            assert!(spike.polarity);
+        }
+    }
+
+    #[test]
+    fn prop_rate_silence_and_channel_bounds() {
+        let mut rng = StdRng::seed_from_u64(SEED);
+        for trial in 0..TRIALS {
+            let mut encoder = sample_valid_encoder(&mut rng);
+            let n = rng.random_range(0usize..=8);
+            let input = sample_input_vec(&mut rng, n, (0.0, 1.0));
+            let scale = sample_gain_scale(&mut rng);
+
+            let batch = encoder.encode_with_rate_scale(&input, scale);
+            let step = encoder.encode_step_with_rate_scale(&input, scale);
+
+            if input.is_empty() {
+                assert_both_silent(
+                    trial,
+                    &batch,
+                    &step,
+                    "empty input must silence batch and step",
+                );
+                continue;
+            }
+            if scale_is_inactive(scale) {
+                assert_both_silent(
+                    trial,
+                    &batch,
+                    &step,
+                    &format!("inactive rate_scale={scale:?} must silence"),
+                );
+                continue;
+            }
+
+            assert_active_batch_bounds(trial, &batch, input.len());
+            assert_active_step_bounds(trial, &step, input.len());
+            if input.iter().all(|v| !v.is_finite()) {
+                assert!(
+                    batch.spikes.is_empty(),
+                    "trial {trial}: all non-finite inputs must silence batch"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prop_rate_probability_stays_in_unit_interval() {
+        let mut rng = StdRng::seed_from_u64(SEED ^ 0xB0B5);
+        for _ in 0..TRIALS {
+            let rate = match rng.random_range(0u8..8) {
+                0 => 0.0,
+                1 => -1.0,
+                2 => f32::NAN,
+                3 => f32::INFINITY,
+                4 => f32::MAX,
+                _ => sample_positive_finite(&mut rng) * rng.random_range(0.0_f32..100.0),
+            };
+            let dt = match rng.random_range(0u8..6) {
+                0 => 0.0,
+                1 => -0.1,
+                2 => f32::NAN,
+                3 => f32::INFINITY,
+                _ => sample_positive_finite(&mut rng).clamp(1e-6, 2.0),
+            };
+            let p = crate::poisson::probability_from_rate_hz(rate, dt);
+            assert!(
+                p.is_finite() && (0.0..=1.0).contains(&p),
+                "probability_from_rate_hz({rate}, {dt}) = {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn prop_rate_encode_never_panics_on_sampled_inputs() {
+        let mut rng = StdRng::seed_from_u64(SEED ^ 0xBAD5);
+        for _ in 0..TRIALS {
+            let mut encoder = sample_valid_encoder(&mut rng);
+            let n = rng.random_range(0usize..=16);
+            let input = sample_input_vec(&mut rng, n, (-10.0, 10.0));
+            let scale = sample_gain_scale(&mut rng);
+            let _ = encoder.encode_with_rate_scale(&input, scale);
+            let _ = encoder.encode_step_with_rate_scale(&input, scale);
+            encoder.reset();
+            let _ = encoder.encode(&input);
+            let _ = encoder.encode_step(&input);
+        }
+    }
+}

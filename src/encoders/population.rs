@@ -408,3 +408,111 @@ mod tests {
         );
     }
 }
+
+/// Property-style suites for population rate / silence / bound contracts
+/// (#69 / LIM-1016).
+///
+/// Configurations and inputs are sampled with a seeded [`StdRng`] so failures
+/// replay. Spike Bernoulli draws use the process RNG; structural bounds hold
+/// regardless.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::encoders::property_support::{
+        TRIALS, assert_unique_channel_spikes, sample_gain_scale, sample_input_value,
+        sample_positive_finite, scale_is_inactive,
+    };
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
+
+    const SEED: u64 = 0xAE69_0002;
+
+    fn sample_valid_encoder(rng: &mut StdRng) -> PopulationEncoder {
+        loop {
+            let num_neurons = rng.random_range(1usize..=32);
+            let lo = rng.random_range(-100.0_f32..100.0);
+            let hi = lo + sample_positive_finite(rng);
+            let width = sample_positive_finite(rng);
+            if let Ok(enc) = PopulationEncoder::try_new(num_neurons, (lo, hi), width) {
+                return enc;
+            }
+        }
+    }
+
+    fn assert_active_population_spikes(trial: usize, out: &EncodedOutput, n_neurons: usize) {
+        assert!(
+            out.spikes.len() <= n_neurons,
+            "trial {trial}: spikes {} > num_neurons {n_neurons}",
+            out.spikes.len()
+        );
+        assert_unique_channel_spikes(&out.spikes, n_neurons);
+    }
+
+    #[test]
+    fn prop_population_silence_and_spike_bounds() {
+        let mut rng = StdRng::seed_from_u64(SEED);
+        for trial in 0..TRIALS {
+            let mut encoder = sample_valid_encoder(&mut rng);
+            let n_neurons = encoder.num_neurons();
+            let sensitivity = sample_gain_scale(&mut rng);
+
+            let empty = encoder.encode_with_sensitivity_scale(&[], sensitivity);
+            assert!(
+                empty.spikes.is_empty(),
+                "trial {trial}: empty input must silence"
+            );
+
+            let value = sample_input_value(&mut rng, (0.0, 100.0));
+            let out = encoder.encode_with_sensitivity_scale(&[value], sensitivity);
+
+            if scale_is_inactive(sensitivity) {
+                assert!(
+                    out.spikes.is_empty(),
+                    "trial {trial}: inactive sensitivity={sensitivity:?} must silence"
+                );
+                continue;
+            }
+            assert_active_population_spikes(trial, &out, n_neurons);
+        }
+    }
+
+    #[test]
+    fn prop_population_tuning_rates_in_unit_interval() {
+        let mut rng = StdRng::seed_from_u64(SEED ^ 0x51A7);
+        for trial in 0..TRIALS {
+            let encoder = sample_valid_encoder(&mut rng);
+            let value = sample_input_value(&mut rng, (0.0, 100.0));
+            if !value.is_finite() {
+                continue;
+            }
+            let sens = sample_gain_scale(&mut rng);
+            let width =
+                encoder.effective_tuning_width(if scale_is_inactive(sens) { 1.0 } else { sens });
+            assert!(
+                width.is_finite() && width > 0.0,
+                "trial {trial}: effective width {width}"
+            );
+            for i in 0..encoder.num_neurons() {
+                let rate = encoder.get_rate_with_tuning_width(value, i, width);
+                assert!(
+                    rate.is_finite() && (0.0..=1.0).contains(&rate),
+                    "trial {trial}: neuron {i} rate {rate} outside [0,1]"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prop_population_encode_never_panics_on_sampled_inputs() {
+        let mut rng = StdRng::seed_from_u64(SEED ^ 0xBAD5);
+        for _ in 0..TRIALS {
+            let mut encoder = sample_valid_encoder(&mut rng);
+            let value = sample_input_value(&mut rng, (-50.0, 50.0));
+            let sens = sample_gain_scale(&mut rng);
+            let _ = encoder.encode_with_sensitivity_scale(&[value], sens);
+            let _ = encoder.encode(&[value]);
+            let _ = encoder.encode_step(&[value]);
+            encoder.reset();
+        }
+    }
+}
