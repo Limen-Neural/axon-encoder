@@ -9,15 +9,17 @@ RUN apt-get update \
     && rustup component add rustfmt clippy
 
 # Non-root user for VS Code / Codespaces.
-# Cargo home lives under /home/vscode so Dev Containers UID remapping keeps
-# registry/cache writable when host UID != 1000.
+# CARGO_HOME lives under /home/vscode so Dev Containers UID remapping keeps
+# registry/git caches writable when host UID != 1000.
+# RUSTUP_HOME stays at the image default (/usr/local/rustup) so the preinstalled
+# 1.97.1 toolchain and components remain visible to the rustup proxy.
 RUN useradd -m -s /bin/bash -u 1000 vscode \
-    && mkdir -p /home/vscode/.cargo /home/vscode/.rustup \
-    && chown -R vscode:vscode /home/vscode
+    && mkdir -p /home/vscode/.cargo \
+    && chown -R vscode:vscode /home/vscode \
+    && chown -R vscode:vscode /usr/local/cargo /usr/local/rustup
 
 USER vscode
 ENV CARGO_HOME=/home/vscode/.cargo
-ENV RUSTUP_HOME=/home/vscode/.rustup
-# Still use the image toolchain binaries from /usr/local.
-ENV PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/bin:${PATH}
+# Do not override RUSTUP_HOME — empty home rustup would force a re-download.
+ENV PATH=/usr/local/cargo/bin:${PATH}
 WORKDIR /workspace
