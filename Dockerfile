@@ -12,11 +12,16 @@ FROM rust:1.97.1-slim-bookworm
 
 WORKDIR /app
 
+# System toolchain stays root-owned under /usr/local/{cargo,rustup}.
+# Writable cargo registry/target live under the non-root user's CARGO_HOME.
 RUN rustup component add rustfmt clippy \
     && useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin encoder \
-    && chown -R encoder:encoder /app /usr/local/cargo /usr/local/rustup
+    && mkdir -p /home/encoder/.cargo \
+    && chown -R encoder:encoder /app /home/encoder
 
 USER encoder
+ENV CARGO_HOME=/home/encoder/.cargo
+ENV PATH=/usr/local/cargo/bin:${PATH}
 
 # Dependency graph first (invalidates less often than full tree copies).
 COPY --chown=encoder:encoder Cargo.toml Cargo.lock rust-toolchain.toml ./
