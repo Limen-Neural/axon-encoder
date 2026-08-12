@@ -1,0 +1,14 @@
+target/
+.git/
+.github/
+.idea/
+.worktrees/
+.beads/
+**/*.md
+!README.md
+!REVIEW.md
+docs/
+*.log
+.codecov.yml
+.codacy.yml
+qodana.yaml

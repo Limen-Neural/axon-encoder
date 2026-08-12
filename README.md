@@ -21,6 +21,35 @@ CI installs the same toolchain on **Linux, macOS, and Windows**. Keep
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) identical (the CI job
 fails if they drift). See [REVIEW.md](REVIEW.md) for the bump procedure.
 
+## Development environments
+
+Three supported paths (all use Rust **1.97.1**):
+
+| Path | When to use |
+| --- | --- |
+| **Native toolchain** | Local `rustup` + `cargo` (see [REVIEW.md](REVIEW.md)) |
+| **Dev Container / Codespaces** | VS Code or GitHub Codespaces via [`.devcontainer/`](.devcontainer/) |
+| **Docker** | No local Rust install — build and run tests in a container |
+
+### Dev Container
+
+Open the repo in VS Code (“Reopen in Container”) or GitHub Codespaces. The
+container installs rustfmt/clippy and runs `cargo fetch` on create.
+
+### Docker (test without local Rust)
+
+```bash
+docker build -t axon-encoder:dev .
+docker run --rm axon-encoder:dev
+```
+
+That image runs `cargo test --all-features --locked` by default (see
+[`Dockerfile`](Dockerfile)). CI also builds it on every PR
+([`.github/workflows/docker.yml`](.github/workflows/docker.yml)).
+
+Multi-OS native CI already covers Linux / macOS / Windows
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
 ## What is Sensory Encoding?
 
 Traditional neural networks process dense, continuous values. Spiking Neural Networks, on the other hand, are event-driven: they process sparse, discrete "spikes" that occur at specific points in time.
