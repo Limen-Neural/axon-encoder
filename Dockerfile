@@ -12,16 +12,20 @@ FROM rust:1.97.1-slim-bookworm
 
 WORKDIR /app
 
-RUN rustup component add rustfmt clippy
+RUN rustup component add rustfmt clippy \
+    && useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin encoder \
+    && chown -R encoder:encoder /app /usr/local/cargo /usr/local/rustup
+
+USER encoder
 
 # Dependency graph first (invalidates less often than full tree copies).
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY src ./src
-COPY tests ./tests
-COPY benches ./benches
-COPY examples ./examples
+COPY --chown=encoder:encoder Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY --chown=encoder:encoder src ./src
+COPY --chown=encoder:encoder tests ./tests
+COPY --chown=encoder:encoder benches ./benches
+COPY --chown=encoder:encoder examples ./examples
 
-# Warm registry + compile + test in a cacheable layer.
+# Warm registry + compile + test in a cacheable layer (non-root).
 RUN cargo test --all-features --locked
 
 # Default re-check (fast when image layers are warm).

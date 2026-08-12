@@ -3,8 +3,11 @@
 FROM rust:1.97.1-slim-bookworm
 
 USER root
+# Pin package versions for supply-chain/static-analysis tools (bookworm).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        git=1:2.39.5-0+deb12u3 \
+        ca-certificates=20250419~deb12u1 \
     && rm -rf /var/lib/apt/lists/* \
     && rustup component add rustfmt clippy
 
