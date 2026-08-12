@@ -44,7 +44,8 @@ docker run --rm axon-encoder:dev
 ```
 
 That image runs `cargo test --all-features --locked` by default (see
-[`Dockerfile`](Dockerfile)). CI also builds it on every PR
+[`Dockerfile`](Dockerfile)). CI also builds it on pushes to `main` and pull
+requests targeting `main`
 ([`.github/workflows/docker.yml`](.github/workflows/docker.yml)).
 
 Multi-OS native CI already covers Linux / macOS / Windows

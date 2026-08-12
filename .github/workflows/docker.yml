@@ -8,6 +8,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -31,6 +35,8 @@ jobs:
           push: false
           load: true
           tags: axon-encoder:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: cargo test --all-features --locked in image
         run: |

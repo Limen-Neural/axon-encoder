@@ -1,5 +1,6 @@
 # Verification image for contributors without a local Rust toolchain.
-# Matches MSRV / rust-toolchain.toml (1.97.1). Library crate — not a runtime product.
+# Keep `rust:1.97.1` in sync with Cargo.toml rust-version / rust-toolchain.toml
+# / CI toolchain pin (see REVIEW.md MSRV pin rule).
 #
 #   docker build -t axon-encoder:dev .
 #   docker run --rm axon-encoder:dev
