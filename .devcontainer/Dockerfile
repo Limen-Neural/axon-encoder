@@ -3,8 +3,7 @@
 FROM rust:1.97.1-slim-bookworm
 
 USER root
-# Do not pin exact apt revisions against floating bookworm/security indexes —
-# superseded security builds disappear and break fresh Codespaces builds.
+# Do not pin exact apt revisions against floating bookworm/security indexes.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -12,19 +11,16 @@ RUN apt-get update \
     && rustup component add rustfmt clippy
 
 # Non-root user for VS Code / Codespaces.
-# CARGO_HOME lives under /home/vscode so Dev Containers UID remapping keeps
-# registry/git caches writable when host UID != 1000.
-# RUSTUP_HOME stays at the image default (/usr/local/rustup) so the preinstalled
-# 1.97.1 toolchain and components remain visible to the rustup proxy.
+# Copy the image rustup/cargo trees into /home/vscode so Dev Containers UID
+# remapping keeps both the toolchain and cargo caches writable (host UID != 1000).
 RUN useradd -m -s /bin/bash -u 1000 vscode \
-    && mkdir -p /home/vscode/.cargo/bin \
-    && chown -R vscode:vscode /home/vscode \
-    && chown -R vscode:vscode /usr/local/cargo /usr/local/rustup
+    && mkdir -p /home/vscode \
+    && cp -a /usr/local/rustup /home/vscode/.rustup \
+    && cp -a /usr/local/cargo /home/vscode/.cargo \
+    && chown -R vscode:vscode /home/vscode
 
 USER vscode
+ENV RUSTUP_HOME=/home/vscode/.rustup
 ENV CARGO_HOME=/home/vscode/.cargo
-# Do not override RUSTUP_HOME — empty home rustup would force a re-download.
-# Keep PATH aligned with CARGO_HOME so later `cargo install` / rustup proxies resolve.
-ENV PATH=${CARGO_HOME}/bin:/usr/local/cargo/bin:${PATH}
+ENV PATH=${CARGO_HOME}/bin:${PATH}
 WORKDIR /workspace
-
