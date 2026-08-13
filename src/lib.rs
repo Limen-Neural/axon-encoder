@@ -210,10 +210,8 @@ mod tests {
 
         // Collect offenders so a failure names them; build the message on the
         // success path too so codecov patch does not see cold format arms.
-        let forbidden: Vec<&serde_json::Value> = deps
-            .iter()
-            .filter(|d| d["name"] == "neuromod")
-            .collect();
+        let forbidden: Vec<&serde_json::Value> =
+            deps.iter().filter(|d| d["name"] == "neuromod").collect();
         let detail = format!(
             "forbidden neuromod deps (name/kind): {:?}",
             forbidden
