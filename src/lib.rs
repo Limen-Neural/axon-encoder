@@ -177,20 +177,41 @@ mod tests {
     }
 
     /// Guard: `axon-encoder` must not depend on the neuromod crate (#21).
+    ///
+    /// Uses `cargo metadata` so table syntax, workspace inheritance, rename/
+    /// package aliases, and normal/dev/build/target scopes are all covered
+    /// without matching description prose.
     #[test]
     fn cargo_toml_has_no_neuromod_crate_dependency() {
-        let toml = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
-        for line in toml.lines() {
-            let t = line.trim();
-            // Match dependency keys, not description prose ("neuromodulator-driven").
-            if t.starts_with("neuromod ")
-                || t.starts_with("neuromod=")
-                || t.starts_with("neuromod =")
-                || t.contains("Limen-Neural/neuromod")
-                || t.contains("path = \"../neuromod\"")
-            {
-                panic!("forbidden neuromod dependency line: {line}");
-            }
+        let cargo = option_env!("CARGO").unwrap_or("cargo");
+        let output = std::process::Command::new(cargo)
+            .args(["metadata", "--no-deps", "--format-version", "1"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("spawn cargo metadata");
+        assert!(
+            output.status.success(),
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let meta: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("parse cargo metadata json");
+        let packages = meta["packages"].as_array().expect("packages array");
+        let deps = packages
+            .iter()
+            .find(|p| p["name"] == "axon-encoder")
+            .expect("axon-encoder package in metadata")["dependencies"]
+            .as_array()
+            .expect("dependencies array");
+
+        for dep in deps {
+            let name = dep["name"].as_str().unwrap_or("");
+            assert_ne!(
+                name, "neuromod",
+                "forbidden neuromod dependency (kind={:?}): {dep}",
+                dep["kind"]
+            );
         }
     }
 
