@@ -1,10 +1,8 @@
 //! # axon-encoder
 //!
-//! Flexible sensory encoding for spiking neural networks.
-//!
-//! Independent of the sibling [`neuromod`](https://github.com/Limen-Neural/neuromod)
-//! crate: neither package may depend on the other. Apps combine them via an
-//! adapter that maps external state into [`EncodingGains`].
+//! Flexible sensory encoding for spiking neural networks: continuous signals
+//! in, spike events out. Optional [`EncodingGains`] scale rate / threshold /
+//! latency / sensitivity without requiring an external neuromodulator runtime.
 
 pub mod encoder;
 pub mod encoders;
