@@ -93,11 +93,27 @@ depend on OS/entropy-backed RNGs through `rand`.
 
 ## Installation
 
-The crate is currently **not yet published** to [crates.io](https://crates.io).
-The in-tree version is **0.4.0** (experimental pre-1.0). First crates.io publish
-is tracked in [issue #60](https://github.com/Limen-Neural/axon-encoder/issues/60).
+**0.4.0 is an experimental pre-1.0 release.** The public API may evolve under
+SemVer-compatible minor/patch releases until 1.0; pin a version if you need a
+stable dependency line.
 
-**Git (bleeding edge / until #60 lands):**
+**crates.io (recommended):**
+
+```toml
+[dependencies]
+axon-encoder = "0.4"
+```
+
+Optional features: `serde` (serialize configs / gains), `ndarray` (view helpers).
+There is no `cuda` feature in 0.4.0.
+
+```toml
+[dependencies]
+axon-encoder = { version = "0.4", features = ["ndarray"] }
+ndarray = "0.16" # declare yourself so you can construct ArrayView values
+```
+
+**Git (bleeding edge):**
 
 ```toml
 [dependencies]
@@ -109,20 +125,6 @@ axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder.git" }
 ```toml
 [dependencies]
 axon-encoder = { path = "../axon-encoder" }
-```
-
-**Target crates.io form (after #60):**
-
-```toml
-[dependencies]
-axon-encoder = "0.4"
-```
-
-To enable direct `ndarray` view helpers (declare `ndarray` yourself so you can construct and name `ArrayView` values):
-```toml
-[dependencies]
-axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder.git", features = ["ndarray"] }
-ndarray = "0.16"
 ```
 
 ## Quick Start
