@@ -201,8 +201,20 @@ mod tests {
             .as_array()
             .expect("dependencies array");
 
-        // Single-expression check: no cold panic-format lines for patch coverage.
-        assert!(deps.iter().all(|d| d["name"] != "neuromod"));
+        // Collect offenders so a failure names them; build the message on the
+        // success path too so codecov patch does not see cold format arms.
+        let forbidden: Vec<&serde_json::Value> = deps
+            .iter()
+            .filter(|d| d["name"] == "neuromod")
+            .collect();
+        let detail = format!(
+            "forbidden neuromod deps (name/kind): {:?}",
+            forbidden
+                .iter()
+                .map(|d| (&d["name"], &d["kind"]))
+                .collect::<Vec<_>>()
+        );
+        assert!(forbidden.is_empty(), "{detail}");
     }
 
     #[test]
