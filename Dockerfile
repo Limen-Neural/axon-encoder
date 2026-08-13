@@ -13,7 +13,8 @@ FROM rust:1.97.1-slim-bookworm
 WORKDIR /app
 
 # System toolchain stays root-owned under /usr/local/{cargo,rustup}.
-# Writable cargo registry/target live under the non-root user's CARGO_HOME.
+# Writable Cargo registry/Git cache live under CARGO_HOME; build artifacts
+# default to /app/target (WORKDIR), not under CARGO_HOME.
 RUN rustup component add rustfmt clippy \
     && useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin encoder \
     && mkdir -p /home/encoder/.cargo \
