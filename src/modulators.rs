@@ -1,3 +1,18 @@
+//! Encoding-side gain controls and optional named modulator *bags*.
+//!
+//! # Crate boundary ([issue #21](https://github.com/Limen-Neural/axon-encoder/issues/21))
+//!
+//! This module lives entirely inside **`axon-encoder`**. It does **not** depend
+//! on the sibling [`neuromod`](https://github.com/Limen-Neural/neuromod) crate.
+//!
+//! - [`EncodingGains`] — generic scales (rate / threshold / latency / sensitivity).
+//! - [`NeuroModulators`] / [`NeuromodulatorGainCurves`] — **encoding-local** helpers
+//!   with biologically familiar field names for gain evaluation. They are **not**
+//!   the neuromod runtime; apps that use both crates map neuromod state →
+//!   [`EncodingGains`] in an adapter (see `examples/sibling_gains_adapter.rs`).
+//!
+//! See `docs/architecture-siblings.md`.
+
 const EVENT_DOPAMINE_DECAY: f32 = 0.95;
 const CORTISOL_DECAY: f32 = 0.90;
 const ACETYLCHOLINE_DECAY: f32 = 0.99;

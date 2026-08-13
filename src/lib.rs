@@ -1,6 +1,10 @@
 //! # axon-encoder
 //!
 //! Flexible sensory encoding for spiking neural networks.
+//!
+//! Independent of the sibling [`neuromod`](https://github.com/Limen-Neural/neuromod)
+//! crate: neither package may depend on the other. Apps combine them via an
+//! adapter that maps external state into [`EncodingGains`].
 
 pub mod encoder;
 pub mod encoders;
@@ -170,6 +174,52 @@ mod tests {
     fn test_lib_prelude_imports() {
         use crate::prelude::*;
         let _ = EncoderConfig::default();
+    }
+
+    /// Guard: `axon-encoder` must not depend on the neuromod crate (#21).
+    ///
+    /// Uses `cargo metadata` so table syntax, workspace inheritance, rename/
+    /// package aliases, and normal/dev/build/target scopes are all covered
+    /// without matching description prose.
+    #[test]
+    fn cargo_toml_has_no_neuromod_crate_dependency() {
+        // `CARGO` is always set when this crate is built by cargo (no fallback branch).
+        let output = std::process::Command::new(env!("CARGO"))
+            .args(["metadata", "--no-deps", "--locked", "--format-version", "1"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("spawn cargo metadata");
+        // Always materialize stderr so a --locked/offline failure is actionable
+        // and codecov does not see a cold format arm.
+        let metadata_detail = format!(
+            "cargo metadata failed (status={:?}): {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{metadata_detail}");
+
+        let meta: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("parse cargo metadata json");
+        let packages = meta["packages"].as_array().expect("packages array");
+        let deps = packages
+            .iter()
+            .find(|p| p["name"] == "axon-encoder")
+            .expect("axon-encoder package in metadata")["dependencies"]
+            .as_array()
+            .expect("dependencies array");
+
+        // Collect offenders so a failure names them; build the message on the
+        // success path too so codecov patch does not see cold format arms.
+        let forbidden: Vec<&serde_json::Value> =
+            deps.iter().filter(|d| d["name"] == "neuromod").collect();
+        let detail = format!(
+            "forbidden neuromod deps (name/kind): {:?}",
+            forbidden
+                .iter()
+                .map(|d| (&d["name"], &d["kind"]))
+                .collect::<Vec<_>>()
+        );
+        assert!(forbidden.is_empty(), "{detail}");
     }
 
     #[test]
