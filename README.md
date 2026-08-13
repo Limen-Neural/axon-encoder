@@ -93,18 +93,29 @@ depend on OS/entropy-backed RNGs through `rand`.
 
 ## Installation
 
-To use `axon-encoder` in your project, add the following to your `Cargo.toml`:
+The crate is currently **not yet published** to [crates.io](https://crates.io).
+The in-tree version is **0.4.0** (experimental pre-1.0). First crates.io publish
+is tracked in [issue #60](https://github.com/Limen-Neural/axon-encoder/issues/60).
+
+**Git (bleeding edge / until #60 lands):**
 
 ```toml
 [dependencies]
 axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder.git" }
 ```
-*(Note: Once published to crates.io, this will be `axon-encoder = "0.3.0"`)*
 
-For local development, you can use a path dependency:
+**Path (local development):**
+
 ```toml
 [dependencies]
 axon-encoder = { path = "../axon-encoder" }
+```
+
+**Target crates.io form (after #60):**
+
+```toml
+[dependencies]
+axon-encoder = "0.4"
 ```
 
 To enable direct `ndarray` view helpers (declare `ndarray` yourself so you can construct and name `ArrayView` values):
@@ -195,12 +206,28 @@ Welcome to Rust! If you're new to the language, some of the syntax in the Quick 
 - **Sensory Encoding Algorithms**: Implementation of core mathematical SNN encoding mechanisms (e.g., Rate, Derivative, Temporal, Population, and Delta encoding).
 - **Signal-to-Spike Translation**: Converting continuous real-world streams/vectors into discrete biological/event-driven spike events.
 - **Deterministic and Stochastic Pipelines**: Algorithms for both deterministic value-to-spike mappings and stochastic Poisson-process spike generators.
+- **Generic encoding controls**: `EncodingGains`, `ModulatedEncoder`, and optional gain-curve helpers used to scale rate/threshold/latency/sensitivity **without** depending on the [`neuromod`](https://github.com/Limen-Neural/neuromod) crate.
 
 ### Does Not Own
 
 - **SNN Simulation Engine**: `axon-encoder` does not simulate spiking neural networks, calculate synaptic plasticity (STDP), or manage network topologies. (See [synaptic-mesh](https://github.com/Limen-Neural/synaptic-mesh) and [plasticity-lab](https://github.com/Limen-Neural/plasticity-lab) instead).
+- **Biological modulator dynamics**: Long-horizon dopamine/cortisol/ACh dynamics, STDP, and network reward loops live in [`neuromod`](https://github.com/Limen-Neural/neuromod) — not here.
 - **Domain-Specific Experiments**: Contains no domain-specific code, financial/trading logic, or mining telemetry.
 - **Hardware Bindings**: Focuses strictly on software implementations, leaving specific FPGA/ASIC/GPU compilation and execution to downstream crates like [silicon-bridge](https://github.com/Limen-Neural/silicon-bridge).
+
+### Sibling crates (no direct dependency)
+
+`axon-encoder` and `neuromod` are **independent siblings**. Neither crate may depend on the other:
+
+```text
+              application / adapter
+               ↙             ↘
+         neuromod          axon-encoder
+```
+
+Downstream apps map biological state → generic `EncodingGains` (see
+[`examples/sibling_gains_adapter.rs`](examples/sibling_gains_adapter.rs) and
+[`docs/architecture-siblings.md`](docs/architecture-siblings.md)).
 
 ## Contributing
 

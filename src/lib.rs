@@ -1,6 +1,10 @@
 //! # axon-encoder
 //!
 //! Flexible sensory encoding for spiking neural networks.
+//!
+//! Independent of the sibling [`neuromod`](https://github.com/Limen-Neural/neuromod)
+//! crate: neither package may depend on the other. Apps combine them via an
+//! adapter that maps external state into [`EncodingGains`].
 
 pub mod encoder;
 pub mod encoders;
@@ -170,6 +174,24 @@ mod tests {
     fn test_lib_prelude_imports() {
         use crate::prelude::*;
         let _ = EncoderConfig::default();
+    }
+
+    /// Guard: `axon-encoder` must not depend on the neuromod crate (#21).
+    #[test]
+    fn cargo_toml_has_no_neuromod_crate_dependency() {
+        let toml = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
+        for line in toml.lines() {
+            let t = line.trim();
+            // Match dependency keys, not description prose ("neuromodulator-driven").
+            if t.starts_with("neuromod ")
+                || t.starts_with("neuromod=")
+                || t.starts_with("neuromod =")
+                || t.contains("Limen-Neural/neuromod")
+                || t.contains("path = \"../neuromod\"")
+            {
+                panic!("forbidden neuromod dependency line: {line}");
+            }
+        }
     }
 
     #[test]
