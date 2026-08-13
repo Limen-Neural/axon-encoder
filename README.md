@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Limen-Neural/axon-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/Limen-Neural/axon-encoder)
+[![Qodana](https://github.com/Limen-Neural/axon-encoder/actions/workflows/qodana_code_quality.yml/badge.svg)](https://github.com/Limen-Neural/axon-encoder/actions/workflows/qodana_code_quality.yml)
 [![Docs](https://docs.rs/axon-encoder/badge.svg)](https://docs.rs/axon-encoder)
 
 **A flexible sensory encoding library for spiking neural networks (SNNs).**
@@ -12,8 +13,10 @@ front-end of a neuromorphic pipeline without pulling in a full SNN simulator.
 
 ## Installation
 
-**0.4.x is experimental (pre-1.0).** The API may evolve under SemVer-compatible
-minor and patch releases until 1.0. Pin a version if you need a fixed line.
+**0.4.x is experimental (pre-1.0).** Cargo treats `axon-encoder = "0.4"` as
+`^0.4` (that is `>= 0.4.0, < 0.5.0`): compatible **patch** updates only.
+A `0.5` release is a new breaking line; pin `"=0.4.0"` if you need an exact
+crate version.
 
 ```toml
 [dependencies]
@@ -42,10 +45,12 @@ use axon_encoder::prelude::*;
 
 fn main() {
     // Prefer try_new: typed validation instead of panics on bad config.
-    // Maps (0.0, 1.0) inputs to 5–100 Hz at a 10 ms sampling interval.
+    // Range is (min, max); values are clamped to that span. Endpoints map to
+    // base_rate / max_rate (here 5–100 Hz at a 10 ms sampling interval).
     let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010)
         .expect("valid RateEncoder configuration");
 
+    // Inclusive endpoints 0.0 ..= 1.0 (matches the range above).
     let input: Vec<f32> = (0..64).map(|i| i as f32 / 63.0).collect();
     let output = encoder.encode(&input);
 
@@ -125,14 +130,14 @@ predictive, gain-adapter patterns, and more).
 
 ## What this crate is (and is not)
 
-**In scope**
+### In scope
 
 - Sensory / signal → spike encoding algorithms
 - Deterministic and stochastic encoding pipelines
 - Generic gain controls (`EncodingGains`, gain curves) used only for scaling
   rate, threshold, latency, or sensitivity at encode time
 
-**Out of scope**
+### Out of scope
 
 - Full SNN simulation, network topology, or synaptic plasticity (STDP)
 - Long-horizon biological neuromodulator *dynamics* or reward loops (this crate
