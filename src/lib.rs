@@ -185,7 +185,7 @@ mod tests {
     fn cargo_toml_has_no_neuromod_crate_dependency() {
         let cargo = option_env!("CARGO").unwrap_or("cargo");
         let output = std::process::Command::new(cargo)
-            .args(["metadata", "--no-deps", "--format-version", "1"])
+            .args(["metadata", "--no-deps", "--locked", "--format-version", "1"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
             .expect("spawn cargo metadata");
