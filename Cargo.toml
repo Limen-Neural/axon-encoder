@@ -22,8 +22,7 @@ exclude = [
     "/qodana.yaml",
     "/REVIEW.md",
     "/docs/",
-    "/output.log",
-    "/output_test.log",
+    "/rust-toolchain.toml",
 ]
 
 [dependencies]

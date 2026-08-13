@@ -8,7 +8,7 @@
 #
 # Builder (tests / full toolchain):
 #   docker build --target builder -t axon-encoder:builder .
-#   docker run --rm axon-encoder:builder cargo test --all-features --locked
+#   docker run --rm axon-encoder:builder   # re-runs cargo test (CMD)
 
 FROM rust:1.97.1-slim-bookworm AS builder
 
@@ -29,6 +29,9 @@ ENV PATH=/usr/local/cargo/bin:${PATH}
 
 COPY --chown=encoder:encoder . .
 
+# Tests in a cacheable layer (parity with native CI / local builder rechecks).
+RUN cargo test --all-features --locked
+
 # Release examples (ndarray_encoding needs `ndarray`; use all-features).
 # Copy only stable example names (skip cargo hash-suffixed intermediate bins).
 RUN cargo build --release --examples --all-features --locked \
@@ -39,6 +42,10 @@ RUN cargo build --release --examples --all-features --locked \
          test -x "${bin}" || { echo "missing example binary: ${name}" >&2; exit 1; }; \
          cp "${bin}" /app/out/; \
        done
+
+# Default re-check when running the builder stage without args.
+CMD ["cargo", "test", "--all-features", "--locked"]
+
 # Runtime — minimal image for reproducible example runs / demos.
 # Library consumers should depend on the crates.io package, not this image.
 FROM debian:bookworm-slim

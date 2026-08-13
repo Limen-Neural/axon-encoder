@@ -38,19 +38,25 @@ container installs rustfmt/clippy and runs `cargo fetch` on create.
 
 ### Docker
 
-**Published images** (after merge to `main`; tags `latest`, `0.4.0`, and commit SHA):
+**Published images** (GHCR always; Docker Hub when `DOCKER_USER` + `DOCKER_PAT`
+are configured on the org):
+
+| Trigger | Tags |
+| --- | --- |
+| Push to `main` | `:SHA` only |
+| Git tag `v0.4.0` (etc.) | `:SHA`, `:0.4.0`, `:latest` |
 
 ```bash
+# After the v0.4.0 release tag:
 docker pull ghcr.io/limen-neural/axon-encoder:0.4.0
-# or Docker Hub (if DOCKER_USER is configured in the org):
-# docker pull <DOCKER_USER>/axon-encoder:0.4.0
 docker run --rm ghcr.io/limen-neural/axon-encoder:0.4.0   # lists example binaries
+# Optional Hub mirror (same tags when credentials exist):
+# docker pull <DOCKER_USER>/axon-encoder:0.4.0
 ```
 
 The runtime image is a slim Debian container with **example binaries** under
-`/usr/local/bin` (not a substitute for the crates.io library). CI builds it on
-PRs and **pushes** to Docker Hub + GHCR on `main`
-([`.github/workflows/docker.yml`](.github/workflows/docker.yml)).
+`/usr/local/bin` (not a substitute for the crates.io library). See
+[`.github/workflows/docker.yml`](.github/workflows/docker.yml).
 
 **Local build / test without a host Rust install:**
 
@@ -59,9 +65,9 @@ PRs and **pushes** to Docker Hub + GHCR on `main`
 docker build -t axon-encoder:dev .
 docker run --rm axon-encoder:dev
 
-# Builder stage (full toolchain + tests)
+# Builder stage (tests run during build; CMD re-runs them)
 docker build --target builder -t axon-encoder:builder .
-docker run --rm axon-encoder:builder cargo test --all-features --locked
+docker run --rm axon-encoder:builder
 ```
 
 See [`Dockerfile`](Dockerfile). Multi-OS native CI already covers Linux / macOS /
