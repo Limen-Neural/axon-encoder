@@ -3,11 +3,27 @@ name = "axon-encoder"
 version = "0.4.0"
 description = "Flexible sensory encoding pipelines for spiking neural networks — rate, temporal, predictive, population, and neuromodulator-driven encoding for telemetry and cyber-physical data."
 repository = "https://github.com/Limen-Neural/axon-encoder"
+documentation = "https://docs.rs/axon-encoder"
+readme = "README.md"
 license = "MIT OR Apache-2.0"
 edition = "2024"
 # Keep identical to rust-toolchain.toml `channel` and the CI workflow
 # `toolchain:` pin (see REVIEW.md "MSRV pin rule").
 rust-version = "1.97.1"
+keywords = ["snn", "spiking", "neuromorphic", "encoding", "spike"]
+categories = ["science", "algorithms", "simulation"]
+exclude = [
+    "/.github/",
+    "/.devcontainer/",
+    "/.codacy.yml",
+    "/.codecov.yml",
+    "/.dockerignore",
+    "/Dockerfile",
+    "/qodana.yaml",
+    "/REVIEW.md",
+    "/docs/",
+    "/rust-toolchain.toml",
+]
 
 [dependencies]
 ndarray = { version = "0.16", optional = true }
@@ -22,7 +38,6 @@ ndarray = "0.16"
 [features]
 default = []
 ndarray = ["dep:ndarray"]
-cuda = []
 serde = ["dep:serde"]
 
 [[example]]
