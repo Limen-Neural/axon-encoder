@@ -142,7 +142,6 @@ predictive, gain-adapter patterns, and more).
 - Full SNN simulation, network topology, or synaptic plasticity (STDP)
 - Long-horizon biological neuromodulator *dynamics* or reward loops (this crate
   only provides encoding-local gain helpers)
-- Domain-specific trading, mining, or product logic
 - FPGA / ASIC / GPU device bindings
 
 The library is intentionally unopinionated about which simulator or hardware
