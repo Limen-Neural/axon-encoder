@@ -1,20 +1,23 @@
-# Verification image for contributors without a local Rust toolchain.
+# Multi-stage Docker for axon-encoder (examples runtime + CI builder).
 # Keep `rust:1.97.1` in sync with Cargo.toml rust-version / rust-toolchain.toml
-# / CI toolchain pin (see REVIEW.md MSRV pin rule).
+# / CI toolchain pin (see REVIEW.md "MSRV pin rule").
 #
-# Cargo work runs in a `RUN` layer so Docker/GHA layer cache can reuse deps
-# across commits that only touch docs or workflows.
-#
+# Runtime (default): example binaries under /usr/local/bin
 #   docker build -t axon-encoder:dev .
 #   docker run --rm axon-encoder:dev
 #
-FROM rust:1.97.1-slim-bookworm
+# Builder (tests / full toolchain):
+#   docker build --target builder -t axon-encoder:builder .
+#   docker run --rm axon-encoder:builder cargo test --all-features --locked
+
+FROM rust:1.97.1-slim-bookworm AS builder
 
 WORKDIR /app
 
 # System toolchain stays root-owned under /usr/local/{cargo,rustup}.
 # Writable Cargo registry/Git cache live under CARGO_HOME; build artifacts
 # default to /app/target (WORKDIR), not under CARGO_HOME.
+USER root
 RUN rustup component add rustfmt clippy \
     && useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin encoder \
     && mkdir -p /home/encoder/.cargo \
@@ -24,15 +27,27 @@ USER encoder
 ENV CARGO_HOME=/home/encoder/.cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
 
-# Dependency graph first (invalidates less often than full tree copies).
-COPY --chown=encoder:encoder Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY --chown=encoder:encoder src ./src
-COPY --chown=encoder:encoder tests ./tests
-COPY --chown=encoder:encoder benches ./benches
-COPY --chown=encoder:encoder examples ./examples
+COPY --chown=encoder:encoder . .
 
-# Warm registry + compile + test in a cacheable layer (non-root).
-RUN cargo test --all-features --locked
+# Release examples (ndarray_encoding needs `ndarray`; use all-features).
+# Copy only stable example names (skip cargo hash-suffixed intermediate bins).
+RUN cargo build --release --examples --all-features --locked \
+    && mkdir -p /app/out \
+    && for ex in examples/*.rs; do \
+         name="$(basename "${ex}" .rs)"; \
+         bin="target/release/examples/${name}"; \
+         test -x "${bin}" || { echo "missing example binary: ${name}" >&2; exit 1; }; \
+         cp "${bin}" /app/out/; \
+       done
+# Runtime — minimal image for reproducible example runs / demos.
+# Library consumers should depend on the crates.io package, not this image.
+FROM debian:bookworm-slim
 
-# Default re-check (fast when image layers are warm).
-CMD ["cargo", "test", "--all-features", "--locked"]
+RUN useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin encoder
+
+COPY --from=builder /app/out/ /usr/local/bin/
+
+USER encoder
+WORKDIR /home/encoder
+
+CMD ["ls", "/usr/local/bin"]

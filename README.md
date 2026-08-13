@@ -36,20 +36,36 @@ Three supported paths (all use Rust **1.97.1**):
 Open the repo in VS Code (“Reopen in Container”) or GitHub Codespaces. The
 container installs rustfmt/clippy and runs `cargo fetch` on create.
 
-### Docker (test without local Rust)
+### Docker
+
+**Published images** (after merge to `main`; tags `latest`, `0.4.0`, and commit SHA):
 
 ```bash
-docker build -t axon-encoder:dev .
-docker run --rm axon-encoder:dev
+docker pull ghcr.io/limen-neural/axon-encoder:0.4.0
+# or Docker Hub (if DOCKER_USER is configured in the org):
+# docker pull <DOCKER_USER>/axon-encoder:0.4.0
+docker run --rm ghcr.io/limen-neural/axon-encoder:0.4.0   # lists example binaries
 ```
 
-That image runs `cargo test --all-features --locked` by default (see
-[`Dockerfile`](Dockerfile)). CI also builds it on pushes to `main` and pull
-requests targeting `main`
+The runtime image is a slim Debian container with **example binaries** under
+`/usr/local/bin` (not a substitute for the crates.io library). CI builds it on
+PRs and **pushes** to Docker Hub + GHCR on `main`
 ([`.github/workflows/docker.yml`](.github/workflows/docker.yml)).
 
-Multi-OS native CI already covers Linux / macOS / Windows
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+**Local build / test without a host Rust install:**
+
+```bash
+# Runtime image (example binaries)
+docker build -t axon-encoder:dev .
+docker run --rm axon-encoder:dev
+
+# Builder stage (full toolchain + tests)
+docker build --target builder -t axon-encoder:builder .
+docker run --rm axon-encoder:builder cargo test --all-features --locked
+```
+
+See [`Dockerfile`](Dockerfile). Multi-OS native CI already covers Linux / macOS /
+Windows ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ## What is Sensory Encoding?
 

@@ -23,7 +23,8 @@ To bump MSRV:
 2. Run the mandatory commands below on that toolchain
    (`rustup run <ver> cargo test --locked`, etc.).
 3. Confirm GitHub Actions matrix (Linux / macOS / Windows) is green.
-4. Rebuild Docker verification image (`docker build -t axon-encoder:dev .`).
+4. Rebuild Docker images (`docker build -t axon-encoder:dev .` and
+   `docker build --target builder -t axon-encoder:builder .`).
 
 Do not bump only one pin.
 
