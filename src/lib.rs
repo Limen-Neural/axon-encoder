@@ -189,7 +189,14 @@ mod tests {
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
             .expect("spawn cargo metadata");
-        assert!(output.status.success());
+        // Always materialize stderr so a --locked/offline failure is actionable
+        // and codecov does not see a cold format arm.
+        let metadata_detail = format!(
+            "cargo metadata failed (status={:?}): {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{metadata_detail}");
 
         let meta: serde_json::Value =
             serde_json::from_slice(&output.stdout).expect("parse cargo metadata json");
