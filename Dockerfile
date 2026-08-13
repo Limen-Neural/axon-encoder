@@ -27,7 +27,12 @@ USER encoder
 ENV CARGO_HOME=/home/encoder/.cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
 
-COPY --chown=encoder:encoder . .
+# Targeted copies so README/workflow/docs edits do not bust cargo layers.
+COPY --chown=encoder:encoder Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY --chown=encoder:encoder src ./src
+COPY --chown=encoder:encoder tests ./tests
+COPY --chown=encoder:encoder benches ./benches
+COPY --chown=encoder:encoder examples ./examples
 
 # Tests in a cacheable layer (parity with native CI / local builder rechecks).
 RUN cargo test --all-features --locked
