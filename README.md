@@ -64,6 +64,97 @@ fn main() {
 
 Full API docs: [docs.rs/axon-encoder](https://docs.rs/axon-encoder).
 
+## Spike time semantics
+
+Every encoder here shares **one time model**, so a consumer can integrate any of
+them — or a `&mut dyn Encoder` — without special cases:
+
+> A `SpikeEvent::timestamp` is a `TickOffset`: a count of encoder **ticks**
+> measured from the start of the `encode` / `encode_step` call that emitted it.
+
+Timestamps are **call-relative**. They are never absolute and never wall-clock,
+because this crate owns no clock and no scheduler. The caller keeps absolute
+time in a `TimeCursor` and advances it once per call:
+
+```rust
+use axon_encoder::prelude::*;
+
+fn main() -> Result<(), EncoderError> {
+    let mut encoder = LatencyEncoder::try_new(9, (0.0, 1.0))?;
+    let mut cursor = TimeCursor::new(encoder.time_model());
+
+    for _ in 0..3 {
+        let output = encoder.encode_step(&[0.9, 0.1]);
+        for spike in &output.spikes {
+            // Absolute tick on your timeline; absolute_nanos(..) when a
+            // Timebase is available.
+            let _tick = cursor.absolute(spike.timestamp);
+        }
+        cursor.advance(); // by time_model().step_ticks()
+    }
+    Ok(())
+}
+```
+
+`Encoder::time_model()` reports the three things a consumer needs:
+
+| | Meaning |
+| --- | --- |
+| `step_ticks()` | How far your origin advances per call |
+| `span_ticks()` | Exclusive bound on offsets a single call can emit |
+| `timebase()` | Physical duration of one tick, when the encoder knows it |
+
+Per encoder:
+
+| Encoder | `step_ticks` | `span_ticks` | `timebase` |
+| --- | --- | --- | --- |
+| `RateEncoder` | 1 | 1 | `dt_seconds` |
+| `LatencyEncoder` | `max_latency + 1` | `max_latency + 1` | none |
+| `PhaseEncoder` | 1 | `cycle_steps` | none |
+| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `TemporalEncoder`, `PredictiveEncoder` | 1 | 1 | none |
+
+**Batch versus streaming.** Both modes follow the same rule, once per call —
+`encode` is not a longer window than `encode_step`. `PhaseEncoder` advances its
+oscillation by one tick in either mode; the stateful encoders update history in
+either mode; `LatencyEncoder` is stateless, so the two are identical.
+
+**Ordering.** Within one `spikes` slice: channel IDs are non-decreasing, offsets
+are non-decreasing within a channel, and repeated spikes from one channel at one
+offset (a `RateEncoder` burst) are contiguous and mutually unordered — the run
+length is a spike *count*, not a sequence. Note this is channel-major, not
+globally time-sorted: sort by `timestamp` if you need a chronological stream.
+
+`PhaseEncoder` is the one encoder whose calls overlap (`span_ticks >
+step_ticks`), since a call can place a spike anywhere in the ongoing cycle.
+
+Run `cargo run --example spike_timebase` for a worked integration: two encoders,
+two cursors, one merged nanosecond-timed stream.
+
+### Migrating from 0.4
+
+Two breaking changes, both in the 0.5 line:
+
+1. **`SpikeEvent::timestamp` is now `TickOffset`, not `u64`.** The type converts
+   both ways and compares against `u64`, so reads like
+   `assert_eq!(spike.timestamp, 5)` and `spike.timestamp <= other` still work.
+   Construction sites need `SpikeEvent::new(channel, 5u64, true)`,
+   `SpikeEvent::at_step_start(channel, true)`, or `TickOffset::new(5)` in the
+   struct literal; use `spike.timestamp.ticks()` where a raw `u64` is required.
+   The serde representation is unchanged — `TickOffset` is `#[serde(transparent)]`,
+   so 0.4 payloads still deserialize.
+2. **`PhaseEncoder` emits call-relative offsets.** It previously emitted
+   `current_phase + phase_offset`, an absolute value that no other encoder used.
+   The old number is `cursor.absolute(spike.timestamp)`, or
+   `encoder.current_phase() + spike.timestamp.ticks()` if you track the
+   oscillation yourself; cycle position stays `absolute % cycle_steps`.
+
+One behavior change worth noting: a neuromodulated `latency_scale` above `1.0`
+no longer stretches spikes past `max_latency`. Latency gains still shorten the
+window; `span_ticks()` is now a hard bound on modulated output too.
+
+`Encoder::time_model()` has a default implementation, so out-of-crate `Encoder`
+impls keep compiling and inherit `TimeModel::INSTANT`.
+
 ### Rate encoder time semantics
 
 `RateEncoder` treats `base_rate` and `max_rate` as firing rates in **hertz**.
@@ -122,6 +213,7 @@ Clone the repository and run:
 ```bash
 cargo run --example rate_encoding
 cargo run --example delta_encoding
+cargo run --example spike_timebase
 cargo run --example ndarray_encoding --features ndarray
 ```
 

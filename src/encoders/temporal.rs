@@ -119,11 +119,8 @@ impl TemporalEncoder {
 
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
                 if change > (threshold * threshold_scale).max(0.0) {
-                    output.spikes.push(SpikeEvent {
-                        channel,
-                        timestamp: 0,   // Simplified
-                        polarity: true, // Or use spike_val to determine polarity/strength
-                    });
+                    // Or use spike_val to determine polarity/strength.
+                    output.spikes.push(SpikeEvent::at_step_start(channel, true));
                     break; // Only fire one spike per channel per step
                 }
             }
@@ -171,6 +168,16 @@ impl Encoder for TemporalEncoder {
             input
         };
         self.encode_with_threshold_scale(safe_input, 1.0)
+    }
+
+    /// One call is one tick; batch and streaming are identical here.
+    ///
+    /// A channel emits at most one spike per call, at
+    /// [`TickOffset::ZERO`](crate::time::TickOffset::ZERO) — the pattern lives
+    /// in the *sequence* of steps, not in offsets within one. Ticks are
+    /// dimensionless: one tick is one sample of the history window.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
     }
 
     fn reset(&mut self) {

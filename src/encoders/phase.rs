@@ -2,15 +2,24 @@ use crate::prelude::*;
 
 /// Encodes analog values as phase-locked spikes within a repeating oscillation cycle
 ///
-/// Each input channel produces at most one positive spike per call, with the spike
-/// timestamp positioned relative to the current background phase according to the
-/// normalized input value. Higher values map to later phase bins
+/// Each input channel produces at most one positive spike per call, placed within
+/// the ongoing cycle according to the normalized input value. Higher values map to
+/// later phase bins, so ordering is stable within a call.
 ///
-/// Timestamps are computed as `current_phase + phase_offset`, which keeps ordering
-/// stable *within* a single encode call (higher-value channels get later timestamps)
-/// Ordering *across* calls is not globally guaranteed, since `phase_offset` can exceed
-/// the per-call phase advance. Cycle-relative phase is recoverable as
-/// `timestamp % cycle_steps`.
+/// # Time semantics
+///
+/// The background oscillation advances **one tick per call**, while a single call
+/// can place a spike anywhere in the `cycle_steps`-tick cycle — this is the one
+/// encoder here whose windows overlap
+/// ([`TimeModel::is_overlapping`](crate::time::TimeModel::is_overlapping) is
+/// `true`). Like every encoder in this crate, the emitted `timestamp` is the
+/// **call-relative** phase offset in `0..cycle_steps`; absolute phase time is
+/// `cursor.absolute(offset)`, and the position within the cycle is
+/// `cursor.absolute(offset) % cycle_steps`.
+///
+/// [`current_phase`](Self::current_phase) exposes the encoder's own cycle
+/// counter for callers that track the oscillation directly rather than through a
+/// [`TimeCursor`](crate::time::TimeCursor).
 ///
 /// # Examples
 ///
@@ -18,8 +27,17 @@ use crate::prelude::*;
 /// use axon_encoder::prelude::*;
 /// # fn main() -> Result<(), EncoderError> {
 /// let mut enc = PhaseEncoder::try_new(16, (0.0, 1.0))?;
+/// let mut cursor = TimeCursor::new(enc.time_model());
+///
 /// let out = enc.encode(&[0.0, 1.0]);
 /// assert_eq!(out.spikes.len(), 2);
+/// assert_eq!(out.spikes[0].timestamp, 0); // low value → early in the cycle
+/// assert_eq!(out.spikes[1].timestamp, 15); // high value → late in the cycle
+///
+/// cursor.advance(); // one tick of background oscillation per call
+/// let next = enc.encode(&[0.0]);
+/// assert_eq!(next.spikes[0].timestamp, 0); // still cycle-relative
+/// assert_eq!(cursor.absolute(next.spikes[0].timestamp), 1); // absolute phase time
 /// # Ok(())
 /// # }
 /// ```
@@ -93,14 +111,12 @@ impl PhaseEncoder {
                 break;
             };
 
+            // Call-relative phase offset: absolute phase time is the caller's
+            // cursor origin plus this offset (see the crate time contract).
             let phase_offset = self.phase_offset(self.normalize(value));
-            // Monotonic timestamps preserve higher-value → later-phase ordering
-            // even when phase_offset would wrap a modular cycle counter.
-            output.spikes.push(SpikeEvent {
-                channel: channel_u16,
-                timestamp: self.current_phase.saturating_add(phase_offset),
-                polarity: true,
-            });
+            output
+                .spikes
+                .push(SpikeEvent::new(channel_u16, phase_offset, true));
         }
 
         output
@@ -108,6 +124,23 @@ impl PhaseEncoder {
 
     fn advance_phase(&mut self) {
         self.current_phase = self.current_phase.saturating_add(1);
+    }
+
+    /// Absolute tick of the background oscillation, advanced once per call.
+    ///
+    /// Equivalent to the origin of a [`TimeCursor`](crate::time::TimeCursor)
+    /// driven by this encoder's [`time_model`](Encoder::time_model), and useful
+    /// when a caller wants the cycle position without keeping its own cursor:
+    /// `(encoder.current_phase() + spike.timestamp.ticks()) % cycle_steps`.
+    #[inline]
+    pub const fn current_phase(&self) -> u64 {
+        self.current_phase
+    }
+
+    /// Ticks in one full oscillation cycle.
+    #[inline]
+    pub const fn cycle_steps(&self) -> u64 {
+        self.cycle_steps
     }
 
     fn encode_current_cycle_with_sensitivity_scale(
@@ -137,11 +170,9 @@ impl PhaseEncoder {
 
             let normalized = ((value as f64 - lo) / (hi - lo)).clamp(0.0, 1.0);
             let phase_offset = self.phase_offset(normalized);
-            output.spikes.push(SpikeEvent {
-                channel: channel_u16,
-                timestamp: self.current_phase.saturating_add(phase_offset),
-                polarity: true,
-            });
+            output
+                .spikes
+                .push(SpikeEvent::new(channel_u16, phase_offset, true));
         }
 
         output
@@ -188,6 +219,18 @@ impl Encoder for PhaseEncoder {
         let output = self.encode_current_cycle(input);
         self.advance_phase();
         output
+    }
+
+    /// An overlapping model: one tick of oscillation per call, `cycle_steps` of
+    /// reach.
+    ///
+    /// Batch and streaming behave identically — both advance the background
+    /// phase by exactly one tick — so a caller advances its cursor by 1 per call
+    /// while a single call can place spikes up to `cycle_steps - 1` ticks ahead.
+    /// Ticks are dimensionless: `cycle_steps` divides a cycle, and the caller
+    /// chooses what a cycle lasts.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::overlapping(1, self.cycle_steps)
     }
 
     fn reset(&mut self) {
@@ -248,7 +291,11 @@ mod tests {
         let mut encoder = PhaseEncoder::new(8, (0.0, 10.0));
 
         let output = encoder.encode(&[-5.0, 0.0, 5.0, 10.0, 15.0]);
-        let timestamps: Vec<u64> = output.spikes.iter().map(|spike| spike.timestamp).collect();
+        let timestamps: Vec<u64> = output
+            .spikes
+            .iter()
+            .map(|spike| spike.timestamp.ticks())
+            .collect();
         let polarities: Vec<bool> = output.spikes.iter().map(|spike| spike.polarity).collect();
 
         assert_eq!(timestamps, vec![0, 0, 4, 7, 7]);
@@ -256,30 +303,65 @@ mod tests {
     }
 
     #[test]
-    fn test_phase_advances_after_each_call() {
+    fn test_phase_offsets_are_call_relative() {
         let mut encoder = PhaseEncoder::new(4, (0.0, 1.0));
 
-        assert_eq!(encoder.encode(&[0.0]).spikes[0].timestamp, 0);
-        assert_eq!(encoder.encode(&[0.0]).spikes[0].timestamp, 1);
-        assert_eq!(encoder.encode_step(&[0.0]).spikes[0].timestamp, 2);
-        assert_eq!(encoder.encode_step(&[0.0]).spikes[0].timestamp, 3);
-        // Monotonic absolute phase time (cycle phase is timestamp % cycle_steps).
-        assert_eq!(encoder.encode(&[0.0]).spikes[0].timestamp, 4);
-        assert_eq!(encoder.encode(&[0.0]).spikes[0].timestamp % 4, 1);
+        // The emitted offset is the position within the cycle, so an unchanged
+        // input yields an unchanged offset no matter how far time has advanced.
+        for _ in 0..6 {
+            assert_eq!(encoder.encode(&[0.0]).spikes[0].timestamp, 0);
+        }
+        assert_eq!(encoder.encode_step(&[1.0]).spikes[0].timestamp, 3);
+    }
+
+    #[test]
+    fn test_phase_advances_one_tick_per_call() {
+        let mut encoder = PhaseEncoder::new(4, (0.0, 1.0));
+        let mut cursor = TimeCursor::new(encoder.time_model());
+
+        // Both modes advance the background oscillation by exactly one tick.
+        for expected_phase in 0..4 {
+            assert_eq!(encoder.current_phase(), expected_phase);
+            assert_eq!(cursor.origin(), expected_phase);
+            let output = if expected_phase % 2 == 0 {
+                encoder.encode(&[0.0])
+            } else {
+                encoder.encode_step(&[0.0])
+            };
+            // Absolute phase time is the cursor origin plus the emitted offset.
+            assert_eq!(cursor.absolute(output.spikes[0].timestamp), expected_phase);
+            cursor.advance();
+        }
+
+        // Cycle position stays recoverable from absolute time.
+        let output = encoder.encode(&[0.5]);
+        let absolute = cursor.absolute(output.spikes[0].timestamp);
+        assert_eq!(absolute, 6);
+        assert_eq!(absolute % encoder.cycle_steps(), 2);
     }
 
     #[test]
     fn test_within_call_ordering_preserved_after_phase_advance() {
         let mut encoder = PhaseEncoder::new(8, (0.0, 1.0));
+        let mut cursor = TimeCursor::new(encoder.time_model());
         // Advance near the end of a modular cycle so a wrap would reorder.
         for _ in 0..6 {
             encoder.encode(&[0.0]);
+            cursor.advance();
         }
         let output = encoder.encode(&[0.125, 0.375]); // offsets 1 and 3
-        let timestamps: Vec<u64> = output.spikes.iter().map(|s| s.timestamp).collect();
-        // 6+1=7, 6+3=9 — strictly ordered (no modular wrap inversion).
-        assert_eq!(timestamps, vec![7, 9]);
-        assert!(timestamps[0] < timestamps[1]);
+        let offsets: Vec<u64> = output
+            .spikes
+            .iter()
+            .map(|spike| spike.timestamp.ticks())
+            .collect();
+        assert_eq!(offsets, vec![1, 3]);
+
+        // 6+1=7, 6+3=9 on the caller's timeline — strictly ordered, no modular
+        // wrap inversion.
+        let absolute: Vec<u64> = cursor.absolute_times(&output.spikes).collect();
+        assert_eq!(absolute, vec![7, 9]);
+        assert!(absolute[0] < absolute[1]);
     }
 
     #[test]
@@ -288,7 +370,9 @@ mod tests {
 
         encoder.encode(&[0.0]);
         encoder.encode(&[0.0]);
+        assert_eq!(encoder.current_phase(), 2);
         encoder.reset();
+        assert_eq!(encoder.current_phase(), 0);
 
         let output = encoder.encode(&[1.0]);
         assert_eq!(output.spikes[0].timestamp, 7);
@@ -300,9 +384,23 @@ mod tests {
 
         let output = encoder.encode(&[]);
         assert!(output.spikes.is_empty());
+        // An empty call still advances the background oscillation.
+        assert_eq!(encoder.current_phase(), 1);
 
         let next_output = encoder.encode(&[0.0]);
-        assert_eq!(next_output.spikes[0].timestamp, 1);
+        assert_eq!(next_output.spikes[0].timestamp, 0);
+        assert_eq!(encoder.current_phase(), 2);
+    }
+
+    #[test]
+    fn test_phase_time_model_is_overlapping() {
+        let encoder = PhaseEncoder::new(16, (0.0, 1.0));
+        let model = encoder.time_model();
+
+        assert_eq!(model.step_ticks(), 1);
+        assert_eq!(model.span_ticks(), 16);
+        assert!(model.is_overlapping());
+        assert!(model.timebase().is_none());
     }
 
     #[test]
