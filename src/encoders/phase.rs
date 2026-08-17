@@ -134,7 +134,7 @@ impl PhaseEncoder {
     /// `(encoder.current_phase() + spike.timestamp.ticks()) % cycle_steps`.
     ///
     /// Read it **before** the emitting call. Every encode call advances the
-    /// counter after producing its output, so a value read afterwards belongs to
+    /// counter after producing its output, so a value read afterward belongs to
     /// the *next* call and would place the spikes one tick late.
     #[inline]
     pub const fn current_phase(&self) -> u64 {

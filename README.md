@@ -148,7 +148,7 @@ Two breaking changes, both in the 0.5 line:
    `phase_before_the_call + spike.timestamp.ticks()` if you track the
    oscillation yourself; cycle position stays `absolute % cycle_steps`.
    Capture `current_phase()` **before** the emitting call — every encode call
-   advances it afterwards, so a read taken after the call is one tick ahead.
+   advances it afterward, so a read taken after the call is one tick ahead.
 
 Two smaller behavior changes, both in service of making `span_ticks()` a hard
 bound rather than an advisory one:
