@@ -403,6 +403,12 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "max_latency must be less than u64::MAX")]
+    fn latency_encoder_new_panics_on_an_unrepresentable_window() {
+        let _ = LatencyEncoder::new(u64::MAX, (0.0, 1.0));
+    }
+
+    #[test]
     #[should_panic(expected = "range must be finite and min must be less than max")]
     fn latency_encoder_rejects_infinite_range() {
         let _ = LatencyEncoder::new(10, (f32::NEG_INFINITY, f32::INFINITY));
