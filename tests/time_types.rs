@@ -86,8 +86,11 @@ fn timebase_rejects_unrepresentable_seconds() {
         parameter: "tick_seconds",
     };
     // Non-positive, non-finite, rounding below a nanosecond, and overflowing the
-    // u64 nanosecond range all fail the same way.
-    for seconds in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e-12, 1e30] {
+    // u64 nanosecond range all fail the same way. The last case sits exactly on
+    // the boundary: it rounds to 2^64 ns, which an `as u64` cast would saturate
+    // back into range instead of rejecting.
+    let boundary = (u64::MAX as f64) / 1e9;
+    for seconds in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e-12, 1e30, boundary] {
         assert_eq!(
             Timebase::try_from_seconds(seconds),
             Err(expected.clone()),

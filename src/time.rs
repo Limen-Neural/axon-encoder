@@ -253,7 +253,10 @@ impl Timebase {
             return Err(invalid);
         }
         let nanos = (tick_seconds * 1e9).round();
-        if !(1.0..=(u64::MAX as f64)).contains(&nanos) {
+        // Exclusive upper bound: `u64::MAX as f64` rounds *up* to 2^64, so an
+        // inclusive bound would admit 2^64 nanoseconds and let the `as u64` cast
+        // silently saturate it back to `u64::MAX`. Below 2^64 the cast is exact.
+        if !(1.0..(u64::MAX as f64)).contains(&nanos) {
             return Err(invalid);
         }
         Self::try_from_nanos(nanos as u64).map_err(|_| invalid)
