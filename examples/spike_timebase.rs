@@ -27,8 +27,11 @@ struct TimedSpike {
 fn main() {
     // One call is an 8-tick presentation window of dimensionless ticks.
     let mut latency = LatencyEncoder::try_new(7, (0.0, 1.0)).expect("valid LatencyEncoder");
-    // One call is one 1 ms tick — configured in physical time.
-    let mut rate = RateEncoder::try_new(50.0, 900.0, (0.0, 1.0), 0.001).expect("valid RateEncoder");
+    // One call is one 8 ms tick — configured in physical time. Matching the two
+    // encoders' per-call duration (8 ms either way, once the latency tick is
+    // declared as 1 ms below) is what makes the merged stream meaningful: spikes
+    // from the same sample interleave instead of drifting apart.
+    let mut rate = RateEncoder::try_new(50.0, 900.0, (0.0, 1.0), 0.008).expect("valid RateEncoder");
 
     println!("=== Spike Timebase ===");
     for (name, model) in [

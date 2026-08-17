@@ -355,6 +355,29 @@ fn rate_bursts_are_contiguous_coincident_repeats() {
 }
 
 #[test]
+fn extreme_window_configurations_still_conform() {
+    // The ordinary tables all use small, well-conditioned windows. A window near
+    // the top of the u64 range is where f64 rounding can push an offset past the
+    // declared span, so drive that case through the same assertions.
+    //
+    // The cursor tests are deliberately not applied here: a span that large
+    // saturates the caller's timeline, which is an artifact of the absurd
+    // configuration rather than a contract violation.
+    let mut encoder = LatencyEncoder::try_new(u64::MAX - 1, (0.0, 1.0)).expect("valid latency");
+    let model = encoder.time_model();
+
+    for input in INPUTS {
+        let batch = encoder.encode(input);
+        assert_call_conforms("LatencyEncoder (max window)", model, &batch.spikes);
+    }
+
+    for gains in gain_cases() {
+        let out = encoder.encode_with_gains(&[0.0, 0.5, 1.0, f32::NAN], gains);
+        assert_call_conforms("LatencyEncoder (max window, gains)", model, &out.spikes);
+    }
+}
+
+#[test]
 fn embedding_rate_encoder_conforms() {
     // `EmbeddingRateEncoder` keeps its own `forward` API rather than the
     // `Encoder` trait, but it reports and honours the same contract.

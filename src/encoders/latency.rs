@@ -85,6 +85,19 @@ impl LatencyEncoder {
         (clamped - lo) / (hi - lo)
     }
 
+    /// Maps a `[0, 1]` fraction of `latency` to a tick offset.
+    ///
+    /// The f64 product is clamped back to `latency` because `latency as f64`
+    /// rounds *up* for values near `u64::MAX` (2^64 - 1 is not representable),
+    /// which would make the `as u64` cast saturate one tick past the window.
+    /// Clamping here — rather than at the constructor — keeps
+    /// `time_model().span_ticks()` a hard bound for every accepted
+    /// configuration, whatever the float arithmetic does.
+    fn offset_within(latency: u64, fraction: f64) -> TickOffset {
+        let ticks = (fraction * latency as f64).round() as u64;
+        TickOffset::new(ticks.min(latency))
+    }
+
     fn timestamp_for(&self, value: f32) -> TickOffset {
         if self.max_latency == 0 {
             return TickOffset::ZERO;
@@ -94,7 +107,7 @@ impl LatencyEncoder {
         }
 
         let normalized = self.normalize(value);
-        TickOffset::new(((1.0 - normalized) * self.max_latency as f64).round() as u64)
+        Self::offset_within(self.max_latency, 1.0 - normalized)
     }
 
     fn timestamp_for_with_latency_scale(&self, value: f32, latency_scale: f32) -> TickOffset {
@@ -110,7 +123,7 @@ impl LatencyEncoder {
         }
 
         let normalized = self.normalize(value);
-        TickOffset::new(((1.0 - normalized) * scaled_latency as f64).round() as u64)
+        Self::offset_within(scaled_latency, 1.0 - normalized)
     }
 
     fn encode_with_latency_scale(&mut self, input: &[f32], latency_scale: f32) -> EncodedOutput {
@@ -275,13 +288,39 @@ mod tests {
             })
         );
 
-        // One below the cap is accepted, and its own span still contains it.
+        // One below the cap is accepted, and its own span still contains every
+        // path that can produce the latest spike. `range.min` goes through the
+        // f64 product — where `max_latency as f64` rounds up to 2^64 and the
+        // cast would saturate — while NaN short-circuits to `max_latency`.
         let mut encoder = LatencyEncoder::new(u64::MAX - 1, (0.0, 1.0));
         let model = encoder.time_model();
-        // NaN maps to the latest possible spike — the tightest case for the bound.
-        let latest = encoder.encode(&[f32::NAN]).spikes[0].timestamp;
-        assert_eq!(latest, u64::MAX - 1);
-        assert!(model.contains(latest), "latest spike escapes the span");
+
+        for input in [0.0, f32::NAN, -1.0] {
+            let latest = encoder.encode(&[input]).spikes[0].timestamp;
+            assert_eq!(latest, u64::MAX - 1, "input {input}");
+            assert!(model.contains(latest), "input {input} escapes the span");
+        }
+    }
+
+    #[test]
+    fn latency_encoder_gain_paths_stay_inside_a_huge_window() {
+        // Same f64 rounding hazard, reached through the modulated path.
+        let mut encoder = LatencyEncoder::new(u64::MAX - 1, (0.0, 1.0));
+        let span = encoder.time_model().span_ticks();
+
+        for latency_scale in [1.0, 4.0, 0.5] {
+            let out = encoder.encode_with_gains(
+                &[0.0, 0.5, 1.0, f32::NAN],
+                EncodingGains {
+                    latency_scale,
+                    ..EncodingGains::identity()
+                },
+            );
+            assert!(
+                out.spikes.iter().all(|spike| spike.timestamp < span),
+                "latency_scale {latency_scale} pushed a spike outside the span"
+            );
+        }
     }
 
     #[test]

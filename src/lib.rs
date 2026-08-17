@@ -223,6 +223,13 @@ pub trait Encoder {
     /// is one tick and every spike lands at
     /// [`TickOffset::ZERO`](time::TickOffset::ZERO). Encoders that place spikes
     /// *within* a step (latency, phase) override it.
+    ///
+    /// **Override this if your encoder emits any offset past tick 0.** The
+    /// default exists so pre-0.5 `Encoder` impls keep compiling, but an encoder
+    /// that emits later offsets while inheriting it advertises a one-tick span
+    /// its own output violates — and consumers that trust
+    /// [`span_ticks`](time::TimeModel::span_ticks) will mis-place those spikes.
+    /// Nothing catches that at compile time.
     fn time_model(&self) -> TimeModel {
         TimeModel::INSTANT
     }

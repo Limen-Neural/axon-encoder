@@ -145,8 +145,10 @@ Two breaking changes, both in the 0.5 line:
 2. **`PhaseEncoder` emits call-relative offsets.** It previously emitted
    `current_phase + phase_offset`, an absolute value that no other encoder used.
    The old number is `cursor.absolute(spike.timestamp)`, or
-   `encoder.current_phase() + spike.timestamp.ticks()` if you track the
+   `phase_before_the_call + spike.timestamp.ticks()` if you track the
    oscillation yourself; cycle position stays `absolute % cycle_steps`.
+   Capture `current_phase()` **before** the emitting call — every encode call
+   advances it afterwards, so a read taken after the call is one tick ahead.
 
 Two smaller behavior changes, both in service of making `span_ticks()` a hard
 bound rather than an advisory one:
@@ -155,7 +157,9 @@ bound rather than an advisory one:
   `max_latency`. Latency gains still shorten the window.
 - `LatencyEncoder::try_new` rejects `max_latency == u64::MAX` with
   `EncoderError::WindowTooLarge`, since the presentation window is
-  `max_latency + 1` ticks and that value has no representable window.
+  `max_latency + 1` ticks and that value has no representable window. The
+  `serde` `Deserialize` impl routes through `try_new`, so a 0.4 payload
+  persisted with that `max_latency` now fails to load rather than round-tripping.
 
 `Encoder::time_model()` has a default implementation, so out-of-crate `Encoder`
 impls keep compiling and inherit `TimeModel::INSTANT`.
