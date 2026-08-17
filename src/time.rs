@@ -581,23 +581,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tick_offset_round_trips_u64() {
+    fn tick_offset_converts_both_ways() {
         let offset = TickOffset::from(9u64);
         assert_eq!(offset.ticks(), 9);
         assert_eq!(u64::from(offset), 9);
-        assert_eq!(offset, 9u64);
-        assert_eq!(9u64, offset);
-        assert!(offset > 8u64);
-        assert!(8u64 < offset);
-        assert!(TickOffset::ZERO.is_zero());
-        assert_eq!(TickOffset::default(), TickOffset::ZERO);
-        assert_eq!(offset.to_string(), "9t");
     }
 
     #[test]
-    fn tick_offset_addition_saturates_and_checks() {
+    fn tick_offset_compares_against_u64() {
+        let offset = TickOffset::new(9);
+        assert_eq!(offset, 9u64);
+        assert_eq!(9u64, offset);
+    }
+
+    #[test]
+    fn tick_offset_orders_against_u64() {
+        let offset = TickOffset::new(9);
+        assert!(offset > 8u64);
+        assert!(8u64 < offset);
+    }
+
+    #[test]
+    fn tick_offset_zero_is_the_default() {
+        assert_eq!(TickOffset::default(), TickOffset::ZERO);
+        assert!(TickOffset::ZERO.is_zero());
+        assert!(!TickOffset::new(1).is_zero());
+    }
+
+    #[test]
+    fn tick_offset_displays_its_unit() {
+        assert_eq!(TickOffset::new(9).to_string(), "9t");
+    }
+
+    #[test]
+    fn tick_offset_saturating_add_clamps_at_max() {
         assert_eq!(TickOffset::new(3).saturating_add(4), 7u64);
         assert_eq!(TickOffset::new(u64::MAX).saturating_add(1), u64::MAX);
+    }
+
+    #[test]
+    fn tick_offset_checked_add_reports_overflow() {
         assert_eq!(TickOffset::new(3).checked_add(4), Some(TickOffset::new(7)));
         assert_eq!(TickOffset::new(u64::MAX).checked_add(1), None);
     }
@@ -607,32 +630,59 @@ mod tests {
         let from_seconds = Timebase::try_from_seconds(0.001).expect("1 ms");
         assert_eq!(from_seconds, Timebase::MILLISECOND);
         assert_eq!(Timebase::try_from_hz(1000.0).expect("1 kHz"), from_seconds);
-        assert_eq!(
-            Timebase::try_from_nanos(1_000).expect("1 us"),
-            Timebase::MICROSECOND
-        );
-        assert_eq!(Timebase::NANOSECOND.tick_nanos(), 1);
-        assert_eq!(Timebase::SECOND.tick_nanos(), 1_000_000_000);
     }
 
     #[test]
-    fn timebase_rejects_invalid_durations() {
-        let param = EncoderError::NonPositiveOrNonFinite {
+    fn timebase_constants_match_their_names() {
+        for (timebase, nanos) in [
+            (Timebase::NANOSECOND, 1),
+            (Timebase::MICROSECOND, 1_000),
+            (Timebase::MILLISECOND, 1_000_000),
+            (Timebase::SECOND, 1_000_000_000),
+        ] {
+            assert_eq!(timebase.tick_nanos(), nanos);
+        }
+    }
+
+    #[test]
+    fn timebase_round_trips_through_nanos() {
+        let timebase = Timebase::try_from(1_000u64).expect("1 us");
+        assert_eq!(timebase, Timebase::MICROSECOND);
+        assert_eq!(u64::from(timebase), 1_000);
+    }
+
+    #[test]
+    fn timebase_rejects_unrepresentable_seconds() {
+        let expected = EncoderError::NonPositiveOrNonFinite {
             parameter: "tick_seconds",
         };
-        assert_eq!(Timebase::try_from_seconds(0.0), Err(param.clone()));
-        assert_eq!(Timebase::try_from_seconds(-1.0), Err(param.clone()));
-        assert_eq!(Timebase::try_from_seconds(f64::NAN), Err(param.clone()));
-        assert_eq!(
-            Timebase::try_from_seconds(f64::INFINITY),
-            Err(param.clone())
-        );
-        // Rounds below one nanosecond.
-        assert_eq!(Timebase::try_from_seconds(1e-12), Err(param.clone()));
-        // Overflows the u64 nanosecond range.
-        assert_eq!(Timebase::try_from_seconds(1e30), Err(param.clone()));
-        assert_eq!(Timebase::try_from_hz(0.0), Err(param.clone()));
-        assert_eq!(Timebase::try_from_hz(f32::NAN.into()), Err(param));
+        // Non-positive, non-finite, rounding below a nanosecond, and overflowing
+        // the u64 nanosecond range all fail the same way.
+        for seconds in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e-12, 1e30] {
+            assert_eq!(
+                Timebase::try_from_seconds(seconds),
+                Err(expected.clone()),
+                "tick_seconds = {seconds}"
+            );
+        }
+    }
+
+    #[test]
+    fn timebase_rejects_unrepresentable_rates() {
+        let expected = EncoderError::NonPositiveOrNonFinite {
+            parameter: "tick_seconds",
+        };
+        for hz in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                Timebase::try_from_hz(hz),
+                Err(expected.clone()),
+                "hz = {hz}"
+            );
+        }
+    }
+
+    #[test]
+    fn timebase_rejects_a_zero_tick() {
         assert_eq!(
             Timebase::try_from_nanos(0),
             Err(EncoderError::WindowMustBePositive {
@@ -642,44 +692,82 @@ mod tests {
     }
 
     #[test]
-    fn timebase_converts_offsets() {
-        let timebase = Timebase::MILLISECOND;
-        assert_eq!(timebase.offset_nanos(TickOffset::new(5)), 5_000_000);
-        assert!((timebase.offset_seconds(TickOffset::new(2500)) - 2.5).abs() < 1e-9);
-        assert!((timebase.tick_seconds() - 0.001).abs() < 1e-12);
-        assert!((timebase.hz() - 1000.0).abs() < 1e-9);
-        assert_eq!(timebase.ticks_from_nanos(2_500_000), 2);
+    fn timebase_converts_offsets_to_nanos() {
+        assert_eq!(
+            Timebase::MILLISECOND.offset_nanos(TickOffset::new(5)),
+            5_000_000
+        );
         // Saturates rather than wrapping.
         assert_eq!(
             Timebase::SECOND.offset_nanos(TickOffset::new(u64::MAX)),
             u64::MAX
         );
-        assert_eq!(timebase.to_string(), "1000000ns/tick");
     }
 
     #[test]
-    fn time_model_shapes() {
+    fn timebase_converts_offsets_to_seconds() {
+        let seconds = Timebase::MILLISECOND.offset_seconds(TickOffset::new(2500));
+        assert!((seconds - 2.5).abs() < 1e-9, "got {seconds}");
+    }
+
+    #[test]
+    fn timebase_reports_its_tick_in_seconds_and_hertz() {
+        let timebase = Timebase::MILLISECOND;
+        assert!((timebase.tick_seconds() - 0.001).abs() < 1e-12);
+        assert!((timebase.hz() - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn timebase_counts_whole_ticks_in_a_duration() {
+        assert_eq!(Timebase::MILLISECOND.ticks_from_nanos(2_500_000), 2);
+    }
+
+    #[test]
+    fn timebase_displays_its_tick_duration() {
+        assert_eq!(Timebase::MILLISECOND.to_string(), "1000000ns/tick");
+    }
+
+    #[test]
+    fn instant_model_is_one_tick_per_call() {
         assert_eq!(TimeModel::INSTANT, TimeModel::default());
         assert_eq!(TimeModel::INSTANT.step_ticks(), 1);
         assert_eq!(TimeModel::INSTANT.span_ticks(), 1);
+    }
+
+    #[test]
+    fn instant_model_neither_overlaps_nor_claims_a_duration() {
         assert!(!TimeModel::INSTANT.is_overlapping());
         assert!(TimeModel::INSTANT.timebase().is_none());
+    }
 
+    #[test]
+    fn window_model_advances_by_its_whole_span() {
         let window = TimeModel::window(11);
         assert_eq!(window.step_ticks(), 11);
         assert_eq!(window.span_ticks(), 11);
         assert!(!window.is_overlapping());
+    }
+
+    #[test]
+    fn window_model_bounds_offsets_exclusively() {
+        let window = TimeModel::window(11);
         assert!(window.contains(TickOffset::new(10)));
         assert!(!window.contains(TickOffset::new(11)));
+    }
 
+    #[test]
+    fn overlapping_model_reaches_past_its_step() {
         let phase_like = TimeModel::overlapping(1, 16);
-        assert!(phase_like.is_overlapping());
         assert_eq!(phase_like.step_ticks(), 1);
         assert_eq!(phase_like.span_ticks(), 16);
+        assert!(phase_like.is_overlapping());
+    }
 
-        // Zero is clamped, never a zero-length step.
+    #[test]
+    fn models_clamp_zero_to_one_tick() {
         assert_eq!(TimeModel::window(0).span_ticks(), 1);
         assert_eq!(TimeModel::overlapping(0, 0).step_ticks(), 1);
+        assert_eq!(TimeModel::overlapping(0, 0).span_ticks(), 1);
     }
 
     #[test]
@@ -690,13 +778,24 @@ mod tests {
     }
 
     #[test]
-    fn cursor_advances_by_step_ticks() {
-        let mut cursor = TimeCursor::new(TimeModel::window(11));
+    fn cursor_starts_at_its_origin() {
+        let cursor = TimeCursor::new(TimeModel::window(11));
         assert_eq!(cursor.origin(), 0);
         assert_eq!(cursor.absolute(TickOffset::new(3)), 3);
+    }
+
+    #[test]
+    fn cursor_advances_by_step_ticks() {
+        let mut cursor = TimeCursor::new(TimeModel::window(11));
         assert_eq!(cursor.advance(), 11);
         assert_eq!(cursor.absolute(TickOffset::new(3)), 14);
         assert_eq!(cursor.advance_by(2), 33);
+    }
+
+    #[test]
+    fn cursor_reset_keeps_the_model() {
+        let mut cursor = TimeCursor::new(TimeModel::window(11));
+        cursor.advance();
         cursor.reset();
         assert_eq!(cursor.origin(), 0);
         assert_eq!(cursor.model(), TimeModel::window(11));

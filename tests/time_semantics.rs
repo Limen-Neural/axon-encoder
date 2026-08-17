@@ -25,77 +25,55 @@ const INPUTS: [&[f32]; 6] = [
     &[0.5; 8],
 ];
 
-/// Every public `Encoder` implementation, configured for a 0.0..1.0 input range.
+/// Builds one encoder instance for the conformance tables.
+type ModulatedFactory = fn() -> Box<dyn ModulatedEncoder>;
+
+/// Every public encoder with a gain-aware path, configured for a 0.0..1.0 input
+/// range. Single source of truth for both encoder tables below.
+const MODULATED_FACTORIES: &[(&str, ModulatedFactory)] = &[
+    ("RateEncoder", || {
+        Box::new(RateEncoder::try_new(5.0, 400.0, (0.0, 1.0), 0.002).expect("valid rate"))
+    }),
+    ("LatencyEncoder", || {
+        Box::new(LatencyEncoder::try_new(10, (0.0, 1.0)).expect("valid latency"))
+    }),
+    ("PhaseEncoder", || {
+        Box::new(PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid phase"))
+    }),
+    ("PopulationEncoder", || {
+        Box::new(PopulationEncoder::try_new(8, (0.0, 1.0), 0.2).expect("valid population"))
+    }),
+    ("DeltaEncoder", || {
+        Box::new(DeltaEncoder::try_new(0.1, 8).expect("valid delta"))
+    }),
+    ("TemporalEncoder", || {
+        Box::new(TemporalEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid temporal"))
+    }),
+    ("PredictiveEncoder", || {
+        Box::new(PredictiveEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid predictive"))
+    }),
+];
+
+/// Every public `Encoder` implementation: the gain-aware ones upcast to
+/// `dyn Encoder`, plus `DerivativeEncoder`, which has no modulated path.
 fn encoders() -> Vec<(&'static str, Box<dyn Encoder>)> {
-    vec![
-        (
-            "RateEncoder",
-            Box::new(RateEncoder::try_new(5.0, 400.0, (0.0, 1.0), 0.002).expect("valid rate")),
-        ),
-        (
-            "LatencyEncoder",
-            Box::new(LatencyEncoder::try_new(10, (0.0, 1.0)).expect("valid latency")),
-        ),
-        (
-            "PhaseEncoder",
-            Box::new(PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid phase")),
-        ),
-        (
-            "PopulationEncoder",
-            Box::new(PopulationEncoder::try_new(8, (0.0, 1.0), 0.2).expect("valid population")),
-        ),
-        (
-            "DeltaEncoder",
-            Box::new(DeltaEncoder::try_new(0.1, 8).expect("valid delta")),
-        ),
-        (
-            "DerivativeEncoder",
-            Box::new(DerivativeEncoder::try_new(vec![0.1; 8]).expect("valid derivative")),
-        ),
-        (
-            "TemporalEncoder",
-            Box::new(TemporalEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid temporal")),
-        ),
-        (
-            "PredictiveEncoder",
-            Box::new(PredictiveEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid predictive")),
-        ),
-    ]
+    let mut all: Vec<(&'static str, Box<dyn Encoder>)> = MODULATED_FACTORIES
+        .iter()
+        .map(|(label, build)| (*label, build() as Box<dyn Encoder>))
+        .collect();
+    all.push((
+        "DerivativeEncoder",
+        Box::new(DerivativeEncoder::try_new(vec![0.1; 8]).expect("valid derivative")),
+    ));
+    all
 }
 
-/// The same encoders, as gain-aware trait objects (all but `DerivativeEncoder`,
-/// which has no modulated path).
+/// The gain-aware subset, as `dyn ModulatedEncoder` trait objects.
 fn modulated_encoders() -> Vec<(&'static str, Box<dyn ModulatedEncoder>)> {
-    vec![
-        (
-            "RateEncoder",
-            Box::new(RateEncoder::try_new(5.0, 400.0, (0.0, 1.0), 0.002).expect("valid rate")),
-        ),
-        (
-            "LatencyEncoder",
-            Box::new(LatencyEncoder::try_new(10, (0.0, 1.0)).expect("valid latency")),
-        ),
-        (
-            "PhaseEncoder",
-            Box::new(PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid phase")),
-        ),
-        (
-            "PopulationEncoder",
-            Box::new(PopulationEncoder::try_new(8, (0.0, 1.0), 0.2).expect("valid population")),
-        ),
-        (
-            "DeltaEncoder",
-            Box::new(DeltaEncoder::try_new(0.1, 8).expect("valid delta")),
-        ),
-        (
-            "TemporalEncoder",
-            Box::new(TemporalEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid temporal")),
-        ),
-        (
-            "PredictiveEncoder",
-            Box::new(PredictiveEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid predictive")),
-        ),
-    ]
+    MODULATED_FACTORIES
+        .iter()
+        .map(|(label, build)| (*label, build()))
+        .collect()
 }
 
 /// Gains spanning identity, silencing, stretching, and non-finite values.
@@ -276,27 +254,34 @@ fn offsets_are_call_relative_not_absolute() {
     }
 }
 
+/// Asserts that consecutive calls never place a spike before the end of the
+/// previous call's window.
+fn assert_calls_never_spill_backwards(label: &str, encoder: &mut dyn Encoder) {
+    let mut cursor = TimeCursor::new(encoder.time_model());
+    let mut previous_end = 0u64;
+
+    for _ in 0..8 {
+        let out = encoder.encode_step(&[1.0, 0.25, 0.75, 0.0]);
+        let earliest = cursor
+            .absolute_times(&out.spikes)
+            .min()
+            .unwrap_or(previous_end);
+        assert!(
+            earliest >= previous_end,
+            "{label}: call spilled backwards past the previous window"
+        );
+        previous_end = cursor.advance();
+    }
+}
+
 #[test]
 fn cursor_keeps_non_overlapping_encoders_monotonic() {
-    for (label, mut encoder) in encoders() {
-        let model = encoder.time_model();
-        if model.is_overlapping() {
-            continue;
-        }
+    let non_overlapping = encoders()
+        .into_iter()
+        .filter(|(_, encoder)| !encoder.time_model().is_overlapping());
 
-        let mut cursor = TimeCursor::new(model);
-        let mut previous_end = 0u64;
-
-        for _ in 0..8 {
-            let out = encoder.encode_step(&[1.0, 0.25, 0.75, 0.0]);
-            for absolute in cursor.absolute_times(&out.spikes) {
-                assert!(
-                    absolute >= previous_end,
-                    "{label}: call spilled backwards past the previous window"
-                );
-            }
-            previous_end = cursor.advance();
-        }
+    for (label, mut encoder) in non_overlapping {
+        assert_calls_never_spill_backwards(label, encoder.as_mut());
     }
 }
 

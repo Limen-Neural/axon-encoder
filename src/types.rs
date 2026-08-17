@@ -38,9 +38,13 @@ pub struct SpikeEvent {
 impl SpikeEvent {
     /// Builds a spike event.
     ///
-    /// `timestamp` accepts a [`TickOffset`] or anything convertible into one
-    /// (notably a bare `u64`), so pre-0.5 struct-literal call sites port over
-    /// without threading the new type through every caller.
+    /// `timestamp` accepts a [`TickOffset`] or anything convertible into one,
+    /// notably a bare `u64`.
+    ///
+    /// A pre-0.5 struct literal does **not** compile against the new field type
+    /// — Rust applies no `Into` conversion in field initializers — so migrate
+    /// `SpikeEvent { channel, timestamp: 5, polarity }` to this constructor, or
+    /// wrap the value as `TickOffset::new(5)` to keep the literal.
     ///
     /// ```rust
     /// use axon_encoder::prelude::*;
