@@ -396,15 +396,21 @@ impl TimeModel {
     /// A window of `span_ticks` that advances only `step_ticks` per call, so
     /// consecutive calls overlap in time.
     ///
-    /// Both arguments are clamped to at least 1.
+    /// Both arguments are clamped to at least 1, and `step_ticks` is clamped to
+    /// at most `span_ticks`. A `TimeModel` therefore never describes a *gap*: a
+    /// caller advancing by `step_ticks` can never skip a tick that a call was
+    /// entitled to emit into. Pass `step_ticks == span_ticks` (or use
+    /// [`window`](Self::window)) for a non-overlapping model.
     #[inline]
     pub const fn overlapping(step_ticks: u64, span_ticks: u64) -> Self {
-        let step = match NonZeroU64::new(step_ticks) {
-            Some(step) => step,
-            None => Self::ONE,
-        };
         let span = match NonZeroU64::new(span_ticks) {
             Some(span) => span,
+            None => Self::ONE,
+        };
+        let step = match NonZeroU64::new(step_ticks) {
+            Some(step) if step.get() <= span.get() => step,
+            // Zero, or a stride wider than the window the encoder can reach.
+            Some(_) => span,
             None => Self::ONE,
         };
         Self {

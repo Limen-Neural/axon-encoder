@@ -193,6 +193,15 @@ fn overlapping_model_reaches_past_its_step() {
 }
 
 #[test]
+fn overlapping_model_never_describes_a_gap() {
+    // A stride wider than the window would let a caller skip ticks the encoder
+    // was entitled to emit into, so it is clamped back to the span.
+    let gapped = TimeModel::overlapping(9, 4);
+    assert_eq!((gapped.step_ticks(), gapped.span_ticks()), (4, 4));
+    assert!(!gapped.is_overlapping());
+}
+
+#[test]
 fn models_clamp_zero_to_one_tick() {
     for model in [TimeModel::window(0), TimeModel::overlapping(0, 0)] {
         assert_eq!((model.step_ticks(), model.span_ticks()), (1, 1));

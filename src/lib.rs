@@ -293,8 +293,11 @@ mod tests {
         impl Encoder for PassThrough {
             fn encode(&mut self, input: &[f32]) -> EncodedOutput {
                 let mut out = EncodedOutput::new();
-                for (i, &v) in input.iter().enumerate() {
-                    out.spikes.push(SpikeEvent::new(i as u16, v as u64, true));
+                for (i, _value) in input.iter().enumerate() {
+                    // Offset 0: the inherited TimeModel::INSTANT spans one tick,
+                    // so anything later would break the contract this encoder
+                    // silently opts into.
+                    out.spikes.push(SpikeEvent::at_step_start(i as u16, true));
                 }
                 out
             }

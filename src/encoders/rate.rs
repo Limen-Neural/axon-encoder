@@ -407,8 +407,12 @@ impl Encoder for RateEncoder {
     /// and mutually unordered, so the run length is a spike count.
     ///
     /// Unlike the other step-wise encoders this one is calibrated in physical
-    /// time, so it reports a [`Timebase`](crate::time::Timebase) of `dt_seconds`
-    /// (omitted only when `dt_seconds` rounds below one nanosecond).
+    /// time, so it reports a [`Timebase`](crate::time::Timebase) of
+    /// `dt_seconds`. The timebase is omitted when `dt_seconds` has no whole-
+    /// nanosecond representation — it rounds below one nanosecond, or exceeds
+    /// the `u64` nanosecond range — since `try_new` accepts any finite positive
+    /// interval. Ticks are still well defined in that case; only their physical
+    /// duration is unavailable.
     fn time_model(&self) -> TimeModel {
         TimeModel::INSTANT
             .with_timebase_opt(Timebase::try_from_seconds(f64::from(self.dt_seconds)).ok())
