@@ -148,9 +148,14 @@ Two breaking changes, both in the 0.5 line:
    `encoder.current_phase() + spike.timestamp.ticks()` if you track the
    oscillation yourself; cycle position stays `absolute % cycle_steps`.
 
-One behavior change worth noting: a neuromodulated `latency_scale` above `1.0`
-no longer stretches spikes past `max_latency`. Latency gains still shorten the
-window; `span_ticks()` is now a hard bound on modulated output too.
+Two smaller behavior changes, both in service of making `span_ticks()` a hard
+bound rather than an advisory one:
+
+- A neuromodulated `latency_scale` above `1.0` no longer stretches spikes past
+  `max_latency`. Latency gains still shorten the window.
+- `LatencyEncoder::try_new` rejects `max_latency == u64::MAX` with
+  `EncoderError::WindowTooLarge`, since the presentation window is
+  `max_latency + 1` ticks and that value has no representable window.
 
 `Encoder::time_model()` has a default implementation, so out-of-crate `Encoder`
 impls keep compiling and inherit `TimeModel::INSTANT`.

@@ -29,6 +29,11 @@ pub enum EncoderError {
     HistoryLengthExceedsDepth { channel: usize },
     /// Cycle/window parameters must be non-zero.
     WindowMustBePositive { parameter: &'static str },
+    /// A window parameter leaves no room for its exclusive upper bound.
+    ///
+    /// Emitted when a `parameter + 1` tick span would overflow `u64`, which
+    /// would make the encoder's declared span unable to contain its own spikes.
+    WindowTooLarge { parameter: &'static str },
 }
 
 impl fmt::Display for EncoderError {
@@ -65,6 +70,10 @@ impl fmt::Display for EncoderError {
             Self::WindowMustBePositive { parameter } => {
                 write!(f, "{parameter} must be greater than 0")
             }
+            Self::WindowTooLarge { parameter } => write!(
+                f,
+                "{parameter} must be less than u64::MAX (its window spans {parameter} + 1 ticks)"
+            ),
         }
     }
 }

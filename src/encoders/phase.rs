@@ -132,6 +132,10 @@ impl PhaseEncoder {
     /// driven by this encoder's [`time_model`](Encoder::time_model), and useful
     /// when a caller wants the cycle position without keeping its own cursor:
     /// `(encoder.current_phase() + spike.timestamp.ticks()) % cycle_steps`.
+    ///
+    /// Read it **before** the emitting call. Every encode call advances the
+    /// counter after producing its output, so a value read afterwards belongs to
+    /// the *next* call and would place the spikes one tick late.
     #[inline]
     pub const fn current_phase(&self) -> u64 {
         self.current_phase

@@ -53,7 +53,7 @@ impl LatencyEncoder {
     /// Panics if `range.0 >= range.1` or either bound is non-finite.
     ///
     /// `max_latency == 0` is valid and emits every spike at timestamp `0`
-    /// (instantaneous response).
+    /// (instantaneous response). `max_latency == u64::MAX` is rejected.
     pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
         Self::try_new(max_latency, range).unwrap_or_else(|error| panic!("{error}"))
     }
@@ -61,8 +61,19 @@ impl LatencyEncoder {
     /// Creates a new `LatencyEncoder`, returning an [`EncoderError`] for invalid configuration.
     ///
     /// `max_latency == 0` is accepted and maps every input to timestamp `0`.
+    ///
+    /// `max_latency == u64::MAX` is rejected with
+    /// [`EncoderError::WindowTooLarge`]: the presentation window is
+    /// `max_latency + 1` ticks, so that value would leave the declared
+    /// [`time_model`](Encoder::time_model) span unable to contain a spike at
+    /// `max_latency`.
     pub fn try_new(max_latency: u64, range: (f32, f32)) -> Result<Self, EncoderError> {
         crate::error::validate_range("range", range)?;
+        if max_latency == u64::MAX {
+            return Err(EncoderError::WindowTooLarge {
+                parameter: "max_latency",
+            });
+        }
         Ok(Self { max_latency, range })
     }
 
@@ -181,7 +192,8 @@ impl Encoder for LatencyEncoder {
     /// Neuromodulated latency gains shorten the window but never stretch it past
     /// `max_latency`, so `span_ticks` bounds modulated output too.
     fn time_model(&self) -> TimeModel {
-        TimeModel::window(self.max_latency.saturating_add(1))
+        // `try_new` rejects `u64::MAX`, so the window is always representable.
+        TimeModel::window(self.max_latency + 1)
     }
 
     fn reset(&mut self) {
@@ -250,13 +262,26 @@ mod tests {
             LatencyEncoder::new(0, (0.0, 1.0)).time_model().span_ticks(),
             1
         );
-        // The +1 saturates rather than wrapping to a zero-width window.
+    }
+
+    #[test]
+    fn latency_encoder_rejects_an_unrepresentable_window() {
+        // max_latency + 1 must fit in u64, or the declared span could not
+        // contain a spike emitted at max_latency itself.
         assert_eq!(
-            LatencyEncoder::new(u64::MAX, (0.0, 1.0))
-                .time_model()
-                .span_ticks(),
-            u64::MAX
+            LatencyEncoder::try_new(u64::MAX, (0.0, 1.0)),
+            Err(EncoderError::WindowTooLarge {
+                parameter: "max_latency"
+            })
         );
+
+        // One below the cap is accepted, and its own span still contains it.
+        let mut encoder = LatencyEncoder::new(u64::MAX - 1, (0.0, 1.0));
+        let model = encoder.time_model();
+        // NaN maps to the latest possible spike — the tightest case for the bound.
+        let latest = encoder.encode(&[f32::NAN]).spikes[0].timestamp;
+        assert_eq!(latest, u64::MAX - 1);
+        assert!(model.contains(latest), "latest spike escapes the span");
     }
 
     #[test]

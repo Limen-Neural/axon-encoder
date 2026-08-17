@@ -254,34 +254,37 @@ fn offsets_are_call_relative_not_absolute() {
     }
 }
 
-/// Asserts that consecutive calls never place a spike before the end of the
-/// previous call's window.
-fn assert_calls_never_spill_backwards(label: &str, encoder: &mut dyn Encoder) {
+/// Asserts that a non-overlapping encoder's call finishes before the next call
+/// begins.
+///
+/// The falsifiable half of "non-overlapping": offsets are non-negative, so a
+/// call can never start before its own origin — but it *can* reach past the next
+/// one if the encoder emits an offset at or beyond its declared span. That is
+/// exactly the bug a saturating `span_ticks` used to allow.
+fn assert_calls_do_not_reach_into_the_next(label: &str, encoder: &mut dyn Encoder) {
     let mut cursor = TimeCursor::new(encoder.time_model());
-    let mut previous_end = 0u64;
 
     for _ in 0..8 {
         let out = encoder.encode_step(&[1.0, 0.25, 0.75, 0.0]);
-        let earliest = cursor
-            .absolute_times(&out.spikes)
-            .min()
-            .unwrap_or(previous_end);
-        assert!(
-            earliest >= previous_end,
-            "{label}: call spilled backwards past the previous window"
-        );
-        previous_end = cursor.advance();
+        let latest = cursor.absolute_times(&out.spikes).max();
+        let next_origin = cursor.advance();
+        if let Some(latest) = latest {
+            assert!(
+                latest < next_origin,
+                "{label}: spike at {latest} reaches into the next call (origin {next_origin})"
+            );
+        }
     }
 }
 
 #[test]
-fn cursor_keeps_non_overlapping_encoders_monotonic() {
+fn non_overlapping_encoders_stay_inside_their_own_window() {
     let non_overlapping = encoders()
         .into_iter()
         .filter(|(_, encoder)| !encoder.time_model().is_overlapping());
 
     for (label, mut encoder) in non_overlapping {
-        assert_calls_never_spill_backwards(label, encoder.as_mut());
+        assert_calls_do_not_reach_into_the_next(label, encoder.as_mut());
     }
 }
 
