@@ -8,6 +8,18 @@ use crate::prelude::*;
 /// possible spike at `max_latency`, and values above the range maximum map to
 /// timestamp `0`.
 ///
+/// # Time semantics
+///
+/// One call is one *presentation* spanning `max_latency + 1` ticks, and offsets
+/// are relative to the start of that call — so repeated calls with the same
+/// input produce the same offsets, and it is the caller's
+/// [`TimeCursor`](crate::time::TimeCursor) that separates them in absolute
+/// time. `encode` and `encode_step` are the same stateless path.
+///
+/// Spikes are emitted in channel order, *not* in time order: a later channel
+/// can carry an earlier offset. Sort by `timestamp` if a consumer needs a
+/// chronological stream.
+///
 /// # Examples
 ///
 /// ```rust
@@ -17,6 +29,10 @@ use crate::prelude::*;
 /// let out = enc.encode(&[1.0, 0.0]); // strong → early, weak → late
 /// assert_eq!(out.spikes.len(), 2);
 /// assert!(out.spikes[0].timestamp <= out.spikes[1].timestamp);
+///
+/// // The window is max_latency + 1 ticks wide, so presentations do not overlap.
+/// assert_eq!(enc.time_model().span_ticks(), 11);
+/// assert_eq!(enc.time_model().step_ticks(), 11);
 /// # Ok(())
 /// # }
 /// ```
@@ -37,7 +53,7 @@ impl LatencyEncoder {
     /// Panics if `range.0 >= range.1` or either bound is non-finite.
     ///
     /// `max_latency == 0` is valid and emits every spike at timestamp `0`
-    /// (instantaneous response).
+    /// (instantaneous response). `max_latency == u64::MAX` is rejected.
     pub fn new(max_latency: u64, range: (f32, f32)) -> Self {
         Self::try_new(max_latency, range).unwrap_or_else(|error| panic!("{error}"))
     }
@@ -45,8 +61,19 @@ impl LatencyEncoder {
     /// Creates a new `LatencyEncoder`, returning an [`EncoderError`] for invalid configuration.
     ///
     /// `max_latency == 0` is accepted and maps every input to timestamp `0`.
+    ///
+    /// `max_latency == u64::MAX` is rejected with
+    /// [`EncoderError::WindowTooLarge`]: the presentation window is
+    /// `max_latency + 1` ticks, so that value would leave the declared
+    /// [`time_model`](Encoder::time_model) span unable to contain a spike at
+    /// `max_latency`.
     pub fn try_new(max_latency: u64, range: (f32, f32)) -> Result<Self, EncoderError> {
         crate::error::validate_range("range", range)?;
+        if max_latency == u64::MAX {
+            return Err(EncoderError::WindowTooLarge {
+                parameter: "max_latency",
+            });
+        }
         Ok(Self { max_latency, range })
     }
 
@@ -58,29 +85,45 @@ impl LatencyEncoder {
         (clamped - lo) / (hi - lo)
     }
 
-    fn timestamp_for(&self, value: f32) -> u64 {
-        if self.max_latency == 0 {
-            return 0;
-        }
-        if value.is_nan() {
-            return self.max_latency;
-        }
-
-        let normalized = self.normalize(value);
-        ((1.0 - normalized) * self.max_latency as f64).round() as u64
+    /// Maps a `[0, 1]` fraction of `latency` to a tick offset.
+    ///
+    /// The f64 product is clamped back to `latency` because `latency as f64`
+    /// rounds *up* for values near `u64::MAX` (2^64 - 1 is not representable),
+    /// which would make the `as u64` cast saturate one tick past the window.
+    /// Clamping here — rather than at the constructor — keeps
+    /// `time_model().span_ticks()` a hard bound for every accepted
+    /// configuration, whatever the float arithmetic does.
+    fn offset_within(latency: u64, fraction: f64) -> TickOffset {
+        let ticks = (fraction * latency as f64).round() as u64;
+        TickOffset::new(ticks.min(latency))
     }
 
-    fn timestamp_for_with_latency_scale(&self, value: f32, latency_scale: f32) -> u64 {
-        let scaled_latency = ((self.max_latency as f64) * (latency_scale as f64)).round() as u64;
-        if scaled_latency == 0 {
-            return 0;
+    fn timestamp_for(&self, value: f32) -> TickOffset {
+        if self.max_latency == 0 {
+            return TickOffset::ZERO;
         }
         if value.is_nan() {
-            return scaled_latency;
+            return TickOffset::new(self.max_latency);
         }
 
         let normalized = self.normalize(value);
-        ((1.0 - normalized) * scaled_latency as f64).round() as u64
+        Self::offset_within(self.max_latency, 1.0 - normalized)
+    }
+
+    fn timestamp_for_with_latency_scale(&self, value: f32, latency_scale: f32) -> TickOffset {
+        // Clamp to `max_latency` so a gain above 1.0 cannot push a spike past
+        // the configured window — `time_model().span_ticks()` is a hard bound.
+        let scaled_latency = ((self.max_latency as f64) * (latency_scale as f64)).round() as u64;
+        let scaled_latency = scaled_latency.min(self.max_latency);
+        if scaled_latency == 0 {
+            return TickOffset::ZERO;
+        }
+        if value.is_nan() {
+            return TickOffset::new(scaled_latency);
+        }
+
+        let normalized = self.normalize(value);
+        Self::offset_within(scaled_latency, 1.0 - normalized)
     }
 
     fn encode_with_latency_scale(&mut self, input: &[f32], latency_scale: f32) -> EncodedOutput {
@@ -92,11 +135,11 @@ impl LatencyEncoder {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
                 break;
             };
-            output.spikes.push(SpikeEvent {
+            output.spikes.push(SpikeEvent::new(
                 channel,
-                timestamp: self.timestamp_for_with_latency_scale(value, latency_scale),
-                polarity: true,
-            });
+                self.timestamp_for_with_latency_scale(value, latency_scale),
+                true,
+            ));
         }
 
         output
@@ -140,11 +183,9 @@ impl Encoder for LatencyEncoder {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
                 break;
             };
-            output.spikes.push(SpikeEvent {
-                channel,
-                timestamp: self.timestamp_for(value),
-                polarity: true,
-            });
+            output
+                .spikes
+                .push(SpikeEvent::new(channel, self.timestamp_for(value), true));
         }
 
         output
@@ -152,6 +193,20 @@ impl Encoder for LatencyEncoder {
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
         self.encode(input)
+    }
+
+    /// A non-overlapping presentation window of `max_latency + 1` ticks.
+    ///
+    /// Offsets span `0..=max_latency`, so the window is one tick wider than
+    /// `max_latency`, and the caller's origin advances by the whole window per
+    /// call. Ticks are dimensionless: `max_latency` is a tick budget, not a
+    /// duration, so the caller sets the physical tick length.
+    ///
+    /// Neuromodulated latency gains shorten the window but never stretch it past
+    /// `max_latency`, so `span_ticks` bounds modulated output too.
+    fn time_model(&self) -> TimeModel {
+        // `try_new` rejects `u64::MAX`, so the window is always representable.
+        TimeModel::window(self.max_latency + 1)
     }
 
     fn reset(&mut self) {
@@ -197,23 +252,117 @@ mod tests {
         assert_eq!(
             output.spikes,
             vec![
-                SpikeEvent {
-                    channel: 0,
-                    timestamp: 10,
-                    polarity: true,
-                },
-                SpikeEvent {
-                    channel: 1,
-                    timestamp: 5,
-                    polarity: true,
-                },
-                SpikeEvent {
-                    channel: 2,
-                    timestamp: 0,
-                    polarity: true,
-                },
+                SpikeEvent::new(0, 10u64, true),
+                SpikeEvent::new(1, 5u64, true),
+                SpikeEvent::new(2, 0u64, true),
             ]
         );
+    }
+
+    #[test]
+    fn latency_encoder_time_model_matches_window() {
+        let encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let model = encoder.time_model();
+
+        assert_eq!(model.span_ticks(), 11);
+        assert_eq!(model.step_ticks(), 11);
+        assert!(!model.is_overlapping());
+        // Latency ticks are a budget, not a duration.
+        assert!(model.timebase().is_none());
+
+        // max_latency == 0 still yields a one-tick window.
+        assert_eq!(
+            LatencyEncoder::new(0, (0.0, 1.0)).time_model().span_ticks(),
+            1
+        );
+    }
+
+    #[test]
+    fn latency_encoder_rejects_an_unrepresentable_window() {
+        // max_latency + 1 must fit in u64, or the declared span could not
+        // contain a spike emitted at max_latency itself.
+        assert_eq!(
+            LatencyEncoder::try_new(u64::MAX, (0.0, 1.0)),
+            Err(EncoderError::WindowTooLarge {
+                parameter: "max_latency"
+            })
+        );
+
+        // One below the cap is accepted, and its own span still contains every
+        // path that can produce the latest spike. `range.min` goes through the
+        // f64 product — where `max_latency as f64` rounds up to 2^64 and the
+        // cast would saturate — while NaN short-circuits to `max_latency`.
+        let mut encoder = LatencyEncoder::new(u64::MAX - 1, (0.0, 1.0));
+        let model = encoder.time_model();
+
+        for input in [0.0, f32::NAN, -1.0] {
+            let latest = encoder.encode(&[input]).spikes[0].timestamp;
+            assert_eq!(latest, u64::MAX - 1, "input {input}");
+            assert!(model.contains(latest), "input {input} escapes the span");
+        }
+    }
+
+    #[test]
+    fn latency_encoder_gain_paths_stay_inside_a_huge_window() {
+        // Same f64 rounding hazard, reached through the modulated path.
+        let mut encoder = LatencyEncoder::new(u64::MAX - 1, (0.0, 1.0));
+        let span = encoder.time_model().span_ticks();
+
+        for latency_scale in [1.0, 4.0, 0.5] {
+            let out = encoder.encode_with_gains(
+                &[0.0, 0.5, 1.0, f32::NAN],
+                EncodingGains {
+                    latency_scale,
+                    ..EncodingGains::identity()
+                },
+            );
+            assert!(
+                out.spikes.iter().all(|spike| spike.timestamp < span),
+                "latency_scale {latency_scale} pushed a spike outside the span"
+            );
+        }
+    }
+
+    #[test]
+    fn latency_encoder_offsets_stay_inside_the_window_under_gain() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let span = encoder.time_model().span_ticks();
+
+        // A latency gain above 1.0 stretches nothing: max_latency is a hard cap.
+        let stretched = encoder.encode_with_gains(
+            &[0.0, 0.5, 1.0, f32::NAN],
+            EncodingGains {
+                latency_scale: 4.0,
+                ..EncodingGains::identity()
+            },
+        );
+        assert!(stretched.spikes.iter().all(|spike| spike.timestamp < span));
+        assert_eq!(stretched.spikes[0].timestamp, 10);
+        assert_eq!(stretched.spikes[3].timestamp, 10);
+
+        // A gain below 1.0 compresses the window as before.
+        let compressed = encoder.encode_with_gains(
+            &[0.0],
+            EncodingGains {
+                latency_scale: 0.5,
+                ..EncodingGains::identity()
+            },
+        );
+        assert_eq!(compressed.spikes[0].timestamp, 5);
+    }
+
+    #[test]
+    fn latency_encoder_offsets_are_call_relative() {
+        let mut encoder = LatencyEncoder::new(10, (0.0, 1.0));
+        let mut cursor = TimeCursor::new(encoder.time_model());
+
+        let first = encoder.encode(&[0.0]);
+        cursor.advance();
+        let second = encoder.encode(&[0.0]);
+
+        // Identical offsets; the caller's cursor is what separates the calls.
+        assert_eq!(first.spikes[0].timestamp, second.spikes[0].timestamp);
+        assert_eq!(cursor.absolute(second.spikes[0].timestamp), 21);
     }
 
     #[test]
@@ -290,6 +439,12 @@ mod tests {
     #[should_panic(expected = "range must be finite and min must be less than max")]
     fn latency_encoder_rejects_invalid_range() {
         let _ = LatencyEncoder::new(5, (1.0, 1.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "max_latency must be less than u64::MAX")]
+    fn latency_encoder_new_panics_on_an_unrepresentable_window() {
+        let _ = LatencyEncoder::new(u64::MAX, (0.0, 1.0));
     }
 
     #[test]

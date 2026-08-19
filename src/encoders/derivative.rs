@@ -99,24 +99,33 @@ impl Encoder for DerivativeEncoder {
 
             // Excitatory spike on positive jump exceeding threshold
             if delta > self.thresholds[i] {
-                output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
-                    timestamp: 0,
-                    polarity: true,
-                });
+                output.spikes.push(SpikeEvent::at_step_start(
+                    u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    true,
+                ));
             }
             // Inhibitory/Negative spike on sudden drop
             else if delta < -self.thresholds[i] {
-                output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
-                    timestamp: 0,
-                    polarity: false,
-                });
+                output.spikes.push(SpikeEvent::at_step_start(
+                    u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    false,
+                ));
             }
 
             self.last_values[i] = current_val;
         }
         output
+    }
+
+    /// One call is one tick; `encode` and `encode_step` are the same path.
+    ///
+    /// A channel emits at most one spike per call — excitatory on a jump,
+    /// inhibitory on a drop — always at
+    /// [`TickOffset::ZERO`](crate::time::TickOffset::ZERO). Ticks are
+    /// dimensionless: the derivative is per *step*, so the caller owns the
+    /// physical step duration.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
     }
 
     fn reset(&mut self) {

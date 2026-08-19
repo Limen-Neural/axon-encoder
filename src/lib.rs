@@ -3,6 +3,43 @@
 //! Flexible sensory encoding for spiking neural networks: continuous signals
 //! in, spike events out. Optional [`EncodingGains`] scale rate / threshold /
 //! latency / sensitivity without requiring an external neuromodulator runtime.
+//!
+//! ## Spike time contract
+//!
+//! Every encoder here shares one time model: a [`SpikeEvent::timestamp`] is a
+//! [`TickOffset`] — encoder ticks counted **from the start of the call that
+//! emitted it**. Timestamps are call-relative, so this crate never owns a clock
+//! or a scheduler; the caller keeps absolute time with a [`TimeCursor`] and
+//! advances it by [`TimeModel::step_ticks`] per call. Encoders configured in
+//! physical units also report a [`Timebase`], the duration of one tick.
+//!
+//! ```rust
+//! use axon_encoder::prelude::*;
+//! # fn main() -> Result<(), EncoderError> {
+//! let mut encoder = LatencyEncoder::try_new(9, (0.0, 1.0))?;
+//! let mut cursor = TimeCursor::new(encoder.time_model());
+//!
+//! let first = encoder.encode(&[1.0, 0.0]);
+//! assert_eq!(first.spikes[0].timestamp, 0); // strong input → early
+//! assert_eq!(first.spikes[1].timestamp, 9); // weak input → late
+//! cursor.advance();
+//!
+//! let second = encoder.encode(&[1.0, 0.0]);
+//! // Offsets repeat per call; absolute time does not.
+//! assert_eq!(second.spikes[0].timestamp, 0);
+//! assert_eq!(cursor.absolute(second.spikes[0].timestamp), 10);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! See the [`time`] module for the full contract: batch versus streaming, spike
+//! ordering, and conversion guidance for simulators and hardware adapters.
+//!
+//! [`SpikeEvent::timestamp`]: types::SpikeEvent::timestamp
+//! [`TickOffset`]: time::TickOffset
+//! [`TimeCursor`]: time::TimeCursor
+//! [`TimeModel::step_ticks`]: time::TimeModel::step_ticks
+//! [`Timebase`]: time::Timebase
 
 pub mod encoder;
 pub mod encoders;
@@ -12,6 +49,7 @@ pub mod modulators;
 pub mod ndarray_ext;
 pub mod poisson;
 pub mod rng;
+pub mod time;
 pub mod types;
 
 pub use error::EncoderError;
@@ -28,10 +66,12 @@ pub mod prelude {
     #[cfg(feature = "ndarray")]
     pub use crate::ndarray_ext::NdarrayEncoderExt;
     pub use crate::poisson::*;
+    pub use crate::time::*;
     pub use crate::types::*;
 }
 
 use modulators::{EncodingGains, NeuroModulators, NeuromodulatorGainCurves};
+use time::TimeModel;
 use types::EncodedOutput;
 
 /// Encoders that can apply neuromodulator-driven gain curves.
@@ -125,6 +165,16 @@ pub trait ModulatedEncoder: Encoder {
 /// - **Batch mode** (`encode`): Process a complete input vector at once.
 /// - **Streaming mode** (`encode_step`): Process incrementally, one step at a time.
 ///
+/// # Time semantics
+///
+/// Both modes emit call-relative timestamps: a [`SpikeEvent::timestamp`] counts
+/// encoder ticks from the start of *that* call, never from an absolute origin.
+/// [`time_model`](Encoder::time_model) reports how a call maps onto the caller's
+/// timeline — how far the origin advances per call, how far a single call can
+/// reach, and how long a tick is in physical units when the encoder knows.
+///
+/// [`SpikeEvent::timestamp`]: types::SpikeEvent::timestamp
+///
 /// # Example
 ///
 /// ```rust
@@ -160,6 +210,28 @@ pub trait Encoder {
     /// An `EncodedOutput` containing any spike events generated in this step
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
         self.encode(input)
+    }
+
+    /// Describes how this encoder places spikes in time.
+    ///
+    /// Callers use it to drive any encoder — including a `&mut dyn Encoder` —
+    /// on one timeline: advance a [`TimeCursor`](time::TimeCursor) by
+    /// [`TimeModel::step_ticks`](time::TimeModel::step_ticks) after each call,
+    /// and convert offsets with [`TimeModel::timebase`](time::TimeModel::timebase).
+    ///
+    /// The default is [`TimeModel::INSTANT`](time::TimeModel::INSTANT): one call
+    /// is one tick and every spike lands at
+    /// [`TickOffset::ZERO`](time::TickOffset::ZERO). Encoders that place spikes
+    /// *within* a step (latency, phase) override it.
+    ///
+    /// **Override this if your encoder emits any offset past tick 0.** The
+    /// default exists so pre-0.5 `Encoder` impls keep compiling, but an encoder
+    /// that emits later offsets while inheriting it advertises a one-tick span
+    /// its own output violates — and consumers that trust
+    /// [`span_ticks`](time::TimeModel::span_ticks) will mis-place those spikes.
+    /// Nothing catches that at compile time.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
     }
 
     /// Resets the encoder to its initial state
@@ -228,12 +300,11 @@ mod tests {
         impl Encoder for PassThrough {
             fn encode(&mut self, input: &[f32]) -> EncodedOutput {
                 let mut out = EncodedOutput::new();
-                for (i, &v) in input.iter().enumerate() {
-                    out.spikes.push(SpikeEvent {
-                        channel: i as u16,
-                        timestamp: v as u64,
-                        polarity: true,
-                    });
+                for (i, _value) in input.iter().enumerate() {
+                    // Offset 0: the inherited TimeModel::INSTANT spans one tick,
+                    // so anything later would break the contract this encoder
+                    // silently opts into.
+                    out.spikes.push(SpikeEvent::at_step_start(i as u16, true));
                 }
                 out
             }
@@ -243,5 +314,7 @@ mod tests {
         let mut enc = PassThrough;
         let out = enc.encode_step(&[1.0, 2.0]);
         assert_eq!(out.spikes.len(), 2);
+        // Out-of-crate impls inherit the instant time model without opting in.
+        assert_eq!(enc.time_model(), TimeModel::INSTANT);
     }
 }

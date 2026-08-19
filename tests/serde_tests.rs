@@ -5,14 +5,15 @@ use axon_encoder::prelude::*;
 #[test]
 fn test_serde_core_io() {
     // 1. Test SpikeEvent
-    let spike = SpikeEvent {
-        channel: 12,
-        timestamp: 42,
-        polarity: true,
-    };
+    let spike = SpikeEvent::new(12, 42u64, true);
     let serialized_spike = serde_json::to_string(&spike).unwrap();
     let deserialized_spike: SpikeEvent = serde_json::from_str(&serialized_spike).unwrap();
     assert_eq!(spike, deserialized_spike);
+    // `TickOffset` is transparent on the wire: pre-0.5 payloads still load.
+    assert_eq!(
+        serialized_spike,
+        r#"{"channel":12,"timestamp":42,"polarity":true}"#
+    );
 
     // 2. Test EncoderConfig
     let config = EncoderConfig {

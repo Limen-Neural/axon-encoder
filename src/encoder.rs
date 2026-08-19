@@ -1,3 +1,4 @@
+use crate::time::TimeModel;
 use crate::types::{EncodedOutput, SpikeEvent};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +90,18 @@ impl TryFrom<EmbeddingRateEncoderRepr> for EmbeddingRateEncoder {
 }
 
 impl EmbeddingRateEncoder {
+    /// Time model for spikes emitted by [`forward`](Self::forward).
+    ///
+    /// One `forward` call is one tick, and every spike lands at
+    /// [`TickOffset::ZERO`](crate::time::TickOffset::ZERO): this encoder reports
+    /// *whether* a channel crossed threshold in the step, not *when* within it.
+    /// Ticks are dimensionless — `EmbeddingEncoderConfig` carries no `dt`, so
+    /// the caller owns the physical step duration.
+    #[inline]
+    pub const fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
+    }
+
     pub fn new(embeddings: &[f32], config: EmbeddingEncoderConfig) -> Self {
         if config.v_th.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
             panic!("v_th must be positive");
@@ -127,11 +140,10 @@ impl EmbeddingRateEncoder {
             *pot += emb;
 
             if *pot >= self.config.v_th {
-                output.spikes.push(SpikeEvent {
-                    channel: u16::try_from(i).expect("channel index exceeds u16::MAX"),
-                    timestamp: 0,
-                    polarity: true,
-                });
+                output.spikes.push(SpikeEvent::at_step_start(
+                    u16::try_from(i).expect("channel index exceeds u16::MAX"),
+                    true,
+                ));
                 *pot -= self.config.v_th; // Soft reset
             }
         }

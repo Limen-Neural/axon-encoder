@@ -159,6 +159,8 @@ cargo run --color=always --package axon-encoder \
 cargo run --color=always --package axon-encoder \
   --example rate_encoding --profile dev
 cargo run --color=always --package axon-encoder \
+  --example spike_timebase --profile dev
+cargo run --color=always --package axon-encoder \
   --example temporal_encoding --profile dev
 ```
 
@@ -193,6 +195,11 @@ rg -n 'pub mod phase|pub use phase::PhaseEncoder' \
 # Serde coverage for gain / phase types
 rg -n 'GainCurve|PhaseEncoder|NeuromodulatorGainCurves' \
   tests/serde_tests.rs
+
+# Spike time contract published and enforced (#62 / RM-368)
+rg -n 'pub struct TickOffset|pub struct Timebase|pub struct TimeModel' src/time.rs
+rg -n 'fn time_model' src/lib.rs src/encoders/*.rs
+cargo test --locked --test time_semantics
 ```
 
 ## Serde integration tests

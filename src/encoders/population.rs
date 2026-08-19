@@ -146,11 +146,7 @@ impl PopulationEncoder {
                 };
                 let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
                 if crate::rng::gen_unit_f32_with_rng(&mut rng) < rate {
-                    output.spikes.push(SpikeEvent {
-                        channel,
-                        timestamp: 0, // Simplified
-                        polarity: true,
-                    });
+                    output.spikes.push(SpikeEvent::at_step_start(channel, true));
                 }
             }
         }
@@ -210,6 +206,17 @@ impl Encoder for PopulationEncoder {
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
         self.encode(input)
+    }
+
+    /// One call is one tick; batch and streaming are identical here.
+    ///
+    /// Each tuned neuron independently emits at most one spike per call, all at
+    /// [`TickOffset::ZERO`](crate::time::TickOffset::ZERO), so the population
+    /// code is carried by *which* channels fire rather than by their offsets.
+    /// Ticks are dimensionless: tuning curves yield a per-call probability, not
+    /// a rate in hertz.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
     }
 
     fn reset(&mut self) {

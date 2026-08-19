@@ -223,11 +223,7 @@ impl RateEncoder {
             let probability = crate::poisson::probability_from_rate_hz(rate, self.dt_seconds);
 
             if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
-                output.spikes.push(SpikeEvent {
-                    channel,
-                    timestamp: 0,
-                    polarity: true,
-                });
+                output.spikes.push(SpikeEvent::at_step_start(channel, true));
             }
         }
 
@@ -267,12 +263,10 @@ impl RateEncoder {
             return;
         }
         let emit = pending.min(Self::MAX_SPIKES_PER_CHANNEL_PER_STEP as u64) as usize;
+        // Coincident repeats: contiguous, same offset, mutually unordered — the
+        // run length is this channel's spike count for the step.
         for _ in 0..emit {
-            output.spikes.push(SpikeEvent {
-                channel,
-                timestamp: 0,
-                polarity: true,
-            });
+            output.spikes.push(SpikeEvent::at_step_start(channel, true));
         }
         self.pending_spikes[channel_idx] = pending - emit as u64;
         // Any remaining whole spikes stay queued for subsequent steps.
@@ -402,6 +396,26 @@ impl Encoder for RateEncoder {
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
         self.encode_step_with_rate_scale(input, 1.0)
+    }
+
+    /// One call is one tick, sized by `dt_seconds`.
+    ///
+    /// Every spike lands at [`TickOffset::ZERO`](crate::time::TickOffset::ZERO)
+    /// in both modes — a Poisson draw says *how many* spikes fall in the step,
+    /// not where within it. Streaming can therefore emit several coincident
+    /// spikes for one channel; per the crate time contract they are contiguous
+    /// and mutually unordered, so the run length is a spike count.
+    ///
+    /// Unlike the other step-wise encoders this one is calibrated in physical
+    /// time, so it reports a [`Timebase`](crate::time::Timebase) of
+    /// `dt_seconds`. The timebase is omitted when `dt_seconds` has no whole-
+    /// nanosecond representation — it rounds below one nanosecond, or exceeds
+    /// the `u64` nanosecond range — since `try_new` accepts any finite positive
+    /// interval. Ticks are still well defined in that case; only their physical
+    /// duration is unavailable.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
+            .with_timebase_opt(Timebase::try_from_seconds(f64::from(self.dt_seconds)).ok())
     }
 
     fn reset(&mut self) {

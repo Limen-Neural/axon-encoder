@@ -202,11 +202,9 @@ impl PredictiveEncoder {
                     let Ok(channel) = u16::try_from(i) else {
                         break;
                     };
-                    output.spikes.push(SpikeEvent {
-                        channel,
-                        timestamp: 0,
-                        polarity: error >= 0.0,
-                    });
+                    output
+                        .spikes
+                        .push(SpikeEvent::at_step_start(channel, error >= 0.0));
                     break;
                 }
             }
@@ -262,6 +260,16 @@ impl Encoder for PredictiveEncoder {
             input
         };
         self.encode_with_threshold_scale(safe_input, 1.0)
+    }
+
+    /// One call is one tick; batch and streaming are identical here.
+    ///
+    /// A channel emits at most one spike per call, at
+    /// [`TickOffset::ZERO`](crate::time::TickOffset::ZERO), with polarity set by
+    /// the sign of the prediction error. Ticks are dimensionless: one tick is
+    /// one predicted sample.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
     }
 
     fn reset(&mut self) {

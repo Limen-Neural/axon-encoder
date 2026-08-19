@@ -21,8 +21,19 @@ fn main() {
 
     for spike in output.spikes {
         println!(
-            "channel {} -> timestamp {} polarity {}",
-            spike.channel, spike.timestamp, spike.polarity
+            "channel {} -> offset {} ticks, polarity {}",
+            spike.channel,
+            spike.timestamp.ticks(),
+            spike.polarity
         );
     }
+
+    // Offsets are relative to the start of each call; see examples/spike_timebase.rs
+    // for turning them into an absolute timeline.
+    let model = encoder.time_model();
+    println!(
+        "\npresentation window: {} ticks (origin advances {} per call)",
+        model.span_ticks(),
+        model.step_ticks()
+    );
 }

@@ -83,11 +83,10 @@ impl DeltaEncoder {
             };
             let delta = (value - self.last_values[i]).abs();
             if delta > effective_threshold {
-                output.spikes.push(SpikeEvent {
+                output.spikes.push(SpikeEvent::at_step_start(
                     channel,
-                    timestamp: 0,
-                    polarity: value > self.last_values[i],
-                });
+                    value > self.last_values[i],
+                ));
                 self.last_values[i] = value;
             }
         }
@@ -156,6 +155,17 @@ impl Encoder for DeltaEncoder {
             input
         };
         self.encode(safe_input)
+    }
+
+    /// One call is one tick; batch and streaming are identical here.
+    ///
+    /// A channel emits at most one spike per call, always at
+    /// [`TickOffset::ZERO`](crate::time::TickOffset::ZERO): a threshold crossing
+    /// is attributed to the step it was observed in, not to a sub-step instant.
+    /// Ticks are dimensionless — `DeltaEncoder` has no sampling interval, so the
+    /// caller owns the physical step duration.
+    fn time_model(&self) -> TimeModel {
+        TimeModel::INSTANT
     }
 
     fn reset(&mut self) {
