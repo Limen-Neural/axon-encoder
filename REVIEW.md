@@ -185,8 +185,11 @@ test "$(wc -l < src/modulators.rs)" -gt 400
 rg -n 'pub struct GainCurve|NeuromodulatorGainCurves|EncodingGains' \
   src/modulators.rs
 
-# encode_*_with_modulators (including PhaseEncoder)
-rg -n 'fn encode_with_modulators' src/encoders/*.rs
+# encode_*_with_modulators lives on ModulatedEncoder (including PhaseEncoder)
+rg -n 'fn encode_with_modulators' src/lib.rs
+rg -n 'impl ModulatedEncoder for' src/encoders/*.rs
+# Inherent wrappers on encoder impls must stay gone
+test -z "$(rg -n 'Inherent wrapper so callers need not import' src/encoders/*.rs || true)"
 
 # PhaseEncoder published
 rg -n 'pub mod phase|pub use phase::PhaseEncoder' \
@@ -244,7 +247,7 @@ git check-ignore -v .worktrees .swarm .beads .idea
 
 - `src/modulators.rs` collapsed to a decay-only stub (~tens of lines)
 - `PhaseEncoder` missing from `src/encoders/mod.rs`
-- Net deletion of `encode_with_modulators` on the main encoders
+- Net deletion of `ModulatedEncoder::encode_with_modulators` (or its impls on the main encoders)
 - A bot “sync / resolve feedback” commit rewrites half the tree
   (thousands of lines deleted)
 - `git diff origin/main` shows unexpected public-API removals

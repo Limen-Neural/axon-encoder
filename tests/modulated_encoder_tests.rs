@@ -1,5 +1,7 @@
 use axon_encoder::prelude::*;
 
+/// These helpers call the `ModulatedEncoder` trait methods, not inherent
+/// wrappers on the concrete encoder types.
 fn encode_via_dyn(
     encoder: &mut dyn ModulatedEncoder,
     input: &[f32],

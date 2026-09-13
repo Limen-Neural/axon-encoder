@@ -7,7 +7,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-const SCALES: [usize; 3] = [256, 1024, 10_000];
+const SCALES: [usize; 3] = [256, 1_000, 10_000];
 const POISSON_STEPS: [usize; 3] = [10, 100, 1000];
 
 struct CountingAllocator;

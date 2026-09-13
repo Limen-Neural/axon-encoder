@@ -6,7 +6,7 @@ use axon_encoder::prelude::*;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
-const SCALES: [usize; 3] = [256, 1024, 10_000];
+const SCALES: [usize; 3] = [256, 1_000, 10_000];
 const POISSON_STEPS: [usize; 3] = [10, 100, 1000];
 
 fn normalized_input(size: usize) -> Vec<f32> {

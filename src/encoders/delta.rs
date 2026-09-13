@@ -114,33 +114,6 @@ impl DeltaEncoder {
             input
         }
     }
-
-    /// Encodes input using neuromodulator-driven gain curves.
-    ///
-    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_step_with_modulators(
-            self,
-            input,
-            modulators,
-            gain_curves,
-        )
-    }
 }
 
 #[cfg(feature = "serde")]
@@ -251,6 +224,7 @@ pub fn encode_deltas_to_spikes(deltas: &[f32], threshold: f32) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ModulatedEncoder;
 
     #[test]
     fn test_delta_encoder() {

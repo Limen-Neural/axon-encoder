@@ -102,9 +102,9 @@ fn drain_spikes_into(output: EncodedOutput, sink: &mut dyn SpikeSink) {
 /// component of [`EncodingGains`] to encoder-specific scaling; public modulator
 /// helpers are provided once here.
 ///
-/// Concrete encoders also keep inherent `encode_with_modulators` /
-/// `encode_step_with_modulators` wrappers so existing call sites need not import
-/// this trait.
+/// Call `encode_with_modulators` / `encode_step_with_modulators` on this
+/// trait (the prelude re-exports it). Concrete encoder types do not wrap those
+/// methods inherently.
 ///
 /// # Examples
 ///

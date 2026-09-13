@@ -336,35 +336,6 @@ impl RateEncoder {
         self.encode_step_with_rate_scale_into(input, rate_scale, &mut output.spikes);
         output
     }
-
-    /// Encodes input using neuromodulator-driven gain curves.
-    ///
-    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    ///
-    /// Uses the internal accumulator-based rate scale path for streaming.
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_step_with_modulators(
-            self,
-            input,
-            modulators,
-            gain_curves,
-        )
-    }
 }
 
 #[cfg(feature = "serde")]
@@ -506,6 +477,7 @@ impl ModulatedEncoder for RateEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ModulatedEncoder;
 
     #[test]
     fn test_rate_encoder_basic() {
