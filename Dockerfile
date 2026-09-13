@@ -1,5 +1,5 @@
 # Multi-stage Docker for axon-encoder (examples runtime + CI builder).
-# Keep `rust:1.97.1` in sync with Cargo.toml rust-version / rust-toolchain.toml
+# Keep `rust:1.98.1` in sync with Cargo.toml rust-version / rust-toolchain.toml
 # / CI toolchain pin (see REVIEW.md "MSRV pin rule").
 #
 # Runtime (default): example binaries under /usr/local/bin
@@ -10,7 +10,7 @@
 #   docker build --target builder -t axon-encoder:builder .
 #   docker run --rm axon-encoder:builder   # re-runs cargo test (CMD)
 
-FROM rust:1.97.1-slim-bookworm AS builder
+FROM rust:1.98.1-slim-bookworm AS builder
 
 WORKDIR /app
 

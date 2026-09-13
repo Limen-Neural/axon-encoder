@@ -1,6 +1,6 @@
-# Keep `rust:1.97.1` in sync with Cargo.toml rust-version / rust-toolchain.toml
+# Keep `rust:1.98.1` in sync with Cargo.toml rust-version / rust-toolchain.toml
 # / CI toolchain pin (see REVIEW.md MSRV pin rule).
-FROM rust:1.97.1-slim-bookworm
+FROM rust:1.98.1-slim-bookworm
 
 USER root
 # Do not pin exact apt revisions against floating bookworm/security indexes.

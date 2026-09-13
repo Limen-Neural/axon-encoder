@@ -1,5 +1,5 @@
 [toolchain]
 # Keep identical to Cargo.toml `rust-version` and the CI workflow
 # `toolchain:` pin (see REVIEW.md "MSRV pin rule").
-channel = "1.97.1"
+channel = "1.98.1"
 components = ["clippy", "rustfmt"]
