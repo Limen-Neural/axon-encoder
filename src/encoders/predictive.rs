@@ -170,81 +170,120 @@ impl PredictiveEncoder {
         })
     }
 
+    /// Samples a channel must collect before its prediction means anything.
+    ///
+    /// `history_depth` is validated against this, so a warmed-up channel can
+    /// always supply a full window.
+    const WARMUP_SAMPLES: usize = 5;
+
+    /// Spike-emitting core: writes straight into `sink`, allocating nothing.
+    ///
+    /// Every public encoding path on this encoder routes through here, so the
+    /// returning and sink-based APIs cannot drift apart.
+    fn encode_with_threshold_scale_into<S: SpikeSink + ?Sized>(
+        &mut self,
+        input: &[f32],
+        threshold_scale: f32,
+        sink: &mut S,
+    ) {
+        for (i, &value) in input.iter().enumerate() {
+            if i >= self.history.len() {
+                break;
+            }
+
+            if self.warm_up_channel(i, value) {
+                continue;
+            }
+
+            let error = value - self.thresholds[i];
+            if let Some(spike) = self.deviation_spike(i, error, threshold_scale) {
+                sink.push(spike);
+            }
+
+            self.advance_channel(i, value);
+        }
+    }
+
+    /// Collects a channel's first [`Self::WARMUP_SAMPLES`] values, seeding its
+    /// prediction once the window fills.
+    ///
+    /// Returns `true` while the channel is still warming up — the caller has
+    /// no prediction to compare against yet, so the step emits nothing.
+    fn warm_up_channel(&mut self, channel_idx: usize, value: f32) -> bool {
+        let history = &mut self.history[channel_idx];
+        if history.len() >= Self::WARMUP_SAMPLES {
+            return false;
+        }
+
+        // `history_depth >= WARMUP_SAMPLES`, so no eviction can fire here.
+        history.push_back(value);
+        if history.len() == Self::WARMUP_SAMPLES {
+            self.thresholds[channel_idx] = Self::recent_average(&self.history[channel_idx]);
+        }
+
+        true
+    }
+
+    /// The spike this channel's prediction error earns, if any.
+    ///
+    /// Scans the configured bands from the end and stops at the first one the
+    /// deviation clears; polarity carries the sign of the error. A channel
+    /// index past `u16::MAX` has no `SpikeEvent` to name it, so it emits
+    /// nothing.
+    fn deviation_spike(
+        &self,
+        channel_idx: usize,
+        error: f32,
+        threshold_scale: f32,
+    ) -> Option<SpikeEvent> {
+        let deviation = error.abs();
+        for &(threshold, _spike_val) in self.deviation_thresholds.iter().rev() {
+            if deviation > (threshold * threshold_scale).max(0.0) {
+                let channel = u16::try_from(channel_idx).ok()?;
+                return Some(SpikeEvent::at_step_start(channel, error >= 0.0));
+            }
+        }
+
+        None
+    }
+
+    /// Records `value` and eases the channel's prediction toward its recent mean.
+    fn advance_channel(&mut self, channel_idx: usize, value: f32) {
+        let history = &mut self.history[channel_idx];
+        if history.len() == self.history_depth {
+            history.pop_front();
+        }
+        history.push_back(value);
+
+        let recent_avg = Self::recent_average(&self.history[channel_idx]);
+        self.thresholds[channel_idx] = 0.9 * self.thresholds[channel_idx] + 0.1 * recent_avg;
+    }
+
+    /// Mean of the newest [`Self::WARMUP_SAMPLES`] samples.
+    ///
+    /// Only called on a channel holding at least that many, so the divisor is
+    /// always the number of values actually summed.
+    fn recent_average(history: &VecDeque<f32>) -> f32 {
+        history.iter().rev().take(Self::WARMUP_SAMPLES).sum::<f32>() / Self::WARMUP_SAMPLES as f32
+    }
+
     fn encode_with_threshold_scale(
         &mut self,
         input: &[f32],
         threshold_scale: f32,
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        for (i, &value) in input.iter().enumerate() {
-            if i >= self.history.len() {
-                break;
-            }
-            let channel_history = &mut self.history[i];
-
-            // Warm-up: history_depth is always >= 5, so no eviction can fire here.
-            if channel_history.len() < 5 {
-                channel_history.push_back(value);
-
-                if channel_history.len() == 5 {
-                    self.thresholds[i] = channel_history.iter().rev().take(5).sum::<f32>() / 5.0;
-                }
-
-                continue;
-            }
-
-            let prediction = self.thresholds[i];
-            let error = value - prediction;
-            let deviation = error.abs();
-
-            for &(threshold, _spike_val) in self.deviation_thresholds.iter().rev() {
-                if deviation > (threshold * threshold_scale).max(0.0) {
-                    let Ok(channel) = u16::try_from(i) else {
-                        break;
-                    };
-                    output
-                        .spikes
-                        .push(SpikeEvent::at_step_start(channel, error >= 0.0));
-                    break;
-                }
-            }
-
-            if channel_history.len() == self.history_depth {
-                channel_history.pop_front();
-            }
-            channel_history.push_back(value);
-
-            let recent_avg = channel_history.iter().rev().take(5).sum::<f32>() / 5.0;
-            self.thresholds[i] = 0.9 * self.thresholds[i] + 0.1 * recent_avg;
-        }
+        self.encode_with_threshold_scale_into(input, threshold_scale, &mut output.spikes);
         output
     }
 
-    /// Encodes input using neuromodulator-driven gain curves.
-    ///
-    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_step_with_modulators(
-            self,
-            input,
-            modulators,
-            gain_curves,
-        )
+    /// Streaming inputs are truncated to the configured channel count.
+    fn clamp_to_channels<'a>(&self, input: &'a [f32]) -> &'a [f32] {
+        if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        }
     }
 }
 
@@ -254,12 +293,21 @@ impl Encoder for PredictiveEncoder {
     }
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
+        let safe_input = self.clamp_to_channels(input);
         self.encode_with_threshold_scale(safe_input, 1.0)
+    }
+
+    fn encode_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(input, 1.0, sink)
+        });
+    }
+
+    fn encode_step_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
+        let safe_input = self.clamp_to_channels(input);
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(safe_input, 1.0, sink)
+        });
     }
 
     /// One call is one tick; batch and streaming are identical here.
@@ -284,12 +332,68 @@ impl Encoder for PredictiveEncoder {
 
 impl ModulatedEncoder for PredictiveEncoder {
     fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
+        let safe_input = self.clamp_to_channels(input);
         self.encode_with_threshold_scale(safe_input, gains.sanitize().threshold_scale)
+    }
+
+    fn encode_with_gains_into(
+        &mut self,
+        input: &[f32],
+        gains: EncodingGains,
+        sink: &mut dyn SpikeSink,
+    ) {
+        let safe_input = self.clamp_to_channels(input);
+        let threshold_scale = gains.sanitize().threshold_scale;
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(safe_input, threshold_scale, sink)
+        });
+    }
+
+    /// Mirrors [`encode_step_with_gains`], which this encoder leaves at its
+    /// default of [`encode_with_gains`]. Without this the trait default would
+    /// build and drain an intermediate `EncodedOutput`, so the streaming
+    /// modulated path would allocate on every step.
+    ///
+    /// [`encode_step_with_gains`]: ModulatedEncoder::encode_step_with_gains
+    /// [`encode_with_gains`]: ModulatedEncoder::encode_with_gains
+    fn encode_step_with_gains_into(
+        &mut self,
+        input: &[f32],
+        gains: EncodingGains,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_with_gains_into(input, gains, sink);
+    }
+
+    /// Skips the intermediate [`EncodedOutput`] the trait default builds.
+    ///
+    /// The default mirrors the returning [`encode_with_modulators`], which
+    /// allocates. This encoder's modulator layer *is* its gains layer, so it
+    /// can evaluate the curves and write straight into `sink`.
+    ///
+    /// [`encode_with_modulators`]: ModulatedEncoder::encode_with_modulators
+    fn encode_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_with_gains_into(input, gain_curves.evaluate(modulators), sink);
+    }
+
+    /// Streaming counterpart of [`encode_with_modulators_into`], allocation-free
+    /// for the same reason.
+    ///
+    /// [`encode_with_modulators_into`]: ModulatedEncoder::encode_with_modulators_into
+    fn encode_step_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_step_with_gains_into(input, gain_curves.evaluate(modulators), sink);
     }
 }
 
@@ -359,6 +463,7 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ModulatedEncoder;
 
     #[test]
     fn test_predictive_encoder_rejects_small_history_depth() {

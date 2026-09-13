@@ -89,12 +89,16 @@ impl TemporalEncoder {
         })
     }
 
-    fn encode_with_threshold_scale(
+    /// Spike-emitting core: writes straight into `sink`, allocating nothing.
+    ///
+    /// Every public encoding path on this encoder routes through here, so the
+    /// returning and sink-based APIs cannot drift apart.
+    fn encode_with_threshold_scale_into<S: SpikeSink + ?Sized>(
         &mut self,
         input: &[f32],
         threshold_scale: f32,
-    ) -> EncodedOutput {
-        let mut output = EncodedOutput::new();
+        sink: &mut S,
+    ) {
         for (i, &value) in input.iter().enumerate() {
             if i >= self.history.len() {
                 break;
@@ -120,39 +124,30 @@ impl TemporalEncoder {
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
                 if change > (threshold * threshold_scale).max(0.0) {
                     // Or use spike_val to determine polarity/strength.
-                    output.spikes.push(SpikeEvent::at_step_start(channel, true));
+                    sink.push(SpikeEvent::at_step_start(channel, true));
                     break; // Only fire one spike per channel per step
                 }
             }
         }
+    }
+
+    fn encode_with_threshold_scale(
+        &mut self,
+        input: &[f32],
+        threshold_scale: f32,
+    ) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        self.encode_with_threshold_scale_into(input, threshold_scale, &mut output.spikes);
         output
     }
 
-    /// Encodes input using neuromodulator-driven gain curves.
-    ///
-    /// Inherent wrapper so callers need not import [`ModulatedEncoder`].
-    pub fn encode_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_with_modulators(self, input, modulators, gain_curves)
-    }
-
-    /// Step-wise variant of [`encode_with_modulators`](Self::encode_with_modulators).
-    pub fn encode_step_with_modulators(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-    ) -> EncodedOutput {
-        <Self as ModulatedEncoder>::encode_step_with_modulators(
-            self,
-            input,
-            modulators,
-            gain_curves,
-        )
+    /// Streaming inputs are truncated to the configured channel count.
+    fn clamp_to_channels<'a>(&self, input: &'a [f32]) -> &'a [f32] {
+        if input.len() > self.history.len() {
+            &input[..self.history.len()]
+        } else {
+            input
+        }
     }
 }
 
@@ -162,12 +157,21 @@ impl Encoder for TemporalEncoder {
     }
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
+        let safe_input = self.clamp_to_channels(input);
         self.encode_with_threshold_scale(safe_input, 1.0)
+    }
+
+    fn encode_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(input, 1.0, sink)
+        });
+    }
+
+    fn encode_step_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
+        let safe_input = self.clamp_to_channels(input);
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(safe_input, 1.0, sink)
+        });
     }
 
     /// One call is one tick; batch and streaming are identical here.
@@ -189,12 +193,68 @@ impl Encoder for TemporalEncoder {
 
 impl ModulatedEncoder for TemporalEncoder {
     fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
-        let safe_input = if input.len() > self.history.len() {
-            &input[..self.history.len()]
-        } else {
-            input
-        };
+        let safe_input = self.clamp_to_channels(input);
         self.encode_with_threshold_scale(safe_input, gains.sanitize().threshold_scale)
+    }
+
+    fn encode_with_gains_into(
+        &mut self,
+        input: &[f32],
+        gains: EncodingGains,
+        sink: &mut dyn SpikeSink,
+    ) {
+        let safe_input = self.clamp_to_channels(input);
+        let threshold_scale = gains.sanitize().threshold_scale;
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(safe_input, threshold_scale, sink)
+        });
+    }
+
+    /// Mirrors [`encode_step_with_gains`], which this encoder leaves at its
+    /// default of [`encode_with_gains`]. Without this the trait default would
+    /// build and drain an intermediate `EncodedOutput`, so the streaming
+    /// modulated path would allocate on every step.
+    ///
+    /// [`encode_step_with_gains`]: ModulatedEncoder::encode_step_with_gains
+    /// [`encode_with_gains`]: ModulatedEncoder::encode_with_gains
+    fn encode_step_with_gains_into(
+        &mut self,
+        input: &[f32],
+        gains: EncodingGains,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_with_gains_into(input, gains, sink);
+    }
+
+    /// Skips the intermediate [`EncodedOutput`] the trait default builds.
+    ///
+    /// The default mirrors the returning [`encode_with_modulators`], which
+    /// allocates. This encoder's modulator layer *is* its gains layer, so it
+    /// can evaluate the curves and write straight into `sink`.
+    ///
+    /// [`encode_with_modulators`]: ModulatedEncoder::encode_with_modulators
+    fn encode_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_with_gains_into(input, gain_curves.evaluate(modulators), sink);
+    }
+
+    /// Streaming counterpart of [`encode_with_modulators_into`], allocation-free
+    /// for the same reason.
+    ///
+    /// [`encode_with_modulators_into`]: ModulatedEncoder::encode_with_modulators_into
+    fn encode_step_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_step_with_gains_into(input, gain_curves.evaluate(modulators), sink);
     }
 }
 
@@ -251,6 +311,7 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ModulatedEncoder;
 
     #[test]
     fn test_temporal_encoder() {

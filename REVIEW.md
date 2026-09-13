@@ -185,8 +185,29 @@ test "$(wc -l < src/modulators.rs)" -gt 400
 rg -n 'pub struct GainCurve|NeuromodulatorGainCurves|EncodingGains' \
   src/modulators.rs
 
-# encode_*_with_modulators (including PhaseEncoder)
-rg -n 'fn encode_with_modulators' src/encoders/*.rs
+# encode_*_with_modulators lives on ModulatedEncoder, and every encoder
+# implements it and overrides the allocation-free sink path
+rg -n 'fn encode_with_modulators\(' src/lib.rs
+for spec in \
+  'delta.rs:DeltaEncoder' 'latency.rs:LatencyEncoder' 'phase.rs:PhaseEncoder' \
+  'population.rs:PopulationEncoder' 'predictive.rs:PredictiveEncoder' \
+  'rate.rs:RateEncoder' 'temporal.rs:TemporalEncoder'; do
+  file="src/encoders/${spec%%:*}"
+  encoder="${spec#*:}"
+  rg -q "impl ModulatedEncoder for ${encoder}\b" "$file" || {
+    echo "missing ModulatedEncoder impl: $encoder"; exit 1
+  }
+  rg -q '^\s*fn encode_with_modulators_into\(' "$file" || {
+    echo "missing allocation-free modulator sink path: $encoder"; exit 1
+  }
+  rg -q '^\s*fn encode_step_with_modulators_into\(' "$file" || {
+    echo "missing allocation-free modulator sink step: $encoder"; exit 1
+  }
+done
+# The returning encode_*_with_modulators stay trait methods: no inherent
+# wrappers back on the encoder types
+test -z "$(rg -n 'fn encode_with_modulators\(|fn encode_step_with_modulators\(' \
+  src/encoders/*.rs || true)"
 
 # PhaseEncoder published
 rg -n 'pub mod phase|pub use phase::PhaseEncoder' \
@@ -244,7 +265,7 @@ git check-ignore -v .worktrees .swarm .beads .idea
 
 - `src/modulators.rs` collapsed to a decay-only stub (~tens of lines)
 - `PhaseEncoder` missing from `src/encoders/mod.rs`
-- Net deletion of `encode_with_modulators` on the main encoders
+- Net deletion of `ModulatedEncoder::encode_with_modulators` (or its impls on the main encoders)
 - A bot “sync / resolve feedback” commit rewrites half the tree
   (thousands of lines deleted)
 - `git diff origin/main` shows unexpected public-API removals
