@@ -460,6 +460,85 @@ fn modulated_sink_path_matches_the_returning_modulator_path() {
     assert_eq!(total, 16);
 }
 
+/// An out-of-crate encoder whose neuromodulated behaviour is *not* expressible
+/// through [`EncodingGains`]: it emits one extra spike per active modulator,
+/// something the gains layer has no way to represent.
+struct ModulatorOnly;
+
+impl Encoder for ModulatorOnly {
+    fn encode(&mut self, _input: &[f32]) -> EncodedOutput {
+        EncodedOutput::new()
+    }
+
+    fn reset(&mut self) {}
+}
+
+impl ModulatedEncoder for ModulatorOnly {
+    fn encode_with_gains(&mut self, _input: &[f32], _gains: EncodingGains) -> EncodedOutput {
+        EncodedOutput::new()
+    }
+
+    fn encode_with_modulators(
+        &mut self,
+        _input: &[f32],
+        modulators: &NeuroModulators,
+        _gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        if modulators.dopamine > 0.0 {
+            output.spikes.push(SpikeEvent::at_step_start(0, true));
+        }
+        if modulators.acetylcholine > 0.0 {
+            output.spikes.push(SpikeEvent::at_step_start(1, true));
+        }
+        output
+    }
+
+    fn encode_step_with_modulators(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+    ) -> EncodedOutput {
+        self.encode_with_modulators(input, modulators, gain_curves)
+    }
+}
+
+#[test]
+fn inherited_modulator_sink_defaults_follow_the_returning_modulator_path() {
+    // The sink defaults must mirror whichever layer an out-of-crate encoder
+    // overrides. This one overrides the *modulator* methods, so routing the
+    // defaults through the gains layer would silently emit nothing.
+    let modulators = NeuroModulators {
+        dopamine: 1.0,
+        acetylcholine: 1.0,
+        ..Default::default()
+    };
+    let curves = NeuromodulatorGainCurves::default();
+
+    let expected = vec![
+        SpikeEvent::at_step_start(0, true),
+        SpikeEvent::at_step_start(1, true),
+    ];
+
+    let mut encoder = ModulatorOnly;
+    assert_eq!(
+        encoder
+            .encode_with_modulators(&[0.0], &modulators, &curves)
+            .spikes,
+        expected,
+        "the returning path is the reference the sink path must match"
+    );
+
+    let mut buffer: Vec<SpikeEvent> = Vec::new();
+    encoder.encode_with_modulators_into(&[0.0], &modulators, &curves, &mut buffer);
+    assert_eq!(buffer, expected);
+
+    buffer.clear();
+    encoder.encode_step_with_modulators_into(&[0.0], &modulators, &curves, &mut buffer);
+    assert_eq!(buffer, expected);
+}
+
 /// An out-of-crate encoder that does *not* override the sink methods.
 struct PassThrough;
 
@@ -689,6 +768,198 @@ fn batch_modulator_sink_path_matches_the_returning_path() {
 
         assert_eq!(buffer, expected, "modulated batch step {index} diverged");
     }
+}
+
+/// Runs both modulated sink paths against their returning twins.
+///
+/// Each closure gets its own encoder so stateful ones see identical history.
+fn assert_modulated_paths_agree<E: ModulatedEncoder>(
+    label: &str,
+    mut returning: E,
+    mut sink_based: E,
+    modulators: &NeuroModulators,
+    curves: &NeuromodulatorGainCurves,
+    steps: &[&[f32]],
+) {
+    let mut buffer: Vec<SpikeEvent> = Vec::new();
+
+    for (index, input) in steps.iter().enumerate() {
+        let expected = returning
+            .encode_step_with_modulators(input, modulators, curves)
+            .spikes;
+
+        buffer.clear();
+        sink_based.encode_step_with_modulators_into(input, modulators, curves, &mut buffer);
+
+        assert_eq!(buffer, expected, "{label}: modulated step {index} diverged");
+    }
+}
+
+/// Batch counterpart of [`assert_modulated_paths_agree`].
+fn assert_batch_modulated_paths_agree<E: ModulatedEncoder>(
+    label: &str,
+    mut returning: E,
+    mut sink_based: E,
+    modulators: &NeuroModulators,
+    curves: &NeuromodulatorGainCurves,
+    input: &[f32],
+) {
+    let expected = returning
+        .encode_with_modulators(input, modulators, curves)
+        .spikes;
+
+    let mut buffer: Vec<SpikeEvent> = Vec::new();
+    sink_based.encode_with_modulators_into(input, modulators, curves, &mut buffer);
+
+    assert_eq!(buffer, expected, "{label}: modulated batch path diverged");
+}
+
+#[test]
+fn every_encoder_overrides_both_modulated_sink_paths_consistently() {
+    // The trait defaults route through the returning modulator methods and so
+    // allocate; each encoder overrides them to reach its gains layer directly.
+    // Those overrides have to stay spike-for-spike identical to the defaults.
+    let modulators = NeuroModulators {
+        acetylcholine: 1.0,
+        ..Default::default()
+    };
+    let curves = NeuromodulatorGainCurves {
+        acetylcholine: ModulatorGainCurves {
+            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            latency: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let steps: [&[f32]; 3] = [&[0.2, 0.05, 0.5], &[0.2, 0.05, 1.0], &[0.9, 0.9, 0.0]];
+
+    assert_modulated_paths_agree(
+        "DeltaEncoder",
+        DeltaEncoder::new(0.1, 3),
+        DeltaEncoder::new(0.1, 3),
+        &modulators,
+        &curves,
+        &steps,
+    );
+    assert_modulated_paths_agree(
+        "LatencyEncoder",
+        LatencyEncoder::new(9, (0.0, 1.0)),
+        LatencyEncoder::new(9, (0.0, 1.0)),
+        &modulators,
+        &curves,
+        &steps,
+    );
+    assert_modulated_paths_agree(
+        "PhaseEncoder",
+        PhaseEncoder::new(8, (0.0, 1.0)),
+        PhaseEncoder::new(8, (0.0, 1.0)),
+        &modulators,
+        &curves,
+        &steps,
+    );
+    assert_modulated_paths_agree(
+        "PredictiveEncoder",
+        PredictiveEncoder::try_new(5, vec![(0.2, 1)], 3).expect("valid PredictiveEncoder"),
+        PredictiveEncoder::try_new(5, vec![(0.2, 1)], 3).expect("valid PredictiveEncoder"),
+        &modulators,
+        &curves,
+        &steps,
+    );
+    assert_modulated_paths_agree(
+        "TemporalEncoder",
+        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
+        &modulators,
+        &curves,
+        &steps,
+    );
+}
+
+#[test]
+fn batch_modulated_sink_paths_cover_every_encoder() {
+    // Batch counterpart of the step check above. The two stochastic encoders
+    // draw fresh entropy per call, so they get bounds rather than equality.
+    let modulators = NeuroModulators {
+        acetylcholine: 1.0,
+        dopamine: 1.0,
+        ..Default::default()
+    };
+    let curves = NeuromodulatorGainCurves {
+        acetylcholine: ModulatorGainCurves {
+            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            latency: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+            ..Default::default()
+        },
+        dopamine: ModulatorGainCurves {
+            firing_rate: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let input = [0.2_f32, 0.05, 0.5];
+    let mut buffer: Vec<SpikeEvent> = Vec::new();
+
+    assert_batch_modulated_paths_agree(
+        "DeltaEncoder",
+        DeltaEncoder::new(0.1, 3),
+        DeltaEncoder::new(0.1, 3),
+        &modulators,
+        &curves,
+        &input,
+    );
+    assert_batch_modulated_paths_agree(
+        "LatencyEncoder",
+        LatencyEncoder::new(9, (0.0, 1.0)),
+        LatencyEncoder::new(9, (0.0, 1.0)),
+        &modulators,
+        &curves,
+        &input,
+    );
+    assert_batch_modulated_paths_agree(
+        "PhaseEncoder",
+        PhaseEncoder::new(8, (0.0, 1.0)),
+        PhaseEncoder::new(8, (0.0, 1.0)),
+        &modulators,
+        &curves,
+        &input,
+    );
+    assert_batch_modulated_paths_agree(
+        "PredictiveEncoder",
+        PredictiveEncoder::try_new(5, vec![(0.2, 1)], 3).expect("valid PredictiveEncoder"),
+        PredictiveEncoder::try_new(5, vec![(0.2, 1)], 3).expect("valid PredictiveEncoder"),
+        &modulators,
+        &curves,
+        &input,
+    );
+    assert_batch_modulated_paths_agree(
+        "TemporalEncoder",
+        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
+        &modulators,
+        &curves,
+        &input,
+    );
+
+    // Stochastic: the sink path must stay within the same channel bounds.
+    let mut rate = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010).expect("valid");
+    buffer.clear();
+    rate.encode_with_modulators_into(&[0.5; 16], &modulators, &curves, &mut buffer);
+    assert!(buffer.len() <= 16);
+
+    let mut population = PopulationEncoder::new(32, (0.0, 100.0), 10.0);
+    buffer.clear();
+    population.encode_with_modulators_into(&[50.0], &modulators, &curves, &mut buffer);
+    assert!(buffer.len() <= 32);
+
+    // Their streaming overrides are separate methods; exercise those too.
+    buffer.clear();
+    rate.encode_step_with_modulators_into(&[0.5; 16], &modulators, &curves, &mut buffer);
+    assert!(buffer.len() <= 16);
+    buffer.clear();
+    population.encode_step_with_modulators_into(&[50.0], &modulators, &curves, &mut buffer);
+    assert!(buffer.len() <= 32);
 }
 
 /// An out-of-crate modulated encoder that overrides no sink method.

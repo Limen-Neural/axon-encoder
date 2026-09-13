@@ -318,6 +318,37 @@ impl ModulatedEncoder for PredictiveEncoder {
     ) {
         self.encode_with_gains_into(input, gains, sink);
     }
+
+    /// Skips the intermediate [`EncodedOutput`] the trait default builds.
+    ///
+    /// The default mirrors the returning [`encode_with_modulators`], which
+    /// allocates. This encoder's modulator layer *is* its gains layer, so it
+    /// can evaluate the curves and write straight into `sink`.
+    ///
+    /// [`encode_with_modulators`]: ModulatedEncoder::encode_with_modulators
+    fn encode_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_with_gains_into(input, gain_curves.evaluate(modulators), sink);
+    }
+
+    /// Streaming counterpart of [`encode_with_modulators_into`], allocation-free
+    /// for the same reason.
+    ///
+    /// [`encode_with_modulators_into`]: ModulatedEncoder::encode_with_modulators_into
+    fn encode_step_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_step_with_gains_into(input, gain_curves.evaluate(modulators), sink);
+    }
 }
 
 #[cfg(feature = "serde")]

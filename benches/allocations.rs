@@ -378,6 +378,44 @@ fn report_rate_encoder_backlog() {
     );
 }
 
+fn report_delta_encoder_modulated_into() {
+    // The neuromodulated sink path has its own trait defaults, which mirror the
+    // *returning* modulator methods and therefore allocate. Every encoder here
+    // overrides them; this row is what would go non-zero if one stopped.
+    for scale in SCALES {
+        let mut encoder = DeltaEncoder::try_new(0.1, scale).expect("valid DeltaEncoder");
+        let baseline = normalized_input(scale);
+        let shifted = shifted_input(scale, 0.25);
+        let mut use_shifted = true;
+        let mut buffer = Vec::with_capacity(scale);
+
+        let modulators = NeuroModulators {
+            dopamine: 1.0,
+            ..Default::default()
+        };
+        let curves = NeuromodulatorGainCurves {
+            dopamine: ModulatorGainCurves {
+                threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let stats = measure_reused_step(2, &mut buffer, |sink| {
+            let input = if use_shifted { &shifted } else { &baseline };
+            use_shifted = !use_shifted;
+            encoder.encode_step_with_modulators_into(input, &modulators, &curves, sink);
+        });
+        print_stats(
+            "DeltaEncoder",
+            "encode_step_with_modulators_into",
+            "scale",
+            scale,
+            stats,
+        );
+    }
+}
+
 fn report_poisson_encoder() {
     for steps in POISSON_STEPS {
         let encoder = PoissonEncoder::new(steps);
@@ -408,5 +446,6 @@ fn main() {
     report_temporal_encoder_into();
     report_predictive_encoder_into();
     report_latency_encoder_into();
+    report_delta_encoder_modulated_into();
     report_poisson_encoder();
 }

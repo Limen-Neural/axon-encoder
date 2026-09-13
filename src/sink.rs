@@ -246,8 +246,16 @@ impl SpikeSink for Chunked<'_> {
 
 impl Drop for Chunked<'_> {
     fn drop(&mut self) {
-        // Also covers an unwind out of the encoder, so buffered spikes are
-        // never silently dropped.
+        // A sink is caller code and may panic. If the encoder is already
+        // unwinding, calling it again here risks a second panic while the
+        // first is still in flight, which aborts the process and loses the
+        // original message. Drop the buffered tail instead: a partial batch
+        // from a failed call is worth less than the panic explaining why.
+        if std::thread::panicking() {
+            return;
+        }
+        // Otherwise a safety net — `through_chunks` flushes explicitly, so
+        // this normally finds an empty buffer.
         self.flush();
     }
 }
@@ -274,6 +282,38 @@ mod tests {
 
     fn spike(channel: u16) -> SpikeEvent {
         SpikeEvent::at_step_start(channel, true)
+    }
+
+    #[test]
+    fn an_unwinding_encoder_does_not_call_the_sink_again() {
+        // The chunk buffer is flushed from `Drop` as well, and a sink that
+        // panics there while a panic is already unwinding aborts the process.
+        // Panicking with spikes still buffered must surface the *encoder's*
+        // panic, not take the test binary down with it.
+        struct PanicOnFlush;
+
+        impl SpikeSink for PanicOnFlush {
+            fn push(&mut self, _event: SpikeEvent) {
+                // Reached through the inherited `extend_from_slice` too, so
+                // this one body covers every way a flush can call the sink.
+                panic!("sink refused the flush");
+            }
+        }
+
+        let mut sink = PanicOnFlush;
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            through_chunks(&mut sink, |chunked| {
+                chunked.push(spike(0));
+                panic!("encoder failed");
+            })
+        }))
+        .expect_err("the encoder panic must propagate");
+
+        assert_eq!(
+            payload.downcast_ref::<&str>().copied(),
+            Some("encoder failed"),
+            "the sink's panic must not replace the encoder's"
+        );
     }
 
     #[test]
