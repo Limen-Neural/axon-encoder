@@ -43,7 +43,6 @@ __pycache__/
 # CI / analysis noise
 .codecov.yml
 .codacy.yml
-qodana.yaml
 docs/
 
 **/*.md

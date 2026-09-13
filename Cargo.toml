@@ -19,7 +19,6 @@ exclude = [
     "/.codecov.yml",
     "/.dockerignore",
     "/Dockerfile",
-    "/qodana.yaml",
     "/REVIEW.md",
     "/docs/",
     "/rust-toolchain.toml",
