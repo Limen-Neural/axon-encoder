@@ -13,7 +13,8 @@
 //! through it instead of allocating. The crate ships adapters for
 //! `Vec<SpikeEvent>` and [`EncodedOutput`]; downstream event buffers, ring
 //! queues, hardware FIFOs, and format translators implement the trait
-//! themselves and never materialize a `Vec` at all.
+//! themselves, so no `Vec<SpikeEvent>` is built on the way to their own
+//! storage.
 //!
 //! ```rust
 //! use axon_encoder::prelude::*;
@@ -53,6 +54,13 @@ use crate::types::{EncodedOutput, SpikeEvent};
 /// - Only spikes travel through a sink. `EncodedOutput`'s `embeddings` and
 ///   `metadata` are not produced by any encoder in this crate; a caller that
 ///   needs them uses the returning APIs.
+/// - A sink that **panics** ends the call: the spikes it had already accepted
+///   stay, and the rest are not delivered. The encoder's own state is then
+///   unspecified — a stateful encoder may have counted spikes the sink never
+///   took, or still hold spikes it already handed over — so reuse it only
+///   after [`Encoder::reset`](crate::Encoder::reset). Nothing is leaked or
+///   corrupted; only the correspondence between encoder state and sink
+///   contents is lost.
 ///
 /// The trait is object-safe on purpose: `&mut dyn SpikeSink` is what the
 /// `encode_*_into` methods take, so `dyn Encoder` and `dyn ModulatedEncoder`

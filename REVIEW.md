@@ -187,7 +187,7 @@ rg -n 'pub struct GainCurve|NeuromodulatorGainCurves|EncodingGains' \
 
 # encode_*_with_modulators lives on ModulatedEncoder, and every encoder
 # implements it and overrides the allocation-free sink path
-rg -n 'fn encode_with_modulators' src/lib.rs
+rg -n 'fn encode_with_modulators\(' src/lib.rs
 for spec in \
   'delta.rs:DeltaEncoder' 'latency.rs:LatencyEncoder' 'phase.rs:PhaseEncoder' \
   'population.rs:PopulationEncoder' 'predictive.rs:PredictiveEncoder' \

@@ -88,8 +88,10 @@ use types::EncodedOutput;
 /// Moves an owned output's spikes into `sink`.
 ///
 /// Backs the default `encode_*_into` implementations: correct for any encoder,
-/// but it still allocates the intermediate `EncodedOutput`. Encoders in this
-/// crate override those methods to write into the sink directly.
+/// but it still allocates the intermediate `EncodedOutput`. Every [`Encoder`]
+/// in this crate overrides those methods to write into the sink directly.
+/// (`PoissonEncoder` and `EmbeddingRateEncoder` implement no `Encoder` path at
+/// all, so they have nothing to override — see their own docs.)
 fn drain_spikes_into(output: EncodedOutput, sink: &mut dyn SpikeSink) {
     sink.reserve(output.spikes.len());
     sink.extend_from_slice(&output.spikes);
@@ -332,9 +334,11 @@ pub trait Encoder {
     /// # Overriding
     ///
     /// The default is correct for any encoder but still allocates: it calls
-    /// `encode` and moves the resulting spikes across. Every encoder in this
+    /// `encode` and moves the resulting spikes across. Every `Encoder` in this
     /// crate overrides it to write into `sink` directly; an out-of-crate
     /// encoder that cares about allocations should do the same.
+    /// (`PoissonEncoder` and `EmbeddingRateEncoder` implement no `Encoder`
+    /// path at all and are documented exceptions.)
     ///
     /// # Examples
     ///

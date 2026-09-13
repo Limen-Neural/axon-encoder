@@ -696,11 +696,16 @@ fn gain_sink_path_advances_phase_exactly_like_the_returning_path() {
         sensitivity_scale: 0.5,
         ..EncodingGains::identity()
     };
-    let mut encoder = PhaseEncoder::new(8, (0.0, 1.0));
+    let mut returning = PhaseEncoder::new(8, (0.0, 1.0));
+    let mut sink_based = PhaseEncoder::new(8, (0.0, 1.0));
     let mut buffer: Vec<SpikeEvent> = Vec::new();
 
-    encoder.encode_with_gains_into(&[0.5], gains, &mut buffer);
-    assert_eq!(encoder.current_phase(), 1);
+    let expected = returning.encode_with_gains(&[0.5], gains).spikes;
+    sink_based.encode_with_gains_into(&[0.5], gains, &mut buffer);
+
+    assert_eq!(buffer, expected, "the sink path emitted different spikes");
+    assert_eq!(sink_based.current_phase(), returning.current_phase());
+    assert_eq!(sink_based.current_phase(), 1, "one call advances one phase");
 }
 
 #[test]

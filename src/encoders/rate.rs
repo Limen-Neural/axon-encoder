@@ -289,8 +289,14 @@ impl RateEncoder {
         for _ in 0..emit {
             sink.push(SpikeEvent::at_step_start(channel, true));
         }
+        // Decremented once the run is handed over, so any remaining whole
+        // spikes stay queued for subsequent steps. A sink that panics part-way
+        // through the run leaves this count and the sink's contents out of
+        // step — deliberately not reconciled here, since neither replaying the
+        // run nor dropping it is right without knowing what the sink kept.
+        // `SpikeSink` documents the consequence: reset before reusing an
+        // encoder whose sink panicked.
         self.pending_spikes[channel_idx] = pending - emit as u64;
-        // Any remaining whole spikes stay queued for subsequent steps.
     }
 
     fn rate_scale_is_active(rate_scale: f32) -> bool {

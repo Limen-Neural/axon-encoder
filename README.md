@@ -88,8 +88,9 @@ fn main() {
 Same spikes, same order, same state advancement as the returning APIs — and
 zero allocations per step once the buffer is warm. `Vec<SpikeEvent>` and
 `EncodedOutput` implement `SpikeSink` out of the box; a downstream event
-buffer, ring queue, or hardware adapter implements the one-method trait itself
-and never materializes a `Vec` at all:
+buffer, ring queue, or hardware adapter implements the one-method trait itself,
+so no `Vec<SpikeEvent>` is ever built — it keeps spikes in whatever form it
+already wants:
 
 ```rust
 use axon_encoder::prelude::*;
