@@ -44,12 +44,6 @@ fn test_serde_encoders_and_state() {
         serde_json::from_str(&serialized_embed_config).unwrap();
     assert_eq!(embed_config, deserialized_embed_config);
 
-    // 5. Test EncoderState
-    let state = EncoderState::new_zeros(5);
-    let serialized_state = serde_json::to_string(&state).unwrap();
-    let deserialized_state: EncoderState = serde_json::from_str(&serialized_state).unwrap();
-    assert_eq!(state, deserialized_state);
-
     // 6. Test RateEncoder
     let rate_encoder = RateEncoder::new(2.0, 10.0, (0.0, 1.0));
     let serialized_rate = serde_json::to_string(&rate_encoder).unwrap();
@@ -264,17 +258,13 @@ fn test_serde_validation_failures() {
 #[cfg(feature = "serde")]
 fn test_serde_embedding_rate_encoder() {
     let config = EmbeddingEncoderConfig { v_th: 1.0 };
-    let embeddings = vec![0.5, 0.8];
-    let encoder = EmbeddingRateEncoder::new(&embeddings, config);
+    let mut encoder = EmbeddingRateEncoder::try_new(2, config).unwrap();
+    encoder.encode(&[0.5, 0.8]); // give it non-zero membrane state to round-trip
 
     let serialized = serde_json::to_string(&encoder).unwrap();
     let deserialized: EmbeddingRateEncoder = serde_json::from_str(&serialized).unwrap();
 
-    assert_eq!(encoder.config, deserialized.config);
-    assert_eq!(
-        encoder.normalized_embeddings,
-        deserialized.normalized_embeddings
-    );
+    assert_eq!(encoder, deserialized);
 }
 
 #[test]
@@ -294,10 +284,10 @@ fn test_serde_validation_errors_extended() {
     let res: Result<EmbeddingEncoderConfig, _> = serde_json::from_str(invalid_config_json);
     assert!(res.is_err());
 
-    // Test non-finite embeddings
+    // Test non-finite membrane state
     let invalid_rate_json = r#"{
         "config": {"v_th": 1.0},
-        "normalized_embeddings": [1e309, 1e309]
+        "membrane_potentials": [1e309, 1e309]
     }"#;
     let res: Result<EmbeddingRateEncoder, _> = serde_json::from_str(invalid_rate_json);
     assert!(res.is_err());

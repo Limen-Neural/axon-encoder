@@ -151,6 +151,8 @@ IDE/terminal dumps. Prefer **verdict first**, then small tables.
 cargo run --color=always --package axon-encoder \
   --example delta_encoding --profile dev
 cargo run --color=always --package axon-encoder \
+  --example embedding_encoding --profile dev
+cargo run --color=always --package axon-encoder \
   --example latency_encoding --profile dev
 cargo run --color=always --package axon-encoder \
   --example population_encoding --profile dev

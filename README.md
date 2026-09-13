@@ -119,9 +119,9 @@ spike.
 Encoders **append** to a sink and never clear it, so the caller decides where
 step boundaries are. The trait is object-safe, so `&mut dyn Encoder` and
 `&mut dyn ModulatedEncoder` still work; `ModulatedEncoder` has the matching
-`encode_with_gains_into` / `encode_with_modulators_into`. `PoissonEncoder` and
-`EmbeddingRateEncoder` are documented exceptions — neither implements
-`Encoder`. See `cargo run --example encode_into_sink`.
+`encode_with_gains_into` / `encode_with_modulators_into`. `PoissonEncoder` is
+a documented exception — it does not implement `Encoder`. See
+`cargo run --example encode_into_sink`.
 
 ## Spike time semantics
 
@@ -170,7 +170,7 @@ Per encoder:
 | `RateEncoder` | 1 | 1 | `dt_seconds` |
 | `LatencyEncoder` | `max_latency + 1` | `max_latency + 1` | none |
 | `PhaseEncoder` | 1 | `cycle_steps` | none |
-| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `TemporalEncoder`, `PredictiveEncoder` | 1 | 1 | none |
+| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `TemporalEncoder`, `PredictiveEncoder`, `EmbeddingRateEncoder` | 1 | 1 | none |
 
 **Batch versus streaming.** Both modes follow the same rule, once per call —
 `encode` is not a longer window than `encode_step`. `PhaseEncoder` advances its
@@ -241,6 +241,55 @@ rates, ranges, windows, thresholds, or channel counts. Prefer those over
 panicking `new(...)` in libraries and applications. `PredictiveEncoder` is the
 exception: its `new(...)` already returns a `Result`.
 
+### Embedding-driven encoding
+
+`EmbeddingRateEncoder` is a general-purpose integrate-and-fire `Encoder`: it
+accumulates each call's input into a persistent per-channel membrane
+potential and fires whenever a channel crosses `config.v_th`, so it fits any
+fixed-width numeric vector — not just embeddings.
+
+```rust
+use axon_encoder::prelude::*;
+
+fn main() -> Result<(), EncoderError> {
+    let drive = [0.2_f32, 0.9, 0.5];
+    let mut encoder = EmbeddingRateEncoder::try_new(drive.len(), EmbeddingEncoderConfig {
+        v_th: 0.4,
+    })?;
+
+    for _ in 0..3 {
+        let output = encoder.encode(&drive);
+        println!("{} channels fired", output.spikes.len());
+    }
+
+    encoder.reset(); // zero the membrane potentials before reusing the encoder
+    Ok(())
+}
+```
+
+**Migrating from `forward` / `EncoderState` (0.4, removed in 0.5).** 0.4
+threaded state explicitly and normalized a fixed embedding vector once at
+construction:
+
+```text
+let enc = EmbeddingRateEncoder::new(&embeddings, config);
+let (out, next) = enc.forward(&EncoderState::new_zeros(embeddings.len()));
+```
+
+0.5 owns its membrane state internally and takes the drive vector as
+`encode`'s input, matching every other `Encoder` in the crate:
+
+```text
+let mut enc = EmbeddingRateEncoder::try_new(embeddings.len(), config)?;
+let out = enc.encode(&embeddings);
+```
+
+The built-in min-max normalization is also removed, since it was a hidden
+construction-time transform whose result depended on the full embedding
+distribution rather than on any one call's input. Callers that relied on it
+should normalize before calling `encode`, using the former formula
+`(x - min) / (max - min + 1e-5)`.
+
 ## Features
 
 - **Encoders** for different signal structures:
@@ -251,6 +300,8 @@ exception: its `new(...)` already returns a `Result`.
   - **`DeltaEncoder`** — spike when the signal moves by a threshold
   - **`LatencyEncoder`** — stronger input → earlier spike in a window
   - **`PoissonEncoder`** — Poisson-process style sampling
+  - **`EmbeddingRateEncoder`** — general-purpose integrate-and-fire over a
+    fixed-width numeric vector
 - **`Encoder` / `ModulatedEncoder` traits** — plug in custom encoders or apply
   gain scales (`EncodingGains`) without owning a full neuromodulator runtime
 - **`SpikeSink` + `encode_into`** — write spikes into caller-owned storage and
@@ -283,6 +334,7 @@ Clone the repository and run:
 ```bash
 cargo run --example rate_encoding
 cargo run --example delta_encoding
+cargo run --example embedding_encoding
 cargo run --example spike_timebase
 cargo run --example encode_into_sink
 cargo run --example ndarray_encoding --features ndarray

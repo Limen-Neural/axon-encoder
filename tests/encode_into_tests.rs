@@ -155,6 +155,17 @@ fn temporal_encoder_sink_path_matches_returning_path() {
 }
 
 #[test]
+fn embedding_rate_encoder_sink_path_matches_returning_path() {
+    let steps: &[&[f32]] = &[&[0.2, 0.05, 0.5], &[0.2, 0.05, 1.0], &[0.9, 0.9, 0.0]];
+    assert_paths_agree(
+        "EmbeddingRateEncoder",
+        EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.4 }),
+        EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.4 }),
+        steps,
+    );
+}
+
+#[test]
 fn rate_encoder_streaming_sink_path_matches_returning_path() {
     // `encode_step` is deterministic (accumulator-driven), so this is exact.
     let steps: &[&[f32]] = &[&[1.0, 0.25], &[1.0, 0.25], &[1.0, 0.25], &[0.0, 1.0]];
@@ -625,6 +636,12 @@ fn batch_sink_path_matches_encode_for_deterministic_encoders() {
         TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
         &[low, low, low, high, high, high, low, high],
     );
+    assert_batch_paths_agree(
+        "EmbeddingRateEncoder",
+        EmbeddingRateEncoder::new(2, EmbeddingEncoderConfig { v_th: 0.4 }),
+        EmbeddingRateEncoder::new(2, EmbeddingEncoderConfig { v_th: 0.4 }),
+        two_channel,
+    );
 }
 
 #[test]
@@ -688,6 +705,14 @@ fn gain_sink_path_matches_returning_path_for_deterministic_encoders() {
         PhaseEncoder::new(8, (0.0, 1.0)),
         sensitivity_gains,
         &[&[0.0, 0.5, 1.0], &[1.0, f32::NAN, 0.25], &[0.75, 0.75, 0.0]],
+    );
+
+    assert_gain_paths_agree(
+        "EmbeddingRateEncoder",
+        EmbeddingRateEncoder::new(2, EmbeddingEncoderConfig { v_th: 0.4 }),
+        EmbeddingRateEncoder::new(2, EmbeddingEncoderConfig { v_th: 0.4 }),
+        threshold_gains,
+        two_channel,
     );
 }
 
@@ -881,6 +906,14 @@ fn every_encoder_overrides_both_modulated_sink_paths_consistently() {
         &curves,
         &steps,
     );
+    assert_modulated_paths_agree(
+        "EmbeddingRateEncoder",
+        EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.4 }),
+        EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.4 }),
+        &modulators,
+        &curves,
+        &steps,
+    );
 }
 
 #[test]
@@ -944,6 +977,14 @@ fn batch_modulated_sink_paths_cover_every_encoder() {
         "TemporalEncoder",
         TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
         TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
+        &modulators,
+        &curves,
+        &input,
+    );
+    assert_batch_modulated_paths_agree(
+        "EmbeddingRateEncoder",
+        EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.4 }),
+        EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.4 }),
         &modulators,
         &curves,
         &input,
@@ -1201,6 +1242,14 @@ fn streaming_gain_sink_path_matches_returning_path() {
         PhaseEncoder::new(8, (0.0, 1.0)),
         sensitivity_gains,
         &[&[0.0, 0.5, 1.0], &[1.0, f32::NAN, 0.25]],
+    );
+
+    assert_step_gain_paths_agree(
+        "EmbeddingRateEncoder",
+        EmbeddingRateEncoder::new(2, EmbeddingEncoderConfig { v_th: 0.4 }),
+        EmbeddingRateEncoder::new(2, EmbeddingEncoderConfig { v_th: 0.4 }),
+        threshold_gains,
+        two_channel,
     );
 
     // PopulationEncoder is stochastic; assert the invariants instead.

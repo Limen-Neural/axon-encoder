@@ -52,6 +52,12 @@ const MODULATED_FACTORIES: &[(&str, ModulatedFactory)] = &[
     ("PredictiveEncoder", || {
         Box::new(PredictiveEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid predictive"))
     }),
+    ("EmbeddingRateEncoder", || {
+        Box::new(
+            EmbeddingRateEncoder::try_new(8, EmbeddingEncoderConfig { v_th: 0.3 })
+                .expect("valid embedding rate"),
+        )
+    }),
 ];
 
 /// Every public `Encoder` implementation: the gain-aware ones upcast to
@@ -374,22 +380,6 @@ fn extreme_window_configurations_still_conform() {
     for gains in gain_cases() {
         let out = encoder.encode_with_gains(&[0.0, 0.5, 1.0, f32::NAN], gains);
         assert_call_conforms("LatencyEncoder (max window, gains)", model, &out.spikes);
-    }
-}
-
-#[test]
-fn embedding_rate_encoder_conforms() {
-    // `EmbeddingRateEncoder` keeps its own `forward` API rather than the
-    // `Encoder` trait, but it reports and honours the same contract.
-    let encoder = EmbeddingRateEncoder::new(&[0.2, 0.9, 0.5], EmbeddingEncoderConfig { v_th: 0.4 });
-    let model = encoder.time_model();
-    assert_eq!(model, TimeModel::INSTANT);
-
-    let mut state = EncoderState::new_zeros(3);
-    for _ in 0..4 {
-        let (out, next) = encoder.forward(&state);
-        assert_call_conforms("EmbeddingRateEncoder", model, &out.spikes);
-        state = next;
     }
 }
 

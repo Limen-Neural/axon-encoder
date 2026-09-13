@@ -69,7 +69,7 @@ pub use sink::SpikeSink;
 pub mod prelude {
     pub use crate::Encoder;
     pub use crate::ModulatedEncoder;
-    pub use crate::encoder::*;
+    pub use crate::encoder::{EmbeddingEncoderConfig, EmbeddingRateEncoder};
     pub use crate::encoders::*;
     pub use crate::error::*;
     pub use crate::modulators::*;
@@ -90,8 +90,8 @@ use types::EncodedOutput;
 /// Backs the default `encode_*_into` implementations: correct for any encoder,
 /// but it still allocates the intermediate `EncodedOutput`. Every [`Encoder`]
 /// in this crate overrides those methods to write into the sink directly.
-/// (`PoissonEncoder` and `EmbeddingRateEncoder` implement no `Encoder` path at
-/// all, so they have nothing to override — see their own docs.)
+/// (`PoissonEncoder` implements no `Encoder` path at all, so it has nothing
+/// to override — see its own docs.)
 fn drain_spikes_into(output: EncodedOutput, sink: &mut dyn SpikeSink) {
     sink.reserve(output.spikes.len());
     sink.extend_from_slice(&output.spikes);
@@ -337,8 +337,8 @@ pub trait Encoder {
     /// `encode` and moves the resulting spikes across. Every `Encoder` in this
     /// crate overrides it to write into `sink` directly; an out-of-crate
     /// encoder that cares about allocations should do the same.
-    /// (`PoissonEncoder` and `EmbeddingRateEncoder` implement no `Encoder`
-    /// path at all and are documented exceptions.)
+    /// (`PoissonEncoder` implements no `Encoder` path at all and is a
+    /// documented exception.)
     ///
     /// # Examples
     ///
