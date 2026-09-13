@@ -160,6 +160,14 @@ impl EmbeddingRateEncoder {
     /// persistent potential would otherwise silence that channel forever (or
     /// make it fire on every future call) with no way to repair it short of
     /// [`reset`](Encoder::reset).
+    ///
+    /// The post-spike reset falls back to a hard `0.0` whenever subtracting
+    /// `effective_threshold` would not actually reduce the potential — either
+    /// because it is `0.0` (the documented zero-gain case) or because the
+    /// potential's magnitude is so far past `effective_threshold` that the
+    /// subtraction is a no-op under `f32` precision. Without that fallback a
+    /// channel that ever reaches such a magnitude fires on every subsequent
+    /// call, forever, regardless of later input.
     fn accumulate_and_fire<S: SpikeSink + ?Sized>(
         &mut self,
         input: &[f32],
@@ -185,7 +193,12 @@ impl EmbeddingRateEncoder {
                     u16::try_from(i).expect("channel index exceeds u16::MAX"),
                     true,
                 ));
-                *potential -= effective_threshold; // Soft reset
+                let after_reset = *potential - effective_threshold; // Soft reset
+                *potential = if after_reset < *potential {
+                    after_reset
+                } else {
+                    0.0
+                };
             }
         }
     }
@@ -410,20 +423,41 @@ mod encode_coverage_tests {
     }
 
     #[test]
-    fn overflow_to_infinity_does_not_corrupt_state() {
+    fn accumulation_that_would_overflow_to_infinity_is_dropped() {
+        let mut encoder =
+            EmbeddingRateEncoder::try_new(1, EmbeddingEncoderConfig { v_th: f32::MAX }).unwrap();
+
+        // Below v_th, so this does not fire; potential is now f32::MAX / 2.0.
+        let first = encoder.encode(&[f32::MAX / 2.0]);
+        assert!(first.spikes.is_empty());
+        assert_eq!(encoder.membrane_potentials[0], f32::MAX / 2.0);
+
+        // f32::MAX / 2.0 + f32::MAX would overflow to infinity; it must be
+        // dropped, leaving the channel's finite state untouched.
+        let second = encoder.encode(&[f32::MAX]);
+        assert!(second.spikes.is_empty());
+        assert_eq!(encoder.membrane_potentials[0], f32::MAX / 2.0);
+    }
+
+    /// At extreme magnitudes, subtracting `effective_threshold` from a
+    /// saturated potential is an `f32`-precision no-op. Without a fallback,
+    /// that leaves the channel firing on every future call forever — this
+    /// proves the fallback actually recovers.
+    #[test]
+    fn saturated_potential_does_not_get_stuck_firing_forever() {
         let mut encoder =
             EmbeddingRateEncoder::try_new(1, EmbeddingEncoderConfig { v_th: 1.0 }).unwrap();
 
-        // Drive the potential up to f32::MAX without ever going non-finite.
-        encoder.encode(&[f32::MAX / 2.0]);
-        encoder.encode(&[f32::MAX / 2.0]);
-        assert_eq!(encoder.membrane_potentials[0], f32::MAX);
+        // Two calls whose soft-reset subtraction is absorbed by f32 precision.
+        assert_eq!(encoder.encode(&[f32::MAX / 2.0]).spikes.len(), 1);
+        assert_eq!(encoder.encode(&[f32::MAX / 2.0]).spikes.len(), 1);
 
-        // The next addition would overflow to infinity; it must be dropped
-        // instead of permanently corrupting the channel.
-        let out = encoder.encode(&[f32::MAX / 2.0]);
-        assert!(out.spikes.is_empty());
-        assert_eq!(encoder.membrane_potentials[0], f32::MAX);
+        // An ordinary input fires exactly once, same as any fresh encoder.
+        assert_eq!(encoder.encode(&[1.0]).spikes.len(), 1);
+
+        // The channel must not be permanently stuck firing: a quiet call
+        // after that must stay quiet.
+        assert!(encoder.encode(&[0.0]).spikes.is_empty());
     }
 
     #[test]
