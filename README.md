@@ -170,7 +170,7 @@ Per encoder:
 | `RateEncoder` | 1 | 1 | `dt_seconds` |
 | `LatencyEncoder` | `max_latency + 1` | `max_latency + 1` | none |
 | `PhaseEncoder` | 1 | `cycle_steps` | none |
-| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `TemporalEncoder`, `PredictiveEncoder` | 1 | 1 | none |
+| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `TemporalEncoder`, `PredictiveEncoder`, `EmbeddingRateEncoder` | 1 | 1 | none |
 
 **Batch versus streaming.** Both modes follow the same rule, once per call —
 `encode` is not a longer window than `encode_step`. `PhaseEncoder` advances its
@@ -284,10 +284,11 @@ let mut enc = EmbeddingRateEncoder::try_new(embeddings.len(), config)?;
 let out = enc.encode(&embeddings);
 ```
 
-The built-in min-max normalization is also removed, since it applied a hidden
-per-call transform whose result depended on the input distribution. Callers
-that relied on it should normalize before calling `encode`, using the former
-formula `(x - min) / (max - min + 1e-5)`.
+The built-in min-max normalization is also removed, since it was a hidden
+construction-time transform whose result depended on the full embedding
+distribution rather than on any one call's input. Callers that relied on it
+should normalize before calling `encode`, using the former formula
+`(x - min) / (max - min + 1e-5)`.
 
 ## Features
 

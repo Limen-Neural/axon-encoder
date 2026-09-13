@@ -23,7 +23,7 @@ fn main() {
     println!("Drive: {drive:?}, v_th: 0.4\n");
 
     // Membrane potentials persist across calls, so repeating the same drive
-    // fires more channels as their potentials climb toward threshold.
+    // can cause additional threshold crossings as potentials keep accumulating.
     for step in 0..4 {
         let output = encoder.encode(&drive);
         println!("Step {step}: {} channels fired", output.spikes.len());

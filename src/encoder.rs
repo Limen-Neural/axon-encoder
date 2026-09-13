@@ -88,10 +88,11 @@ impl TryFrom<EmbeddingEncoderConfigRepr> for EmbeddingEncoderConfig {
 /// # }
 /// ```
 ///
-/// The built-in min-max normalization is also removed, since it applied a
-/// hidden per-call transform whose result depended on the input distribution.
-/// Callers that relied on it should normalize before calling `encode`, using
-/// the former formula `(x - min) / (max - min + 1e-5)`.
+/// The built-in min-max normalization is also removed, since it was a hidden
+/// construction-time transform whose result depended on the full embedding
+/// distribution rather than on any one call's input. Callers that relied on
+/// it should normalize before calling `encode`, using the former formula
+/// `(x - min) / (max - min + 1e-5)`.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "EmbeddingRateEncoderRepr"))]
@@ -153,6 +154,12 @@ impl EmbeddingRateEncoder {
     /// returning and sink-based APIs cannot drift apart. `input` is aligned
     /// to the tracked channel count: excess values are ignored, and a
     /// shorter slice leaves the remaining channels' potentials untouched.
+    ///
+    /// A non-finite input, or an accumulation that would overflow to
+    /// infinity, is dropped rather than stored: writing `NaN`/`±inf` into a
+    /// persistent potential would otherwise silence that channel forever (or
+    /// make it fire on every future call) with no way to repair it short of
+    /// [`reset`](Encoder::reset).
     fn accumulate_and_fire<S: SpikeSink + ?Sized>(
         &mut self,
         input: &[f32],
@@ -163,8 +170,15 @@ impl EmbeddingRateEncoder {
         let aligned_len = input.len().min(self.membrane_potentials.len());
 
         for (i, &value) in input[..aligned_len].iter().enumerate() {
+            if !value.is_finite() {
+                continue;
+            }
             let potential = &mut self.membrane_potentials[i];
-            *potential += value;
+            let next = *potential + value;
+            if !next.is_finite() {
+                continue;
+            }
+            *potential = next;
 
             if *potential >= effective_threshold {
                 sink.push(SpikeEvent::at_step_start(
@@ -371,6 +385,46 @@ mod tests {
 #[cfg(test)]
 mod encode_coverage_tests {
     use super::*;
+
+    #[test]
+    fn non_finite_input_does_not_poison_channel_state() {
+        let mut encoder =
+            EmbeddingRateEncoder::try_new(3, EmbeddingEncoderConfig { v_th: 0.5 }).unwrap();
+
+        // NaN/+inf/-inf must never be written into persistent state.
+        let out = encoder.encode(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+        assert!(out.spikes.is_empty());
+        assert_eq!(encoder.membrane_potentials, vec![0.0, 0.0, 0.0]);
+
+        // A finite input afterward behaves exactly as if the non-finite step
+        // never happened: no channel is left silently dead or stuck firing.
+        let out = encoder.encode(&[0.6, 0.6, 0.6]);
+        assert_eq!(
+            out.spikes,
+            vec![
+                SpikeEvent::at_step_start(0, true),
+                SpikeEvent::at_step_start(1, true),
+                SpikeEvent::at_step_start(2, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn overflow_to_infinity_does_not_corrupt_state() {
+        let mut encoder =
+            EmbeddingRateEncoder::try_new(1, EmbeddingEncoderConfig { v_th: 1.0 }).unwrap();
+
+        // Drive the potential up to f32::MAX without ever going non-finite.
+        encoder.encode(&[f32::MAX / 2.0]);
+        encoder.encode(&[f32::MAX / 2.0]);
+        assert_eq!(encoder.membrane_potentials[0], f32::MAX);
+
+        // The next addition would overflow to infinity; it must be dropped
+        // instead of permanently corrupting the channel.
+        let out = encoder.encode(&[f32::MAX / 2.0]);
+        assert!(out.spikes.is_empty());
+        assert_eq!(encoder.membrane_potentials[0], f32::MAX);
+    }
 
     #[test]
     fn state_persists_across_encode_calls() {
