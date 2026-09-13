@@ -10,7 +10,8 @@ use axon_encoder::prelude::*;
 
 /// Encodes twice from identical starting states and compares the two paths.
 ///
-/// Each closure gets its own encoder, so stateful encoders see the same history.
+/// Each call passes two separately built encoders, so stateful ones start from
+/// the same state and see the same history.
 fn assert_paths_agree<E: Encoder>(
     label: &str,
     mut returning: E,
@@ -777,7 +778,8 @@ fn batch_modulator_sink_path_matches_the_returning_path() {
 
 /// Runs both modulated sink paths against their returning twins.
 ///
-/// Each closure gets its own encoder so stateful ones see identical history.
+/// Each call passes two separately built encoders, so stateful ones see
+/// identical history.
 fn assert_modulated_paths_agree<E: ModulatedEncoder>(
     label: &str,
     mut returning: E,

@@ -380,8 +380,11 @@ fn report_rate_encoder_backlog() {
 
 fn report_delta_encoder_modulated_into() {
     // The neuromodulated sink path has its own trait defaults, which mirror the
-    // *returning* modulator methods and therefore allocate. Every encoder here
-    // overrides them; this row is what would go non-zero if one stopped.
+    // *returning* modulator methods and therefore allocate. This row proves the
+    // override actually removes that allocation — for `DeltaEncoder` only, so
+    // read it as a smoke test for the mechanism rather than per-encoder
+    // coverage. What every encoder *has* both overrides is checked statically
+    // by REVIEW.md's per-encoder guard.
     for scale in SCALES {
         let mut encoder = DeltaEncoder::try_new(0.1, scale).expect("valid DeltaEncoder");
         let baseline = normalized_input(scale);

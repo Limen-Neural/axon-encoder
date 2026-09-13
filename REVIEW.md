@@ -197,10 +197,10 @@ for spec in \
   rg -q "impl ModulatedEncoder for ${encoder}\b" "$file" || {
     echo "missing ModulatedEncoder impl: $encoder"; exit 1
   }
-  rg -q 'fn encode_with_modulators_into' "$file" || {
+  rg -q '^\s*fn encode_with_modulators_into\(' "$file" || {
     echo "missing allocation-free modulator sink path: $encoder"; exit 1
   }
-  rg -q 'fn encode_step_with_modulators_into' "$file" || {
+  rg -q '^\s*fn encode_step_with_modulators_into\(' "$file" || {
     echo "missing allocation-free modulator sink step: $encoder"; exit 1
   }
 done
