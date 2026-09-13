@@ -383,8 +383,10 @@ fn report_delta_encoder_modulated_into() {
     // *returning* modulator methods and therefore allocate. This row proves the
     // override actually removes that allocation — for `DeltaEncoder` only, so
     // read it as a smoke test for the mechanism rather than per-encoder
-    // coverage. What every encoder *has* both overrides is checked statically
-    // by REVIEW.md's per-encoder guard.
+    // coverage. That every encoder carries both overrides is required by
+    // REVIEW.md's per-encoder guard, which is a manual review gate — no test or
+    // CI job fails when an override goes missing, because a lost override falls
+    // back to a default that emits the same spikes and only costs allocations.
     for scale in SCALES {
         let mut encoder = DeltaEncoder::try_new(0.1, scale).expect("valid DeltaEncoder");
         let baseline = normalized_input(scale);
