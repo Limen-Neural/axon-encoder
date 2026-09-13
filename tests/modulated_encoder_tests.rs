@@ -60,3 +60,28 @@ fn direct_gain_dispatch_sanitizes_non_finite_values() {
 
     assert_eq!(output.spikes[0].timestamp, 5);
 }
+
+#[test]
+fn embedding_rate_encoder_supports_trait_object_dispatch() {
+    let mut encoder =
+        EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.5 }).unwrap();
+
+    // `&mut dyn Encoder`: streaming state accumulates across calls.
+    {
+        let dyn_encoder: &mut dyn Encoder = &mut encoder;
+        assert!(dyn_encoder.encode_step(&[0.3, 0.0]).spikes.is_empty());
+        let second = dyn_encoder.encode_step(&[0.3, 0.0]);
+        assert_eq!(second.spikes, vec![SpikeEvent::at_step_start(0, true)]);
+    }
+
+    encoder.reset();
+
+    // `&mut dyn ModulatedEncoder`: gains still reach the shared threshold path.
+    let output = encode_via_dyn(
+        &mut encoder,
+        &[0.6, 0.0],
+        &NeuroModulators::default(),
+        &NeuromodulatorGainCurves::default(),
+    );
+    assert_eq!(output.spikes, vec![SpikeEvent::at_step_start(0, true)]);
+}
