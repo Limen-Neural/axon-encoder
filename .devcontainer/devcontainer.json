@@ -1,5 +1,5 @@
 {
-  "name": "axon-encoder Rust 1.97.1",
+  "name": "axon-encoder Rust 1.98.1",
   "build": {
     "dockerfile": "Dockerfile"
   },
