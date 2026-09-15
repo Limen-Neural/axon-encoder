@@ -507,6 +507,22 @@ impl Default for TimeModel {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Saturating convenience versus checked accounting
+///
+/// [`absolute`](Self::absolute), [`absolute_nanos`](Self::absolute_nanos),
+/// [`advance`](Self::advance), and [`advance_by`](Self::advance_by) saturate at
+/// `u64::MAX`. That is the right default for examples and short runs: they never
+/// panic. They can, however, collapse distinct later events onto the same
+/// timestamp once the timeline is exhausted.
+///
+/// Long-running runtimes that must detect horizon exhaustion should use
+/// [`checked_absolute`](Self::checked_absolute),
+/// [`checked_absolute_nanos`](Self::checked_absolute_nanos),
+/// [`checked_advance`](Self::checked_advance), and
+/// [`checked_advance_by`](Self::checked_advance_by), and fail closed when those
+/// return `None`. Mutating checked advances leave the origin unchanged on
+/// overflow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimeCursor {
     model: TimeModel,
@@ -540,17 +556,52 @@ impl TimeCursor {
 
     /// Absolute tick of a spike emitted by the current call, saturating at
     /// `u64::MAX`.
+    ///
+    /// This is the convenience path: it never panics, but once the sum overflows
+    /// every later offset maps to the same timestamp. Use
+    /// [`checked_absolute`](Self::checked_absolute) when a runtime must detect
+    /// that collapse.
     #[inline]
     pub const fn absolute(self, offset: TickOffset) -> u64 {
         self.origin.saturating_add(offset.ticks())
     }
 
+    /// Absolute tick of a spike emitted by the current call, or `None` when
+    /// `origin + offset` exceeds `u64::MAX`.
+    #[inline]
+    pub const fn checked_absolute(self, offset: TickOffset) -> Option<u64> {
+        self.origin.checked_add(offset.ticks())
+    }
+
     /// Absolute nanoseconds of a spike emitted by the current call, or `None`
     /// when the encoder reports no [`Timebase`].
+    ///
+    /// The tick count saturates at `u64::MAX` before multiplying by the tick
+    /// duration, and the product itself saturates, so a horizon-exhausted cursor
+    /// reports `u64::MAX` nanoseconds rather than wrapping. Use
+    /// [`checked_absolute_nanos`](Self::checked_absolute_nanos) when that
+    /// collapse must be detected.
     #[inline]
     pub const fn absolute_nanos(self, offset: TickOffset) -> Option<u64> {
         match self.model.timebase() {
             Some(timebase) => Some(self.absolute(offset).saturating_mul(timebase.tick_nanos())),
+            None => None,
+        }
+    }
+
+    /// Absolute nanoseconds of a spike emitted by the current call, or `None`
+    /// when the encoder reports no [`Timebase`] or when the conversion is not
+    /// representable in `u64`.
+    ///
+    /// Representable means both `origin + offset` and that sum times the tick
+    /// duration fit in `u64`. Either overflow, or a missing timebase, yields
+    /// `None`.
+    #[inline]
+    pub const fn checked_absolute_nanos(self, offset: TickOffset) -> Option<u64> {
+        match self.model.timebase() {
+            Some(timebase) => self
+                .checked_absolute(offset)?
+                .checked_mul(timebase.tick_nanos()),
             None => None,
         }
     }
@@ -564,13 +615,42 @@ impl TimeCursor {
     }
 
     /// Advances past one encoder call, returning the new origin.
+    ///
+    /// Saturates at `u64::MAX`. A runtime that must stop when the timeline can
+    /// no longer advance should use [`checked_advance`](Self::checked_advance).
     #[inline]
     pub const fn advance(&mut self) -> u64 {
         self.origin = self.origin.saturating_add(self.model.step_ticks());
         self.origin
     }
 
+    /// Advances past one encoder call, returning the new origin, or `None` when
+    /// `origin + step_ticks` would overflow `u64`.
+    ///
+    /// On overflow the cursor is left unchanged, so a runtime can fail closed
+    /// without losing its last valid origin:
+    ///
+    /// ```rust
+    /// use axon_encoder::prelude::*;
+    ///
+    /// let mut cursor = TimeCursor::starting_at(TimeModel::window(11), u64::MAX - 5);
+    /// assert_eq!(cursor.checked_advance(), None);
+    /// assert_eq!(cursor.origin(), u64::MAX - 5);
+    ///
+    /// // Saturating convenience still clamps if the caller wants that:
+    /// assert_eq!(cursor.advance(), u64::MAX);
+    /// ```
+    #[inline]
+    pub const fn checked_advance(&mut self) -> Option<u64> {
+        self.checked_advance_by(1)
+    }
+
     /// Advances past `calls` encoder calls, returning the new origin.
+    ///
+    /// Both the `calls * step_ticks` product and the subsequent addition
+    /// saturate at `u64::MAX`. Use
+    /// [`checked_advance_by`](Self::checked_advance_by) when that collapse must
+    /// be detected.
     #[inline]
     pub const fn advance_by(&mut self, calls: u64) -> u64 {
         self.origin = self
@@ -579,9 +659,263 @@ impl TimeCursor {
         self.origin
     }
 
+    /// Advances past `calls` encoder calls, returning the new origin, or `None`
+    /// when `calls * step_ticks` or `origin + that product` would overflow `u64`.
+    ///
+    /// On overflow the cursor is left unchanged. Zero calls always succeed and
+    /// leave the origin as-is, including when the origin is already `u64::MAX`.
+    #[inline]
+    pub const fn checked_advance_by(&mut self, calls: u64) -> Option<u64> {
+        let delta = calls.checked_mul(self.model.step_ticks())?;
+        let origin = self.origin.checked_add(delta)?;
+        self.origin = origin;
+        Some(origin)
+    }
+
     /// Returns the origin to 0, keeping the model. Pair with `Encoder::reset`.
     #[inline]
     pub const fn reset(&mut self) {
         self.origin = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Origins, offsets, and call counts that sit on the `u64` horizon.
+    const HORIZON: [u64; 8] = [
+        0,
+        1,
+        2,
+        u64::MAX / 2,
+        u64::MAX / 2 + 1,
+        u64::MAX - 2,
+        u64::MAX - 1,
+        u64::MAX,
+    ];
+
+    fn physical(tick_nanos: u64) -> TimeModel {
+        TimeModel::INSTANT.with_timebase(Timebase::from_nanos(
+            NonZeroU64::new(tick_nanos).expect("tick duration is non-zero"),
+        ))
+    }
+
+    #[test]
+    fn checked_absolute_returns_exact_sum_or_none() {
+        let cursor = TimeCursor::starting_at(TimeModel::INSTANT, 10);
+        assert_eq!(cursor.checked_absolute(TickOffset::ZERO), Some(10));
+        assert_eq!(cursor.checked_absolute(TickOffset::new(5)), Some(15));
+
+        let at_max = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX);
+        assert_eq!(at_max.checked_absolute(TickOffset::ZERO), Some(u64::MAX));
+        assert_eq!(at_max.checked_absolute(TickOffset::new(1)), None);
+
+        let near_max = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX - 5);
+        assert_eq!(
+            near_max.checked_absolute(TickOffset::new(5)),
+            Some(u64::MAX)
+        );
+        assert_eq!(near_max.checked_absolute(TickOffset::new(6)), None);
+    }
+
+    #[test]
+    fn saturating_absolute_is_unchanged_at_the_horizon() {
+        let cursor = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX - 1);
+        assert_eq!(cursor.absolute(TickOffset::new(5)), u64::MAX);
+        assert_eq!(cursor.checked_absolute(TickOffset::new(5)), None);
+        assert_eq!(cursor.origin(), u64::MAX - 1);
+    }
+
+    #[test]
+    fn prop_checked_absolute_agrees_with_saturating_addition() {
+        for origin in HORIZON {
+            for offset in HORIZON {
+                let cursor = TimeCursor::starting_at(TimeModel::INSTANT, origin);
+                let saturating = cursor.absolute(TickOffset::new(offset));
+                let checked = cursor.checked_absolute(TickOffset::new(offset));
+                match origin.checked_add(offset) {
+                    Some(sum) => {
+                        assert_eq!(checked, Some(sum), "{origin} + {offset}");
+                        assert_eq!(saturating, sum, "{origin} + {offset}");
+                    }
+                    None => {
+                        assert_eq!(checked, None, "{origin} + {offset} overflow");
+                        assert_eq!(saturating, u64::MAX, "{origin} + {offset} saturate");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn checked_absolute_nanos_requires_a_timebase() {
+        let dimensionless = TimeCursor::new(TimeModel::INSTANT);
+        assert_eq!(dimensionless.checked_absolute_nanos(TickOffset::ZERO), None);
+        assert_eq!(dimensionless.absolute_nanos(TickOffset::ZERO), None);
+    }
+
+    #[test]
+    fn checked_absolute_nanos_returns_exact_product_or_none() {
+        let cursor = TimeCursor::starting_at(physical(1_000_000), 3);
+        assert_eq!(
+            cursor.checked_absolute_nanos(TickOffset::new(1)),
+            Some(4_000_000)
+        );
+
+        let unit = TimeCursor::starting_at(physical(1), u64::MAX);
+        assert_eq!(
+            unit.checked_absolute_nanos(TickOffset::ZERO),
+            Some(u64::MAX)
+        );
+        assert_eq!(unit.checked_absolute_nanos(TickOffset::new(1)), None);
+
+        // Addition fits; multiplication does not.
+        let doubled = TimeCursor::starting_at(physical(2), u64::MAX / 2 + 1);
+        assert_eq!(
+            doubled.checked_absolute(TickOffset::ZERO),
+            Some(u64::MAX / 2 + 1)
+        );
+        assert_eq!(doubled.checked_absolute_nanos(TickOffset::ZERO), None);
+        assert_eq!(doubled.absolute_nanos(TickOffset::ZERO), Some(u64::MAX));
+
+        let max_tick = TimeCursor::starting_at(physical(u64::MAX), 0);
+        assert_eq!(
+            max_tick.checked_absolute_nanos(TickOffset::new(1)),
+            Some(u64::MAX)
+        );
+        assert_eq!(max_tick.checked_absolute_nanos(TickOffset::new(2)), None);
+    }
+
+    #[test]
+    fn prop_checked_absolute_nanos_agrees_with_saturating_multiplication() {
+        let tick_nanos = [1u64, 2, 3, 1_000_000, u64::MAX / 2, u64::MAX];
+        for nanos in tick_nanos {
+            for origin in HORIZON {
+                for offset in HORIZON {
+                    let cursor = TimeCursor::starting_at(physical(nanos), origin);
+                    let saturating = cursor.absolute_nanos(TickOffset::new(offset));
+                    let checked = cursor.checked_absolute_nanos(TickOffset::new(offset));
+                    match origin
+                        .checked_add(offset)
+                        .and_then(|ticks| ticks.checked_mul(nanos))
+                    {
+                        Some(product) => {
+                            assert_eq!(checked, Some(product), "{origin}+{offset}×{nanos}");
+                            assert_eq!(saturating, Some(product), "{origin}+{offset}×{nanos}");
+                        }
+                        None => {
+                            assert_eq!(checked, None, "{origin}+{offset}×{nanos} overflow");
+                            assert_eq!(
+                                saturating,
+                                Some(u64::MAX),
+                                "{origin}+{offset}×{nanos} saturate"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn checked_advance_is_atomic_on_overflow() {
+        let mut cursor = TimeCursor::starting_at(TimeModel::window(11), u64::MAX - 5);
+        assert_eq!(cursor.checked_advance(), None);
+        assert_eq!(cursor.origin(), u64::MAX - 5);
+
+        let mut at_max = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX);
+        assert_eq!(at_max.checked_advance(), None);
+        assert_eq!(at_max.origin(), u64::MAX);
+        assert_eq!(at_max.advance(), u64::MAX);
+    }
+
+    #[test]
+    fn checked_advance_returns_the_new_origin_when_representable() {
+        let mut cursor = TimeCursor::new(TimeModel::window(11));
+        assert_eq!(cursor.checked_advance(), Some(11));
+        assert_eq!(cursor.origin(), 11);
+
+        let mut near_max = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX - 1);
+        assert_eq!(near_max.checked_advance(), Some(u64::MAX));
+        assert_eq!(near_max.origin(), u64::MAX);
+    }
+
+    #[test]
+    fn checked_advance_by_zero_calls_is_a_no_op() {
+        for origin in HORIZON {
+            let mut cursor = TimeCursor::starting_at(TimeModel::window(11), origin);
+            assert_eq!(cursor.checked_advance_by(0), Some(origin));
+            assert_eq!(cursor.origin(), origin);
+            assert_eq!(cursor.advance_by(0), origin);
+        }
+    }
+
+    #[test]
+    fn checked_advance_by_reports_multiplication_overflow() {
+        let mut cursor = TimeCursor::new(TimeModel::window(2));
+        assert_eq!(cursor.checked_advance_by(u64::MAX), None);
+        assert_eq!(cursor.origin(), 0);
+
+        let mut wide = TimeCursor::new(TimeModel::window(u64::MAX));
+        assert_eq!(wide.checked_advance_by(2), None);
+        assert_eq!(wide.origin(), 0);
+        assert_eq!(wide.checked_advance_by(1), Some(u64::MAX));
+        assert_eq!(wide.origin(), u64::MAX);
+    }
+
+    #[test]
+    fn checked_advance_by_reports_addition_overflow() {
+        let mut cursor = TimeCursor::starting_at(TimeModel::INSTANT, 1);
+        assert_eq!(cursor.checked_advance_by(u64::MAX), None);
+        assert_eq!(cursor.origin(), 1);
+
+        let mut from_zero = TimeCursor::new(TimeModel::INSTANT);
+        assert_eq!(from_zero.checked_advance_by(u64::MAX), Some(u64::MAX));
+        assert_eq!(from_zero.origin(), u64::MAX);
+    }
+
+    #[test]
+    fn saturating_advance_by_is_unchanged() {
+        let mut cursor = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX - 1);
+        assert_eq!(cursor.advance_by(u64::MAX), u64::MAX);
+        assert_eq!(cursor.origin(), u64::MAX);
+    }
+
+    #[test]
+    fn prop_checked_advance_by_agrees_with_saturating_mul_then_add() {
+        for step in HORIZON {
+            if step == 0 {
+                continue;
+            }
+            let model = TimeModel::window(step);
+            for origin in HORIZON {
+                for calls in HORIZON {
+                    let mut checked_cursor = TimeCursor::starting_at(model, origin);
+                    let mut saturating_cursor = TimeCursor::starting_at(model, origin);
+                    let checked = checked_cursor.checked_advance_by(calls);
+                    let saturating = saturating_cursor.advance_by(calls);
+                    match calls
+                        .checked_mul(step)
+                        .and_then(|delta| origin.checked_add(delta))
+                    {
+                        Some(sum) => {
+                            assert_eq!(checked, Some(sum), "{origin} + {calls}×{step}");
+                            assert_eq!(checked_cursor.origin(), sum);
+                            assert_eq!(saturating, sum);
+                        }
+                        None => {
+                            assert_eq!(checked, None, "{origin} + {calls}×{step} overflow");
+                            assert_eq!(
+                                checked_cursor.origin(),
+                                origin,
+                                "checked_advance_by must not mutate on overflow"
+                            );
+                            assert_eq!(saturating, u64::MAX, "{origin} + {calls}×{step} saturate");
+                        }
+                    }
+                }
+            }
+        }
     }
 }
