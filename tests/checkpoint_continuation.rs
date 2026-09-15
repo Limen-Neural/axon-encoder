@@ -7,8 +7,9 @@
 //! second copy, feed the same suffix, and get identical spikes plus identical
 //! final serialized state.
 //!
-//! Stochastic batch paths (`RateEncoder::encode`, `PopulationEncoder`,
-//! `PoissonEncoder`) are out of scope unless the caller owns RNG state.
+//! Stochastic paths (`RateEncoder::encode`, `PopulationEncoder` batch and
+//! streaming, `PoissonEncoder`) are out of scope: they draw a thread-local
+//! generator serde does not capture, and they do not take caller-owned RNG.
 
 use axon_encoder::prelude::*;
 use serde::Serialize;
@@ -27,12 +28,38 @@ struct ContinuationCase {
     label: &'static str,
     /// Checkpoint after this many prefix ops (`0` = serialize before any step).
     split: usize,
-    /// When true, the checkpoint JSON must differ from a freshly built encoder
+    /// When true, the restored checkpoint must differ from a freshly built encoder
     /// so the row cannot pass on construction defaults alone.
     expect_mutated: bool,
+    /// Minimum spikes the live suffix must emit (0 = state/reset/silence rows).
+    min_suffix_spikes: usize,
     /// Substring that must appear in the checkpoint JSON (Rate backlog).
     checkpoint_must_contain: Option<&'static str>,
     ops: &'static [Op],
+}
+
+impl ContinuationCase {
+    const fn new(
+        label: &'static str,
+        split: usize,
+        expect_mutated: bool,
+        min_suffix_spikes: usize,
+        ops: &'static [Op],
+    ) -> Self {
+        Self {
+            label,
+            split,
+            expect_mutated,
+            min_suffix_spikes,
+            checkpoint_must_contain: None,
+            ops,
+        }
+    }
+
+    const fn with_needle(mut self, needle: &'static str) -> Self {
+        self.checkpoint_must_contain = Some(needle);
+        self
+    }
 }
 
 fn apply_op<E: Encoder>(encoder: &mut E, op: Op) -> Option<EncodedOutput> {
@@ -50,12 +77,13 @@ fn assert_checkpoint_continuation<E>(
     factory: impl Fn() -> E,
     case: &ContinuationCase,
 ) where
-    E: Encoder + Serialize + DeserializeOwned,
+    E: Encoder + Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
 {
     let ContinuationCase {
         label,
         split,
         expect_mutated,
+        min_suffix_spikes,
         checkpoint_must_contain,
         ops,
     } = case;
@@ -83,19 +111,19 @@ fn assert_checkpoint_continuation<E>(
         );
     }
 
-    if *expect_mutated {
-        let fresh = serde_json::to_string(&factory())
-            .unwrap_or_else(|err| panic!("{encoder} ({label}): fresh serialize failed: {err}"));
-        assert_ne!(
-            checkpoint, fresh,
-            "{encoder} ({label}) checkpoint at split={split}: serialized state matched construction defaults; config plus mutable state must survive as a distinct checkpoint\ncheckpoint={checkpoint}"
-        );
-    }
-
     let mut restored: E = serde_json::from_str(&checkpoint).unwrap_or_else(|err| {
         panic!("{encoder} ({label}) checkpoint at split={split}: deserialize failed: {err}")
     });
 
+    if *expect_mutated {
+        let fresh = factory();
+        assert_ne!(
+            restored, fresh,
+            "{encoder} ({label}) checkpoint at split={split}: restored state matched a freshly constructed encoder; config plus mutable state must survive as a distinct checkpoint\nrestored={restored:?}"
+        );
+    }
+
+    let mut suffix_spikes = 0usize;
     for (offset, op) in ops[split..].iter().enumerate() {
         let step = split + offset;
         match *op {
@@ -106,6 +134,7 @@ fn assert_checkpoint_continuation<E>(
                     live_out, restored_out,
                     "{encoder} ({label}) checkpoint at split={split} step={step}: outputs differ\nlive={live_out:?}\nrestored={restored_out:?}"
                 );
+                suffix_spikes += live_out.spikes.len();
             }
             Op::Reset => {
                 live.reset();
@@ -113,6 +142,11 @@ fn assert_checkpoint_continuation<E>(
             }
         }
     }
+
+    assert!(
+        suffix_spikes >= *min_suffix_spikes,
+        "{encoder} ({label}) checkpoint at split={split}: suffix produced {suffix_spikes} spikes, expected at least {min_suffix_spikes}"
+    );
 
     let live_final = serde_json::to_string(&live).unwrap_or_else(|err| {
         panic!(
@@ -134,7 +168,7 @@ fn assert_checkpoint_continuation<E>(
 
 fn run_cases<E>(encoder: &str, factory: impl Fn() -> E + Copy, cases: &[ContinuationCase])
 where
-    E: Encoder + Serialize + DeserializeOwned,
+    E: Encoder + Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
 {
     for case in cases {
         assert_checkpoint_continuation(encoder, factory, case);
@@ -156,8 +190,8 @@ const DELTA_OPS: &[Op] = &[
     Op::Step(&[0.6, 0.6]),
 ];
 
-/// Derivative always writes `last_values`; a finite step after Inf keeps the
-/// checkpoint JSON finite.
+/// Derivative always writes `last_values`. Inf is only in the suffix of a
+/// *finite* checkpoint: JSON cannot round-trip NaN/Inf (see the dedicated test).
 const DERIVATIVE_OPS: &[Op] = &[
     Op::Step(&[0.0, 0.0]),
     Op::Step(&[0.5, -0.9]),
@@ -265,34 +299,10 @@ fn checkpoint_continuation_matrix() {
         "DeltaEncoder",
         || DeltaEncoder::try_new(0.25, 2).expect("valid DeltaEncoder"),
         &[
-            ContinuationCase {
-                label: "before_any_step",
-                split: 0,
-                expect_mutated: false,
-                checkpoint_must_contain: None,
-                ops: DELTA_OPS,
-            },
-            ContinuationCase {
-                label: "mutated_last_values",
-                split: 2,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: DELTA_OPS,
-            },
-            ContinuationCase {
-                label: "after_empty_and_short",
-                split: 5,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: DELTA_OPS,
-            },
-            ContinuationCase {
-                label: "after_non_finite_then_reset_suffix",
-                split: 6,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: DELTA_OPS,
-            },
+            ContinuationCase::new("before_any_step", 0, false, 1, DELTA_OPS),
+            ContinuationCase::new("mutated_last_values", 2, true, 1, DELTA_OPS),
+            ContinuationCase::new("after_empty_and_short", 5, true, 1, DELTA_OPS),
+            ContinuationCase::new("after_non_finite_then_reset_suffix", 6, true, 1, DELTA_OPS),
         ],
     );
 
@@ -300,27 +310,16 @@ fn checkpoint_continuation_matrix() {
         "DerivativeEncoder",
         || DerivativeEncoder::try_new(vec![0.4, 0.8]).expect("valid DerivativeEncoder"),
         &[
-            ContinuationCase {
-                label: "before_any_step",
-                split: 0,
-                expect_mutated: false,
-                checkpoint_must_contain: None,
-                ops: DERIVATIVE_OPS,
-            },
-            ContinuationCase {
-                label: "after_signed_burst",
-                split: 2,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: DERIVATIVE_OPS,
-            },
-            ContinuationCase {
-                label: "after_short_input_non_finite_in_suffix",
-                split: 4,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: DERIVATIVE_OPS,
-            },
+            ContinuationCase::new("before_any_step", 0, false, 1, DERIVATIVE_OPS),
+            ContinuationCase::new("after_signed_burst", 2, true, 1, DERIVATIVE_OPS),
+            // split=4 is the last finite prefix; Inf is only in the suffix.
+            ContinuationCase::new(
+                "finite_checkpoint_then_non_finite_suffix",
+                4,
+                true,
+                1,
+                DERIVATIVE_OPS,
+            ),
         ],
     );
 
@@ -328,27 +327,15 @@ fn checkpoint_continuation_matrix() {
         "TemporalEncoder",
         || TemporalEncoder::try_new(8, vec![(0.5, 1)], 2).expect("valid TemporalEncoder"),
         &[
-            ContinuationCase {
-                label: "immediately_before_warmup",
-                split: 5,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: TEMPORAL_OPS,
-            },
-            ContinuationCase {
-                label: "immediately_after_warmup_burst",
-                split: 6,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: TEMPORAL_OPS,
-            },
-            ContinuationCase {
-                label: "after_empty_short_then_reset_suffix",
-                split: 8,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: TEMPORAL_OPS,
-            },
+            ContinuationCase::new("immediately_before_warmup", 5, true, 1, TEMPORAL_OPS),
+            ContinuationCase::new("immediately_after_warmup_burst", 6, true, 0, TEMPORAL_OPS),
+            ContinuationCase::new(
+                "after_empty_short_then_reset_suffix",
+                8,
+                true,
+                0,
+                TEMPORAL_OPS,
+            ),
         ],
     );
 
@@ -356,34 +343,10 @@ fn checkpoint_continuation_matrix() {
         "PredictiveEncoder",
         || PredictiveEncoder::try_new(8, vec![(0.5, 1)], 2).expect("valid PredictiveEncoder"),
         &[
-            ContinuationCase {
-                label: "immediately_before_warmup",
-                split: 4,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: PREDICTIVE_OPS,
-            },
-            ContinuationCase {
-                label: "immediately_after_warmup",
-                split: 5,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: PREDICTIVE_OPS,
-            },
-            ContinuationCase {
-                label: "immediately_after_error_burst",
-                split: 6,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: PREDICTIVE_OPS,
-            },
-            ContinuationCase {
-                label: "reset_in_suffix",
-                split: 8,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: PREDICTIVE_OPS,
-            },
+            ContinuationCase::new("immediately_before_warmup", 4, true, 1, PREDICTIVE_OPS),
+            ContinuationCase::new("immediately_after_warmup", 5, true, 1, PREDICTIVE_OPS),
+            ContinuationCase::new("immediately_after_error_burst", 6, true, 1, PREDICTIVE_OPS),
+            ContinuationCase::new("reset_in_suffix", 8, true, 1, PREDICTIVE_OPS),
         ],
     );
 
@@ -394,27 +357,21 @@ fn checkpoint_continuation_matrix() {
                 .expect("valid EmbeddingRateEncoder")
         },
         &[
-            ContinuationCase {
-                label: "immediately_before_threshold_crossing",
-                split: 1,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: EMBEDDING_OPS,
-            },
-            ContinuationCase {
-                label: "immediately_after_threshold_burst",
-                split: 2,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: EMBEDDING_OPS,
-            },
-            ContinuationCase {
-                label: "after_empty_short_non_finite",
-                split: 6,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: EMBEDDING_OPS,
-            },
+            ContinuationCase::new(
+                "immediately_before_threshold_crossing",
+                1,
+                true,
+                1,
+                EMBEDDING_OPS,
+            ),
+            ContinuationCase::new(
+                "immediately_after_threshold_burst",
+                2,
+                true,
+                1,
+                EMBEDDING_OPS,
+            ),
+            ContinuationCase::new("after_empty_short_non_finite", 6, true, 1, EMBEDDING_OPS),
         ],
     );
 
@@ -422,34 +379,10 @@ fn checkpoint_continuation_matrix() {
         "PhaseEncoder",
         || PhaseEncoder::try_new(8, (0.0, 1.0)).expect("valid PhaseEncoder"),
         &[
-            ContinuationCase {
-                label: "before_any_step",
-                split: 0,
-                expect_mutated: false,
-                checkpoint_must_contain: None,
-                ops: PHASE_OPS,
-            },
-            ContinuationCase {
-                label: "mutated_current_phase",
-                split: 2,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: PHASE_OPS,
-            },
-            ContinuationCase {
-                label: "after_empty_input_tick",
-                split: 3,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: PHASE_OPS,
-            },
-            ContinuationCase {
-                label: "reset_in_suffix",
-                split: 5,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: PHASE_OPS,
-            },
+            ContinuationCase::new("before_any_step", 0, false, 1, PHASE_OPS),
+            ContinuationCase::new("mutated_current_phase", 2, true, 1, PHASE_OPS),
+            ContinuationCase::new("after_empty_input_tick", 3, true, 1, PHASE_OPS),
+            ContinuationCase::new("reset_in_suffix", 5, true, 1, PHASE_OPS),
         ],
     );
 
@@ -457,27 +390,9 @@ fn checkpoint_continuation_matrix() {
         "RateEncoder",
         || RateEncoder::try_new(0.0, 20.0, (0.0, 1.0), 0.05).expect("valid RateEncoder"),
         &[
-            ContinuationCase {
-                label: "custom_dt_mutated_phase",
-                split: 2,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: RATE_OPS,
-            },
-            ContinuationCase {
-                label: "after_empty_short_non_finite",
-                split: 7,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: RATE_OPS,
-            },
-            ContinuationCase {
-                label: "reset_in_suffix",
-                split: 4,
-                expect_mutated: true,
-                checkpoint_must_contain: None,
-                ops: RATE_OPS,
-            },
+            ContinuationCase::new("custom_dt_mutated_phase", 2, true, 1, RATE_OPS),
+            ContinuationCase::new("after_empty_short_non_finite", 7, true, 1, RATE_OPS),
+            ContinuationCase::new("reset_in_suffix", 4, true, 1, RATE_OPS),
         ],
     );
 
@@ -485,26 +400,20 @@ fn checkpoint_continuation_matrix() {
         "RateEncoder",
         || RateEncoder::try_new(0.0, 1.0e6, (0.0, 1.0), 1.0).expect("valid RateEncoder"),
         &[
-            ContinuationCase {
-                label: "immediately_before_pending_burst",
-                split: 0,
-                expect_mutated: false,
-                checkpoint_must_contain: None,
-                ops: RATE_PENDING_OPS,
-            },
-            ContinuationCase {
-                label: "non_empty_pending_spikes",
-                split: 1,
-                expect_mutated: true,
-                checkpoint_must_contain: Some("pending_spikes"),
-                ops: RATE_PENDING_OPS,
-            },
+            ContinuationCase::new(
+                "immediately_before_pending_burst",
+                0,
+                false,
+                1,
+                RATE_PENDING_OPS,
+            ),
+            ContinuationCase::new("non_empty_pending_spikes", 1, true, 1, RATE_PENDING_OPS)
+                .with_needle("pending_spikes"),
         ],
     );
 }
 
-/// Construction-default `RateEncoder::new` must not be what a custom-dt live
-/// checkpoint serializes to — config and accumulators both have to survive.
+/// Custom `dt_seconds` and mutated phase must both survive — not only one of them.
 #[test]
 fn checkpoint_continuation_rate_config_not_construction_defaults() {
     let mut live = RateEncoder::try_new(1.0, 40.0, (-0.5, 1.5), 0.02).expect("valid RateEncoder");
@@ -512,15 +421,27 @@ fn checkpoint_continuation_rate_config_not_construction_defaults() {
     let _ = live.encode_step(&[0.25]);
 
     let checkpoint = serde_json::to_string(&live).expect("serialize live RateEncoder");
-    let defaults = serde_json::to_string(&RateEncoder::new(1.0, 40.0, (-0.5, 1.5)))
-        .expect("serialize default-dt RateEncoder");
+    let restored: RateEncoder = serde_json::from_str(&checkpoint).expect("deserialize RateEncoder");
+
+    assert_eq!(
+        restored.dt_seconds(),
+        0.02,
+        "RateEncoder checkpoint at split=2: custom dt_seconds must survive"
+    );
     assert_ne!(
-        checkpoint, defaults,
-        "RateEncoder checkpoint at split=2: custom dt_seconds plus mutated phase must not match RateEncoder::new defaults\ncheckpoint={checkpoint}\ndefaults={defaults}"
+        restored.dt_seconds(),
+        RateEncoder::DEFAULT_DT_SECONDS,
+        "RateEncoder checkpoint at split=2: dt_seconds must not collapse to RateEncoder::new"
+    );
+    let fresh_same_config =
+        RateEncoder::try_new(1.0, 40.0, (-0.5, 1.5), 0.02).expect("valid RateEncoder");
+    assert_ne!(
+        restored, fresh_same_config,
+        "RateEncoder checkpoint at split=2: mutated phase must differ from a fresh encoder with the same config"
     );
 
-    let mut restored: RateEncoder =
-        serde_json::from_str(&checkpoint).expect("deserialize RateEncoder");
+    let mut restored = restored;
+    let mut suffix_spikes = 0usize;
     for (step, input) in [&[0.8][..], &[0.0, 1.0][..], &[][..]].iter().enumerate() {
         let live_out = live.encode_step(input);
         let restored_out = restored.encode_step(input);
@@ -530,12 +451,36 @@ fn checkpoint_continuation_rate_config_not_construction_defaults() {
             "RateEncoder (config_plus_state) checkpoint at split=2 step={}: outputs differ\nlive={live_out:?}\nrestored={restored_out:?}",
             step + 2
         );
+        suffix_spikes += live_out.spikes.len();
     }
+    assert!(
+        suffix_spikes >= 1,
+        "RateEncoder (config_plus_state) checkpoint at split=2: suffix produced no spikes"
+    );
 
     let live_final = serde_json::to_string(&live).expect("final live");
     let restored_final = serde_json::to_string(&restored).expect("final restored");
     assert_eq!(
         live_final, restored_final,
         "RateEncoder (config_plus_state) checkpoint at split=2: final serialized state differs"
+    );
+}
+
+/// Documented contract boundary: JSON checkpoints require finite floats.
+#[test]
+fn checkpoint_continuation_derivative_non_finite_state_is_not_json_round_trippable() {
+    let mut encoder = DerivativeEncoder::try_new(vec![0.4]).expect("valid DerivativeEncoder");
+    let _ = encoder.encode_step(&[f32::INFINITY]);
+    // serde_json maps Inf to JSON null; the encoder's f32 state cannot read that back.
+    let json = serde_json::to_string(&encoder).expect("serialize Inf last_values");
+    assert!(
+        json.contains("null"),
+        "expected Inf last_values to become JSON null, got {json}"
+    );
+    let err = serde_json::from_str::<DerivativeEncoder>(&json)
+        .expect_err("null last_values must not deserialize into a restorable DerivativeEncoder");
+    assert!(
+        !err.to_string().is_empty(),
+        "deserialize error should explain the invalid last_values"
     );
 }

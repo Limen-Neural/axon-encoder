@@ -48,8 +48,10 @@ use crate::prelude::*;
 /// With the `serde` feature, a checkpoint of a live `RateEncoder` resumes the
 /// deterministic [`encode_step`](Encoder::encode_step) path exactly, including
 /// fractional phase and any queued `pending_spikes` backlog. Batch
-/// [`encode`](Encoder::encode) remains a thread-local stochastic draw and is
-/// **not** replay-stable unless the caller owns the RNG.
+/// [`encode`](Encoder::encode) draws from a thread-local generator this crate
+/// constructs internally; serde does not capture that generator, and `encode`
+/// does not take caller-owned RNG state, so the batch path is not
+/// replay-stable from a checkpoint.
 ///
 /// # Examples
 ///

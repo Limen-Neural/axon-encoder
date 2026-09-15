@@ -26,7 +26,7 @@ Optional features:
 
 | Feature | Purpose |
 | --- | --- |
-| `serde` | Serialize configs, gain types, and live encoder state. Deterministic streaming paths (`encode_step`) resume exactly from a checkpoint; stochastic batch paths are not replay-stable unless the caller owns RNG state. |
+| `serde` | Serialize configs, gain types, and live encoder state. Deterministic `encode_step` paths resume exactly from a JSON-serializable checkpoint; stochastic paths that draw a thread-local RNG are not replay-stable. |
 | `ndarray` | Encode from `ndarray` views (`ArrayView1` / `ArrayView2`) |
 
 ```toml
@@ -41,15 +41,21 @@ Requires **Rust 1.98.1+** (edition 2024). See `rust-version` in `Cargo.toml`.
 
 With `features = ["serde"]`, encoder structs serialize **configuration plus
 live mutable state** (history, membrane, phase, rate accumulators, pending
-spike backlog). Restore a checkpoint and keep calling `encode_step` with the
-remaining inputs: deterministic encoders emit the same spikes and finish in
-the same state as the original.
+spike backlog). Restore a **JSON-serializable** checkpoint and keep calling
+`encode_step` with the remaining inputs: deterministic encoders emit the same
+spikes and finish in the same state as the original.
 
 That contract covers Delta, Derivative, Temporal, Predictive, Phase,
-`EmbeddingRateEncoder`, and `RateEncoder::encode_step`. It does **not** cover
-stochastic batch encoding (`RateEncoder::encode`, `PopulationEncoder`,
-`PoissonEncoder`) unless the caller owns the RNG — serde does not capture the
-crate's thread-local generator.
+`EmbeddingRateEncoder`, and `RateEncoder::encode_step`, provided the live
+floats are finite. JSON cannot represent NaN/Inf (`serde_json` writes
+`null`), and deserialize rejects that payload, so a snapshot taken after
+`DerivativeEncoder` stores a non-finite `last_values` entry is not
+restorable via `serde_json`.
+
+It does **not** cover stochastic paths: `RateEncoder::encode` (batch), and
+both batch and streaming `PopulationEncoder` / `PoissonEncoder`. Those methods
+build a thread-local generator internally; serde does not capture it, and they
+do not take caller-owned RNG state.
 
 ## Quick start
 
