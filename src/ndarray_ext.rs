@@ -247,7 +247,7 @@ mod tests {
         encoders::{DeltaEncoder, LatencyEncoder, RateEncoder},
         types::{EncodedOutput, SpikeEvent},
     };
-    use ndarray::{arr1, arr2};
+    use ndarray::{Array2, ShapeBuilder, arr1, arr2};
 
     #[test]
     fn encode_array1_matches_slice_encoding() {
@@ -432,14 +432,15 @@ mod tests {
     #[test]
     fn encode_step_array2_into_matches_repeated_encode_step_into_for_row_and_column_major() {
         let row_major = arr2(&[[0.6_f32, 0.2], [0.6, 0.2], [0.6, 0.2]]);
-        let column_major = row_major.t().to_owned();
-        let column_major_view = column_major.t();
+        // Fortran layout: same values, but each row is strided (not a slice).
+        let column_major =
+            Array2::from_shape_vec((3, 2).f(), vec![0.6, 0.6, 0.6, 0.2, 0.2, 0.2]).unwrap();
         assert!(
-            !column_major_view.is_standard_layout(),
+            !column_major.is_standard_layout(),
             "fixture must exercise strided rows"
         );
         assert!(
-            column_major_view.row(0).as_slice().is_none(),
+            column_major.row(0).as_slice().is_none(),
             "column-major rows must not be slices"
         );
 
@@ -456,7 +457,7 @@ mod tests {
         let (slice_column_major, expected) = step_encode_rows(row_major.view());
         let mut array_encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
         let mut actual = vec![Vec::new(); row_major.nrows()];
-        array_encoder.encode_step_array2_into(column_major_view, &mut actual);
+        array_encoder.encode_step_array2_into(column_major.view(), &mut actual);
         assert_eq!(actual, expected, "column-major streaming rows diverged");
         assert_eq!(
             array_encoder, slice_column_major,
