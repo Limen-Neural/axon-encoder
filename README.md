@@ -26,7 +26,7 @@ Optional features:
 
 | Feature | Purpose |
 | --- | --- |
-| `serde` | Serialize configs and gain types |
+| `serde` | Serialize configs, gain types, and live encoder state. Deterministic streaming paths (`encode_step`) resume exactly from a checkpoint; stochastic batch paths are not replay-stable unless the caller owns RNG state. |
 | `ndarray` | Encode from `ndarray` views (`ArrayView1` / `ArrayView2`) |
 
 ```toml
@@ -36,6 +36,20 @@ ndarray = "0.16" # declare yourself so you can build ArrayView values
 ```
 
 Requires **Rust 1.98.1+** (edition 2024). See `rust-version` in `Cargo.toml`.
+
+### Serde checkpoints
+
+With `features = ["serde"]`, encoder structs serialize **configuration plus
+live mutable state** (history, membrane, phase, rate accumulators, pending
+spike backlog). Restore a checkpoint and keep calling `encode_step` with the
+remaining inputs: deterministic encoders emit the same spikes and finish in
+the same state as the original.
+
+That contract covers Delta, Derivative, Temporal, Predictive, Phase,
+`EmbeddingRateEncoder`, and `RateEncoder::encode_step`. It does **not** cover
+stochastic batch encoding (`RateEncoder::encode`, `PopulationEncoder`,
+`PoissonEncoder`) unless the caller owns the RNG — serde does not capture the
+crate's thread-local generator.
 
 ## Quick start
 

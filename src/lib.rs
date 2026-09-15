@@ -35,6 +35,17 @@
 //! See the [`time`] module for the full contract: batch versus streaming, spike
 //! ordering, and conversion guidance for simulators and hardware adapters.
 //!
+//! ## Serde checkpoints
+//!
+//! The optional `serde` feature round-trips encoder **configuration and live
+//! mutable state**. A checkpoint taken mid-stream resumes deterministic
+//! [`encode_step`](Encoder::encode_step) paths exactly: the restored encoder
+//! emits the same spikes on the remaining inputs and finishes in the same
+//! state. Stochastic batch paths ([`RateEncoder::encode`](encoders::RateEncoder::encode),
+//! [`PopulationEncoder`](encoders::PopulationEncoder), [`PoissonEncoder`](poisson::PoissonEncoder))
+//! are **not** replay-stable unless the caller owns RNG state — serde does not
+//! capture the thread-local generator.
+//!
 //! ## Reusing storage
 //!
 //! `encode` / `encode_step` allocate the `Vec<SpikeEvent>` they return.
