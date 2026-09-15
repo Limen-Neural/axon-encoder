@@ -3,18 +3,15 @@
 use axon_encoder::prelude::*;
 
 fn main() {
-    let config = EncoderConfig::default();
+    const INPUT_CHANNELS: usize = 256;
     println!("=== Rate Encoding Example ===");
-    println!(
-        "Architecture: {} input channels -> {} output channels",
-        config.input_channels, config.output_channels
-    );
+    println!("Architecture: {INPUT_CHANNELS} independently encoded channels");
 
     let mut encoder =
         RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010).expect("valid RateEncoder");
 
-    let inputs: Vec<f32> = (0..config.input_channels)
-        .map(|i| i as f32 / (config.input_channels - 1) as f32)
+    let inputs: Vec<f32> = (0..INPUT_CHANNELS)
+        .map(|i| i as f32 / (INPUT_CHANNELS - 1) as f32)
         .collect();
 
     println!("Input channels: {}\n", inputs.len());
@@ -25,7 +22,7 @@ fn main() {
             "Step {}: {}/{} channels fired",
             step,
             output.spikes.len(),
-            config.input_channels
+            INPUT_CHANNELS
         );
     }
 }

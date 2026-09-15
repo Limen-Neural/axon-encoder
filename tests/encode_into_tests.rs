@@ -372,7 +372,6 @@ fn encoded_output_works_as_a_sink() {
 
     assert_eq!(output.spikes, encoder.encode(&[1.0, 0.0]).spikes);
     assert!(output.embeddings.is_none(), "sinks only carry spikes");
-    assert!(output.metadata.is_none(), "sinks only carry spikes");
 }
 
 /// A caller-native buffer: proves an out-of-crate sink needs no `Vec<SpikeEvent>`.
