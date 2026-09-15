@@ -599,9 +599,10 @@ impl TimeCursor {
     #[inline]
     pub const fn checked_absolute_nanos(self, offset: TickOffset) -> Option<u64> {
         match self.model.timebase() {
-            Some(timebase) => self
-                .checked_absolute(offset)?
-                .checked_mul(timebase.tick_nanos()),
+            Some(timebase) => match self.checked_absolute(offset) {
+                Some(ticks) => ticks.checked_mul(timebase.tick_nanos()),
+                None => None,
+            },
             None => None,
         }
     }
@@ -666,8 +667,14 @@ impl TimeCursor {
     /// leave the origin as-is, including when the origin is already `u64::MAX`.
     #[inline]
     pub const fn checked_advance_by(&mut self, calls: u64) -> Option<u64> {
-        let delta = calls.checked_mul(self.model.step_ticks())?;
-        let origin = self.origin.checked_add(delta)?;
+        let delta = match calls.checked_mul(self.model.step_ticks()) {
+            Some(delta) => delta,
+            None => return None,
+        };
+        let origin = match self.origin.checked_add(delta) {
+            Some(origin) => origin,
+            None => return None,
+        };
         self.origin = origin;
         Some(origin)
     }
