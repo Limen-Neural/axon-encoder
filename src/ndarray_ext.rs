@@ -566,6 +566,9 @@ mod tests {
         let mut buffer = Vec::new();
         encoder.encode_array1_into(view1.view(), &mut buffer);
         assert_eq!(buffer.len(), 2);
+        assert!(encoder.spikes > 0);
+        encoder.reset();
+        assert_eq!(encoder.spikes, 0);
 
         buffer.clear();
         encoder.encode_step_array1_into(view1.view(), &mut buffer);
@@ -584,6 +587,36 @@ mod tests {
         assert_eq!(sinks[0].len(), 1);
         assert_eq!(sinks[1].len(), 1);
         assert_eq!(encoder, before);
+    }
+
+    #[test]
+    #[should_panic(expected = "encode_step_array2_into needs one sink per row")]
+    fn encode_step_array2_into_requires_one_sink_per_row() {
+        let input = arr2(&[[0.6_f32], [0.6]]);
+        let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 1.0));
+        let mut sinks = vec![Vec::new()];
+        encoder.encode_step_array2_into(input.view(), &mut sinks);
+    }
+
+    #[test]
+    #[should_panic(expected = "encode_array2_into needs one sink per row")]
+    fn encode_array2_into_requires_one_sink_per_row() {
+        let input = arr2(&[[0.0_f32, 0.0], [3.0, 0.0]]);
+        let encoder = DeltaEncoder::new(2.0, 2);
+        let mut sinks = vec![Vec::new()];
+        encoder.encode_array2_into(input.view(), &mut sinks);
+    }
+
+    #[test]
+    #[should_panic(expected = "encode allocates EncodedOutput")]
+    fn sink_only_encoder_returning_encode_panics() {
+        let _ = SinkOnlyEncoder { spikes: 0 }.encode(&[1.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "encode_step allocates EncodedOutput")]
+    fn sink_only_encoder_returning_encode_step_panics() {
+        let _ = SinkOnlyEncoder { spikes: 0 }.encode_step(&[1.0]);
     }
 
     #[test]
