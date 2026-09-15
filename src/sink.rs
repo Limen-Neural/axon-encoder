@@ -399,4 +399,298 @@ mod tests {
         sink.push(spike(1));
         assert_eq!(buffer.len(), 1);
     }
+
+    /// Lengths that sit on, just under, and just over each 64-spike flush.
+    const BOUNDARY_LENGTHS: &[usize] = &[
+        0,
+        1,
+        CHUNK_CAPACITY - 1,
+        CHUNK_CAPACITY,
+        CHUNK_CAPACITY + 1,
+        2 * CHUNK_CAPACITY - 1,
+        2 * CHUNK_CAPACITY,
+        2 * CHUNK_CAPACITY + 1,
+    ];
+
+    fn stream(len: usize) -> Vec<SpikeEvent> {
+        (0..len).map(|i| spike(i as u16)).collect()
+    }
+
+    fn emit_through_chunks(events: &[SpikeEvent], sink: &mut dyn SpikeSink) {
+        through_chunks(sink, |chunked| {
+            for &event in events {
+                chunked.push(event);
+            }
+        });
+    }
+
+    fn assert_unique_prefix(delivered: &[SpikeEvent], reference: &[SpikeEvent]) {
+        assert!(
+            delivered.len() <= reference.len(),
+            "delivered {} spikes, more than the {}-spike reference",
+            delivered.len(),
+            reference.len()
+        );
+        assert_eq!(
+            delivered,
+            &reference[..delivered.len()],
+            "delivered spikes must be a prefix of the reference stream"
+        );
+        for (index, event) in delivered.iter().enumerate() {
+            assert!(
+                !delivered[..index].contains(event),
+                "spike delivered twice: {event:?} at index {index}"
+            );
+        }
+    }
+
+    /// Which inner-sink method is allowed to panic.
+    #[derive(Clone, Copy, Debug)]
+    enum SinkKind {
+        /// Only `push` is implemented; `extend_from_slice` is inherited.
+        InheritedPush,
+        /// Overrides `extend_from_slice`; `push` is a hard error.
+        BulkExtend,
+    }
+
+    impl SinkKind {
+        const ALL: [Self; 2] = [Self::InheritedPush, Self::BulkExtend];
+    }
+
+    /// Panics from `push` after `accept` spikes; inherits `extend_from_slice`.
+    struct PanicOnPush {
+        seen: Vec<SpikeEvent>,
+        accept: usize,
+    }
+
+    impl SpikeSink for PanicOnPush {
+        fn push(&mut self, event: SpikeEvent) {
+            if self.seen.len() == self.accept {
+                panic!("sink refused the flush");
+            }
+            self.seen.push(event);
+        }
+    }
+
+    /// Panics from an overriding `extend_from_slice` after `accept` spikes.
+    ///
+    /// `push` is a hard error: `Chunked` must flush through the bulk path, so a
+    /// call here would mean the adapter started hitting the sink per spike.
+    struct PanicOnExtend {
+        seen: Vec<SpikeEvent>,
+        accept: usize,
+    }
+
+    impl SpikeSink for PanicOnExtend {
+        fn push(&mut self, _event: SpikeEvent) {
+            panic!("bulk sink must not be driven through push");
+        }
+
+        fn extend_from_slice(&mut self, events: &[SpikeEvent]) {
+            let room = self.accept.saturating_sub(self.seen.len());
+            let take = events.len().min(room);
+            self.seen.extend_from_slice(&events[..take]);
+            if take < events.len() {
+                panic!("sink refused the flush");
+            }
+        }
+    }
+
+    fn delivered_or_panic(
+        kind: SinkKind,
+        reference: &[SpikeEvent],
+        accept: usize,
+    ) -> (bool, Vec<SpikeEvent>) {
+        match kind {
+            SinkKind::InheritedPush => {
+                let mut sink = PanicOnPush {
+                    seen: Vec::new(),
+                    accept,
+                };
+                let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    emit_through_chunks(reference, &mut sink);
+                }))
+                .is_err();
+                (panicked, sink.seen)
+            }
+            SinkKind::BulkExtend => {
+                let mut sink = PanicOnExtend {
+                    seen: Vec::new(),
+                    accept,
+                };
+                let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    emit_through_chunks(reference, &mut sink);
+                }))
+                .is_err();
+                (panicked, sink.seen)
+            }
+        }
+    }
+
+    fn assert_prefix_case(kind: SinkKind, stream_len: usize, accept: usize) {
+        let reference = stream(stream_len);
+        let (panicked, delivered) = delivered_or_panic(kind, &reference, accept);
+        assert_unique_prefix(&delivered, &reference);
+
+        if reference.is_empty() {
+            assert!(
+                !panicked,
+                "an empty stream must not call the sink (kind={kind:?}, accept={accept})"
+            );
+            assert!(delivered.is_empty());
+            return;
+        }
+
+        if accept >= reference.len() {
+            assert!(
+                !panicked,
+                "accept={accept} should take all {stream_len} spikes ({kind:?})"
+            );
+            assert_eq!(delivered, reference);
+        } else {
+            assert!(
+                panicked,
+                "accept={accept} should panic before {stream_len} spikes ({kind:?})"
+            );
+            assert_eq!(
+                delivered.len(),
+                accept,
+                "must stop at the configured count, not mid-chunk remainder"
+            );
+        }
+    }
+
+    #[test]
+    fn panicking_sinks_deliver_a_unique_prefix_on_chunk_boundaries() {
+        for kind in SinkKind::ALL {
+            for &stream_len in BOUNDARY_LENGTHS {
+                for &accept in BOUNDARY_LENGTHS {
+                    assert_prefix_case(kind, stream_len, accept);
+                }
+                // One past the stream: the sink must not panic on a complete
+                // delivery, including an exactly-full last chunk.
+                assert_prefix_case(kind, stream_len, stream_len.saturating_add(1));
+            }
+        }
+    }
+
+    #[test]
+    fn panicking_sinks_deliver_a_unique_prefix_on_generated_lengths() {
+        use rand::rngs::StdRng;
+        use rand::{RngExt, SeedableRng};
+
+        // Seeded so a CI failure replays; 256 trials stay inside normal CI time.
+        const SEED: u64 = 0x51C4_0001;
+        const TRIALS: usize = 256;
+        let mut rng = StdRng::seed_from_u64(SEED);
+
+        for _ in 0..TRIALS {
+            let stream_len = rng.random_range(0usize..=3 * CHUNK_CAPACITY);
+            let accept = rng.random_range(0usize..=stream_len.saturating_add(CHUNK_CAPACITY));
+            let kind = SinkKind::ALL[rng.random_range(0..SinkKind::ALL.len())];
+            assert_prefix_case(kind, stream_len, accept);
+        }
+    }
+
+    /// Panics on any delivered spike so a `Drop` re-flush would abort.
+    struct PanicOnAnyPush;
+
+    impl SpikeSink for PanicOnAnyPush {
+        fn push(&mut self, _event: SpikeEvent) {
+            panic!("sink refused the flush");
+        }
+    }
+
+    struct PanicOnAnyExtend;
+
+    impl SpikeSink for PanicOnAnyExtend {
+        fn push(&mut self, _event: SpikeEvent) {
+            panic!("bulk sink must not be driven through push");
+        }
+
+        fn extend_from_slice(&mut self, events: &[SpikeEvent]) {
+            if !events.is_empty() {
+                panic!("sink refused the flush");
+            }
+        }
+    }
+
+    fn assert_encoder_panic_survives(mut sink: impl SpikeSink, buffered: usize) {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            through_chunks(&mut sink, |chunked| {
+                for i in 0..buffered {
+                    chunked.push(spike(i as u16));
+                }
+                panic!("encoder failed");
+            })
+        }))
+        .expect_err("the encoder panic must propagate");
+
+        assert_eq!(
+            payload.downcast_ref::<&str>().copied(),
+            Some("encoder failed"),
+            "a buffered tail must not trigger a second panic in Drop"
+        );
+    }
+
+    #[test]
+    fn encoder_panic_with_a_buffered_tail_does_not_double_panic() {
+        // A flush happens only when the buffer is full or `through_chunks`
+        // returns, so a tail of 1..=64 is still unsent when the encoder
+        // panics. Drop must swallow that tail rather than re-enter the sink.
+        for buffered in [0, 1, CHUNK_CAPACITY - 1, CHUNK_CAPACITY] {
+            assert_encoder_panic_survives(PanicOnAnyPush, buffered);
+            assert_encoder_panic_survives(PanicOnAnyExtend, buffered);
+        }
+    }
+
+    /// Accepts the first non-empty flush, then panics on any later one.
+    struct PanicOnSecondFlush {
+        seen: Vec<SpikeEvent>,
+        flushes: usize,
+    }
+
+    impl SpikeSink for PanicOnSecondFlush {
+        fn push(&mut self, _event: SpikeEvent) {
+            panic!("bulk sink must not be driven through push");
+        }
+
+        fn extend_from_slice(&mut self, events: &[SpikeEvent]) {
+            if events.is_empty() {
+                return;
+            }
+            self.flushes += 1;
+            if self.flushes > 1 {
+                panic!("sink refused the flush");
+            }
+            self.seen.extend_from_slice(events);
+        }
+    }
+
+    #[test]
+    fn encoder_panic_after_a_full_chunk_does_not_flush_the_tail() {
+        // 65 pushes flush the first 64, then buffer the leftover. Panicking
+        // there must not send that leftover — a second flush would panic in
+        // Drop and abort, replacing the encoder's message.
+        let mut sink = PanicOnSecondFlush {
+            seen: Vec::new(),
+            flushes: 0,
+        };
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            through_chunks(&mut sink, |chunked| {
+                for i in 0..=CHUNK_CAPACITY {
+                    chunked.push(spike(i as u16));
+                }
+                panic!("encoder failed");
+            })
+        }))
+        .expect_err("the encoder panic must propagate");
+
+        assert_eq!(
+            payload.downcast_ref::<&str>().copied(),
+            Some("encoder failed")
+        );
+        assert_eq!(sink.seen, stream(CHUNK_CAPACITY));
+        assert_eq!(sink.flushes, 1);
+    }
 }
