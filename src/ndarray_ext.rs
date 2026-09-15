@@ -208,16 +208,15 @@ pub trait NdarrayEncoderExt: Encoder {
 impl<T: Encoder + ?Sized> NdarrayEncoderExt for T {}
 
 fn with_array1_input<R>(input: ArrayView1<'_, f32>, f: impl FnOnce(&[f32]) -> R) -> R {
-    if let Some(slice) = input.as_slice() {
-        f(slice)
-    } else {
-        let owned: Vec<f32> = input.iter().copied().collect();
-        f(&owned)
-    }
+    let mut scratch = Vec::new();
+    with_array1_scratch(input, &mut scratch, f)
 }
 
-/// Like [`with_array1_input`], but reuses `scratch` for the strided copy so a
-/// 2-D walk does not allocate a fresh `Vec<f32>` on every non-contiguous row.
+/// Passes a contiguous slice of `input` to `f`.
+///
+/// Reuses `scratch` when `as_slice()` is `None`, so a 2-D walk does not
+/// allocate a fresh `Vec<f32>` on every non-contiguous row. Contiguous views
+/// skip the copy and never grow `scratch`.
 fn with_array1_scratch<R>(
     input: ArrayView1<'_, f32>,
     scratch: &mut Vec<f32>,
