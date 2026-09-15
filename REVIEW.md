@@ -12,7 +12,7 @@ cannot land “green CI” while deleting product surface.
 
 `Cargo.toml` `rust-version`, `rust-toolchain.toml` `channel`, and the
 `toolchain:` string in `.github/workflows/ci.yml` must stay **identical**
-(currently **1.97.1**). When present, `Dockerfile` and
+(currently **1.98.1**). When present, `Dockerfile` and
 `.devcontainer/Dockerfile` `FROM rust:<ver>` tags must match too. CI fails
 if they drift (issue #67 / LIM-1014, #61 / LIM-972).
 

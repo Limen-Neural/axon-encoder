@@ -35,7 +35,7 @@ axon-encoder = { version = "0.4", features = ["ndarray"] }
 ndarray = "0.16" # declare yourself so you can build ArrayView values
 ```
 
-Requires **Rust 1.97.1+** (edition 2024). See `rust-version` in `Cargo.toml`.
+Requires **Rust 1.98.1+** (edition 2024). See `rust-version` in `Cargo.toml`.
 
 ## Quick start
 

@@ -12,16 +12,20 @@ license = "MIT OR Apache-2.0"
 edition = "2024"
 # Keep identical to rust-toolchain.toml `channel` and the CI workflow
 # `toolchain:` pin (see REVIEW.md "MSRV pin rule").
-rust-version = "1.97.1"
+rust-version = "1.98.1"
 keywords = ["snn", "spiking", "neuromorphic", "encoding", "spike"]
 categories = ["science", "algorithms", "simulation"]
+# crates.io surface: keep licenses, README, sources, examples, and tests.
+# Drop agent/CI/dev-only paths. Hidden git-tracked files still pack unless
+# listed here (e.g. .gitignore). `cargo package` does not read .dockerignore.
 exclude = [
-    "/.github/",
-    "/.devcontainer/",
     "/.codacy.yml",
     "/.codecov.yml",
     "/.deepsource.toml",
+    "/.devcontainer/",
     "/.dockerignore",
+    "/.github/",
+    "/.gitignore",
     "/Dockerfile",
     "/REVIEW.md",
     "/docs/",
