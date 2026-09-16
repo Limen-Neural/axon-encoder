@@ -205,7 +205,7 @@ pub(crate) struct Chunked<'a> {
 ///
 /// Large enough to amortize the virtual call, small enough that the array stays
 /// a cheap stack local.
-const CHUNK_CAPACITY: usize = 64;
+pub const CHUNK_CAPACITY: usize = 64;
 
 /// Fill value for the unwritten tail; never read, only `..len` is flushed.
 const UNSET_SPIKE: SpikeEvent = SpikeEvent::at_step_start(0, false);
@@ -692,5 +692,66 @@ mod tests {
         );
         assert_eq!(sink.seen, stream(CHUNK_CAPACITY));
         assert_eq!(sink.flushes, 1);
+    }
+
+    #[test]
+    fn mock_sinks_panic_guards_behave_as_expected() {
+        assert!(
+            std::panic::catch_unwind(|| {
+                PanicOnExtend {
+                    seen: Vec::new(),
+                    accept: 0,
+                }
+                .push(spike(0));
+            })
+            .is_err()
+        );
+
+        assert!(
+            std::panic::catch_unwind(|| {
+                PanicOnAnyPush.push(spike(0));
+            })
+            .is_err()
+        );
+
+        assert!(
+            std::panic::catch_unwind(|| {
+                PanicOnAnyExtend.push(spike(0));
+            })
+            .is_err()
+        );
+
+        let mut any_extend = PanicOnAnyExtend;
+        any_extend.extend_from_slice(&[]);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                any_extend.extend_from_slice(&[spike(0)]);
+            }))
+            .is_err()
+        );
+
+        assert!(
+            std::panic::catch_unwind(|| {
+                PanicOnSecondFlush {
+                    seen: Vec::new(),
+                    flushes: 0,
+                }
+                .push(spike(0));
+            })
+            .is_err()
+        );
+
+        let mut second = PanicOnSecondFlush {
+            seen: Vec::new(),
+            flushes: 0,
+        };
+        second.extend_from_slice(&[]);
+        second.extend_from_slice(&[spike(0)]);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                second.extend_from_slice(&[spike(1)]);
+            }))
+            .is_err()
+        );
     }
 }

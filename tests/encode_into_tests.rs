@@ -1314,9 +1314,7 @@ fn a_panicking_sink_never_receives_a_replayed_chunk() {
 
 // --- Panic boundaries and prefix delivery ------------------------------------
 
-/// Matches `CHUNK_CAPACITY` in `src/sink.rs`. The cases below sit on, just
-/// under, and just over each flush so a drift would miss the interesting edge.
-const CHUNK_CAPACITY: usize = 64;
+use axon_encoder::sink::CHUNK_CAPACITY;
 
 const BOUNDARY_LENGTHS: &[usize] = &[
     0,
@@ -1602,12 +1600,8 @@ fn a_sink_panic_leaves_encoder_state_unspecified_until_reset() {
     );
     assert!(sink.seen.is_empty(), "accept=0 must not keep any spike");
 
+    // Reuse without reset is intentionally unspecified; only the reset path is contractual.
     let mut fresh = DeltaEncoder::new(0.0, channels);
-    assert_ne!(
-        encoder.encode(&input).spikes,
-        fresh.encode(&input).spikes,
-        "reuse without reset is unspecified and can diverge"
-    );
 
     encoder.reset();
     fresh.reset();
