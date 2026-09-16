@@ -1310,3 +1310,303 @@ fn a_panicking_sink_never_receives_a_replayed_chunk() {
         "a chunk was replayed after the panic: {channels_seen:?}"
     );
 }
+
+// --- Panic boundaries and prefix delivery ------------------------------------
+
+use axon_encoder::sink::CHUNK_CAPACITY;
+
+const BOUNDARY_LENGTHS: &[usize] = &[
+    0,
+    1,
+    CHUNK_CAPACITY - 1,
+    CHUNK_CAPACITY,
+    CHUNK_CAPACITY + 1,
+    2 * CHUNK_CAPACITY - 1,
+    2 * CHUNK_CAPACITY,
+    2 * CHUNK_CAPACITY + 1,
+];
+
+#[derive(Clone, Copy, Debug)]
+enum SinkKind {
+    InheritedPush,
+    BulkExtend,
+}
+
+impl SinkKind {
+    const ALL: [Self; 2] = [Self::InheritedPush, Self::BulkExtend];
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PublicPath {
+    EncodeInto,
+    EncodeStepInto,
+}
+
+impl PublicPath {
+    const ALL: [Self; 2] = [Self::EncodeInto, Self::EncodeStepInto];
+}
+
+fn latency_input(channels: usize) -> Vec<f32> {
+    vec![0.5; channels]
+}
+
+fn latency_reference(channels: usize) -> Vec<SpikeEvent> {
+    LatencyEncoder::new(15, (0.0, 1.0))
+        .encode(&latency_input(channels))
+        .spikes
+}
+
+fn feed_latency(path: PublicPath, input: &[f32], sink: &mut dyn SpikeSink) {
+    let mut encoder = LatencyEncoder::new(15, (0.0, 1.0));
+    match path {
+        PublicPath::EncodeInto => encoder.encode_into(input, sink),
+        PublicPath::EncodeStepInto => encoder.encode_step_into(input, sink),
+    }
+}
+
+fn assert_unique_prefix(delivered: &[SpikeEvent], reference: &[SpikeEvent]) {
+    assert!(
+        delivered.len() <= reference.len(),
+        "delivered {} spikes, more than the {}-spike reference",
+        delivered.len(),
+        reference.len()
+    );
+    assert_eq!(
+        delivered,
+        &reference[..delivered.len()],
+        "delivered spikes must be a prefix of the returning API"
+    );
+    for (index, event) in delivered.iter().enumerate() {
+        assert!(
+            !delivered[..index].contains(event),
+            "spike delivered twice: {event:?} at index {index}"
+        );
+    }
+}
+
+/// Panics from `push` after `accept` spikes; inherits `extend_from_slice`.
+struct PanicOnPush {
+    seen: Vec<SpikeEvent>,
+    accept: usize,
+}
+
+impl SpikeSink for PanicOnPush {
+    fn push(&mut self, event: SpikeEvent) {
+        if self.seen.len() == self.accept {
+            panic!("sink refused the flush");
+        }
+        self.seen.push(event);
+    }
+}
+
+/// Panics from an overriding `extend_from_slice` after `accept` spikes.
+struct PanicOnExtend {
+    seen: Vec<SpikeEvent>,
+    accept: usize,
+}
+
+impl SpikeSink for PanicOnExtend {
+    fn push(&mut self, _event: SpikeEvent) {
+        panic!("bulk sink must not be driven through push");
+    }
+
+    fn extend_from_slice(&mut self, events: &[SpikeEvent]) {
+        let room = self.accept.saturating_sub(self.seen.len());
+        let take = events.len().min(room);
+        self.seen.extend_from_slice(&events[..take]);
+        if take < events.len() {
+            panic!("sink refused the flush");
+        }
+    }
+}
+
+fn delivered_or_panic(
+    kind: SinkKind,
+    path: PublicPath,
+    input: &[f32],
+    accept: usize,
+) -> (bool, Vec<SpikeEvent>) {
+    match kind {
+        SinkKind::InheritedPush => {
+            let mut sink = PanicOnPush {
+                seen: Vec::new(),
+                accept,
+            };
+            let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                feed_latency(path, input, &mut sink);
+            }))
+            .is_err();
+            (panicked, sink.seen)
+        }
+        SinkKind::BulkExtend => {
+            let mut sink = PanicOnExtend {
+                seen: Vec::new(),
+                accept,
+            };
+            let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                feed_latency(path, input, &mut sink);
+            }))
+            .is_err();
+            (panicked, sink.seen)
+        }
+    }
+}
+
+fn assert_public_prefix_case(kind: SinkKind, path: PublicPath, channels: usize, accept: usize) {
+    let input = latency_input(channels);
+    let reference = latency_reference(channels);
+    let (panicked, delivered) = delivered_or_panic(kind, path, &input, accept);
+    assert_unique_prefix(&delivered, &reference);
+
+    if reference.is_empty() {
+        assert!(
+            !panicked,
+            "empty input must not call the sink ({kind:?}, {path:?}, accept={accept})"
+        );
+        return;
+    }
+
+    if accept >= reference.len() {
+        assert!(
+            !panicked,
+            "accept={accept} should take all {channels} spikes ({kind:?}, {path:?})"
+        );
+        assert_eq!(delivered, reference);
+    } else {
+        assert!(
+            panicked,
+            "accept={accept} should panic before {channels} spikes ({kind:?}, {path:?})"
+        );
+        assert_eq!(delivered.len(), accept);
+    }
+}
+
+#[test]
+fn panicking_encode_into_delivers_a_unique_prefix_on_chunk_boundaries() {
+    for path in PublicPath::ALL {
+        for kind in SinkKind::ALL {
+            for &channels in BOUNDARY_LENGTHS {
+                for &accept in BOUNDARY_LENGTHS {
+                    assert_public_prefix_case(kind, path, channels, accept);
+                }
+                assert_public_prefix_case(kind, path, channels, channels.saturating_add(1));
+            }
+        }
+    }
+}
+
+#[test]
+fn panicking_encode_into_delivers_a_unique_prefix_on_generated_lengths() {
+    // Every length through two chunks, plus a mixed accept count so CI hits
+    // interior points the boundary matrix does not name. Both public entry
+    // points and both sink styles run here.
+    for path in PublicPath::ALL {
+        for kind in SinkKind::ALL {
+            for channels in 0..=2 * CHUNK_CAPACITY + 1 {
+                let mixed = (channels.wrapping_mul(37) + 11) % (channels + CHUNK_CAPACITY + 1);
+                for accept in [0, channels / 2, mixed, channels, channels.saturating_add(1)] {
+                    assert_public_prefix_case(kind, path, channels, accept);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reset_after_a_sink_panic_matches_a_fresh_deterministic_encoder() {
+    // DeltaEncoder updates `last_values` as it emits, including spikes that
+    // are still sitting in the chunk buffer when the sink panics. Reuse is
+    // only defined after `reset`.
+    for kind in SinkKind::ALL {
+        for &channels in BOUNDARY_LENGTHS {
+            if channels == 0 {
+                continue;
+            }
+            let input = vec![1.0_f32; channels];
+            let accept = channels / 2;
+            let mut encoder = DeltaEncoder::new(0.0, channels);
+
+            let panicked = match kind {
+                SinkKind::InheritedPush => {
+                    let mut sink = PanicOnPush {
+                        seen: Vec::new(),
+                        accept,
+                    };
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        encoder.encode_into(&input, &mut sink);
+                    }))
+                    .is_err()
+                }
+                SinkKind::BulkExtend => {
+                    let mut sink = PanicOnExtend {
+                        seen: Vec::new(),
+                        accept,
+                    };
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        encoder.encode_into(&input, &mut sink);
+                    }))
+                    .is_err()
+                }
+            };
+            if accept < channels {
+                assert!(
+                    panicked,
+                    "sink should panic for {channels} spikes at accept={accept}"
+                );
+            }
+
+            encoder.reset();
+            let mut fresh = DeltaEncoder::new(0.0, channels);
+            assert_eq!(
+                encoder.encode(&input).spikes,
+                fresh.encode(&input).spikes,
+                "after reset, {kind:?} must match a fresh encoder ({channels} channels)"
+            );
+
+            encoder.reset();
+            fresh.reset();
+            let mut via_sink = Vec::new();
+            encoder.encode_into(&input, &mut via_sink);
+            assert_eq!(
+                via_sink,
+                fresh.encode(&input).spikes,
+                "after reset, the sink path must match too ({kind:?}, {channels} channels)"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_sink_panic_leaves_encoder_state_unspecified_until_reset() {
+    // 65 channels fill one chunk and start a tail. The encoder has already
+    // committed `last_values` for the first 64 before the flush that panics
+    // at accept=0, so those spikes never reach the sink. Reusing without
+    // `reset` must not be assumed equivalent to a fresh instance — this is
+    // the documented contract, not a defect.
+    let channels = CHUNK_CAPACITY + 1;
+    let input = vec![1.0_f32; channels];
+    let mut encoder = DeltaEncoder::new(0.0, channels);
+    let mut sink = PanicOnPush {
+        seen: Vec::new(),
+        accept: 0,
+    };
+
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            encoder.encode_into(&input, &mut sink);
+        }))
+        .is_err()
+    );
+    assert!(sink.seen.is_empty(), "accept=0 must not keep any spike");
+
+    // Reuse without reset is intentionally unspecified; only the reset path is contractual.
+    let mut fresh = DeltaEncoder::new(0.0, channels);
+
+    encoder.reset();
+    fresh.reset();
+    assert_eq!(
+        encoder.encode(&input).spikes,
+        fresh.encode(&input).spikes,
+        "reset restores correspondence with a fresh instance"
+    );
+}
