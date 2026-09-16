@@ -37,6 +37,9 @@ ndarray = { version = "0.16", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 rand = "0.10.2"
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.4.3", features = ["wasm_js"] }
+
 [dev-dependencies]
 criterion = "0.8.2"
 serde = { version = "1.0", features = ["derive"] }

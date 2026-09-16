@@ -5,9 +5,9 @@
 //! stochastic encoding — **not** a general-purpose API for cryptographic
 //! secrets or key material.
 //!
-//! When compiling for `wasm32-unknown-unknown`, downstream crates must enable
-//! the appropriate `getrandom` JS/browser backend for their toolchain — see
-//! the `getrandom` crate docs for the target you ship.
+//! On `wasm32-unknown-unknown`, this crate enables `getrandom`'s supported
+//! `wasm_js` browser backend. Downstream crates do not need to select the
+//! backend themselves.
 
 use rand::{Rng, RngExt};
 

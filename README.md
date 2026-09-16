@@ -369,10 +369,10 @@ should normalize before calling `encode`, using the former formula
 
 ## WebAssembly
 
-On `wasm32-unknown-unknown`, enable a working
-[getrandom](https://docs.rs/getrandom) backend for your target (often the
-JS/browser feature set). Stochastic encoders need OS/entropy-backed RNGs
-through `rand`.
+On `wasm32-unknown-unknown`, the crate enables `getrandom`'s supported
+`wasm_js` browser backend automatically. Stochastic encoders use browser
+entropy through that backend wherever `rand::rng()` is used; callers do not
+need to select a `getrandom` backend themselves.
 
 ## Examples
 
