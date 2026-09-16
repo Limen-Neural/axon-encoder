@@ -695,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn mock_sinks_panic_guards_behave_as_expected() {
+    fn mock_sink_panic_guards_on_push() {
         assert!(
             std::panic::catch_unwind(|| {
                 PanicOnExtend {
@@ -707,29 +707,8 @@ mod tests {
             .is_err()
         );
 
-        assert!(
-            std::panic::catch_unwind(|| {
-                PanicOnAnyPush.push(spike(0));
-            })
-            .is_err()
-        );
-
-        assert!(
-            std::panic::catch_unwind(|| {
-                PanicOnAnyExtend.push(spike(0));
-            })
-            .is_err()
-        );
-
-        let mut any_extend = PanicOnAnyExtend;
-        any_extend.extend_from_slice(&[]);
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                any_extend.extend_from_slice(&[spike(0)]);
-            }))
-            .is_err()
-        );
-
+        assert!(std::panic::catch_unwind(|| PanicOnAnyPush.push(spike(0))).is_err());
+        assert!(std::panic::catch_unwind(|| PanicOnAnyExtend.push(spike(0))).is_err());
         assert!(
             std::panic::catch_unwind(|| {
                 PanicOnSecondFlush {
@@ -738,6 +717,18 @@ mod tests {
                 }
                 .push(spike(0));
             })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mock_sink_panic_guards_on_extend_and_flush() {
+        let mut any_extend = PanicOnAnyExtend;
+        any_extend.extend_from_slice(&[]);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                any_extend.extend_from_slice(&[spike(0)]);
+            }))
             .is_err()
         );
 
