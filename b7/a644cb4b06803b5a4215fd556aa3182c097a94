@@ -1,0 +1,23 @@
+src/rng.rs
+  s_f16f54b18a5a4b::t_c8141e99eae007 8-12
+README.md
+  s_f16f54b18a5a4b::t_c8141e99eae007 31,373-375,382-385
+.github/workflows/ci.yml
+  s_f16f54b18a5a4b::t_c8141e99eae007 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b7a644cb4b06803b5a4215fd556aa3182c097a94",
+  "prompts": {},
+  "sessions": {
+    "s_f16f54b18a5a4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a810-892a-72e3-8453-445e6d21e8f5",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
