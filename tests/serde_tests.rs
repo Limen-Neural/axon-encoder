@@ -15,20 +15,10 @@ fn test_serde_core_io() {
         r#"{"channel":12,"timestamp":42,"polarity":true}"#
     );
 
-    // 2. Test EncoderConfig
-    let config = EncoderConfig {
-        input_channels: 10,
-        output_channels: 20,
-    };
-    let serialized_config = serde_json::to_string(&config).unwrap();
-    let deserialized_config: EncoderConfig = serde_json::from_str(&serialized_config).unwrap();
-    assert_eq!(config, deserialized_config);
-
-    // 3. Test EncodedOutput
+    // 2. Test EncodedOutput
     let mut output = EncodedOutput::new();
     output.spikes.push(spike);
     output.embeddings = Some(vec![1.0, 2.0, 3.0]);
-    output.metadata = Some(EncodingMetadata::default());
 
     let serialized_output = serde_json::to_string(&output).unwrap();
     let deserialized_output: EncodedOutput = serde_json::from_str(&serialized_output).unwrap();
@@ -37,7 +27,7 @@ fn test_serde_core_io() {
 
 #[test]
 fn test_serde_encoders_and_state() {
-    // 4. Test EmbeddingEncoderConfig
+    // 3. Test EmbeddingEncoderConfig
     let embed_config = EmbeddingEncoderConfig { v_th: 1.5 };
     let serialized_embed_config = serde_json::to_string(&embed_config).unwrap();
     let deserialized_embed_config: EmbeddingEncoderConfig =

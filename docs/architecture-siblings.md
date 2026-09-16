@@ -23,7 +23,10 @@ Decision for [issue #21](https://github.com/Limen-Neural/axon-encoder/issues/21)
 - `Encoder`, `ModulatedEncoder`
 - Signal-to-spike algorithms (rate, latency, population, …)
 - Generic `EncodingGains` (threshold / sensitivity / firing-rate / latency scales)
-- Spike event output (`EncodedOutput`, `SpikeEvent`)
+- Framework-agnostic output: `EncodedOutput` carries `SpikeEvent`s and an
+  optional dense embedding vector
+- Per-encoder configuration, owned by each encoder's constructor parameters;
+  there is no shared `EncoderConfig`
 
 ### `neuromod`
 
@@ -35,6 +38,8 @@ Decision for [issue #21](https://github.com/Limen-Neural/axon-encoder/issues/21)
 
 - Maps neuromodulator (or other policy) state into `EncodingGains`
 - Chooses when / how encoding scales change
+- Owns source IDs, biological state, tracing data, and other domain-specific
+  telemetry instead of attaching it to core encoding output
 - Never forces either library crate to import the other
 
 ## Audit: biologically named types in `axon-encoder`

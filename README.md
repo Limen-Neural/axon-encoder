@@ -143,6 +143,19 @@ step boundaries are. The trait is object-safe, so `&mut dyn Encoder` and
 a documented exception — it does not implement `Encoder`. See
 `cargo run --example encode_into_sink`.
 
+## Output and configuration ownership
+
+`EncodedOutput` is deliberately small and framework-agnostic: it carries the
+emitted `spikes` and, for embedding-producing encoders, an optional dense
+`embeddings` vector. Source identifiers, biological state, tracing data, and
+other domain-specific telemetry belong in downstream adapters rather than the
+core encoding result.
+
+Each concrete encoder owns its configuration through its constructor
+parameters (and, where applicable, a focused encoder-specific config such as
+`EmbeddingEncoderConfig`). There is no shared `EncoderConfig`; this avoids
+forcing unrelated algorithms into one oversized configuration object.
+
 ## Spike time semantics
 
 Every encoder here shares **one time model**, so a consumer can integrate any of
@@ -209,9 +222,23 @@ step_ticks`), since a call can place a spike anywhere in the ongoing cycle.
 Run `cargo run --example spike_timebase` for a worked integration: two encoders,
 two cursors, one merged nanosecond-timed stream.
 
-### Migrating from 0.4
+## Migrating from 0.4
 
-Two breaking changes, both in the 0.5 line:
+The 0.5 line removes public placeholders that had no authoritative consumer:
+
+- **`EncoderConfig` was removed.** Configure each encoder through its own
+  constructor parameters or focused config type. The former 256-channel
+  defaults did not control the concrete encoders.
+- **`EncodingMetadata` and `EncodedOutput::metadata` were removed.** The type
+  was empty, so it provided no stable semantics. Keep application or
+  framework-specific telemetry in a downstream adapter. Common timebase
+  semantics are handled by the explicit time types introduced in
+  [issue #62](https://github.com/Limen-Neural/axon-encoder/issues/62), rather
+  than a catch-all metadata bag.
+- **`EncodedOutput::embeddings` remains.** It is the optional normalized dense
+  vector produced alongside spikes by `EmbeddingRateEncoder::forward`.
+
+Additional breaking changes in the 0.5 line:
 
 1. **`SpikeEvent::timestamp` is now `TickOffset`, not `u64`.** The type converts
    both ways and compares against `u64`, so reads like

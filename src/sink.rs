@@ -51,9 +51,9 @@ use crate::types::{EncodedOutput, SpikeEvent};
 ///   [`EncodedOutput::spikes`], with identical channels, [`TickOffset`]s, and
 ///   polarities. Offsets stay call-relative; see the [`time`](crate::time)
 ///   module.
-/// - Only spikes travel through a sink. `EncodedOutput`'s `embeddings` and
-///   `metadata` are not produced by any encoder in this crate; a caller that
-///   needs them uses the returning APIs.
+/// - Only spikes travel through a sink. `EncodedOutput`'s `embeddings` is
+///   not produced by sink-based encoders in this crate; a caller that
+///   needs dense representations uses the returning APIs or downstream adapters.
 /// - A sink that **panics** ends the call: the spikes it had already accepted
 ///   stay, and the rest are not delivered. The encoder's own state is then
 ///   unspecified — a stateful encoder may have counted spikes the sink never
@@ -344,7 +344,6 @@ mod tests {
         SpikeSink::push(&mut output, spike(7));
         assert_eq!(output.spikes, vec![spike(7)]);
         assert!(output.embeddings.is_none());
-        assert!(output.metadata.is_none());
     }
 
     #[test]

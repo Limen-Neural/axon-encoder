@@ -223,6 +223,12 @@ rg -n 'GainCurve|PhaseEncoder|NeuromodulatorGainCurves' \
 rg -n 'pub struct TickOffset|pub struct Timebase|pub struct TimeModel' src/time.rs
 rg -n 'fn time_model' src/lib.rs src/encoders/*.rs
 cargo test --locked --test time_semantics
+
+# EncodedOutput API retained; placeholders remain removed (#65 / LIM-976)
+rg -n 'pub spikes: Vec<SpikeEvent>|pub embeddings: Option<Vec<f32>>' src/types.rs
+! rg -n 'pub struct (EncoderConfig|EncodingMetadata)' src/types.rs
+test -f tests/public_api.rs
+cargo test --locked --test public_api
 ```
 
 ## Serde integration tests

@@ -1,4 +1,8 @@
 //! Standardized types for encoder inputs and outputs.
+//!
+//! Configuration belongs to each concrete encoder and is supplied through that
+//! encoder's constructor parameters. There is no shared configuration object:
+//! unrelated encoders should not be forced into a catch-all configuration.
 
 use crate::time::TickOffset;
 
@@ -77,43 +81,27 @@ impl SpikeEvent {
     }
 }
 
-/// Optional metadata about the encoding process.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EncodingMetadata {
-    // Add any relevant metadata fields here, e.g.:
-    // pub source_sample_index: u64,
-}
-
 /// The standardized output of an encoder.
+///
+/// Pre-0.5 migration note: the empty `EncodingMetadata` placeholder and the
+/// corresponding `metadata` field were removed. Keep domain-specific telemetry
+/// in a downstream adapter; this core type contains only events and an optional
+/// dense embedding.
 #[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EncodedOutput {
+    /// Spike events emitted by the encoder call.
     pub spikes: Vec<SpikeEvent>,
+    /// Optional dense embedding produced alongside the spikes.
+    ///
+    /// [`EmbeddingRateEncoder::forward`](crate::encoder::EmbeddingRateEncoder::forward)
+    /// populates this with the normalized embedding that drives its channels.
     pub embeddings: Option<Vec<f32>>,
-    pub metadata: Option<EncodingMetadata>,
 }
 
 impl EncodedOutput {
     pub fn new() -> Self {
         Self::default()
-    }
-}
-
-/// General-purpose configuration for encoders.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EncoderConfig {
-    pub input_channels: usize,
-    pub output_channels: usize,
-}
-
-impl Default for EncoderConfig {
-    fn default() -> Self {
-        Self {
-            input_channels: 256,
-            output_channels: 256,
-        }
     }
 }
 
@@ -126,14 +114,6 @@ mod tests {
         let output = EncodedOutput::new();
         assert!(output.spikes.is_empty());
         assert!(output.embeddings.is_none());
-        assert!(output.metadata.is_none());
-    }
-
-    #[test]
-    fn test_encoder_config_default() {
-        let config = EncoderConfig::default();
-        assert_eq!(config.input_channels, 256);
-        assert_eq!(config.output_channels, 256);
     }
 
     #[test]

@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn test_lib_prelude_imports() {
         use crate::prelude::*;
-        let _ = EncoderConfig::default();
+        let _ = EncodedOutput::new();
     }
 
     /// Guard: `axon-encoder` must not depend on the neuromod crate (#21).
