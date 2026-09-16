@@ -530,7 +530,11 @@ mod tests {
             .iter()
             .find(|dependency| dependency["name"] == "getrandom")
             .expect("target-specific getrandom dependency");
-        assert_eq!(getrandom["optional"], true);
+        assert!(
+            getrandom["optional"]
+                .as_bool()
+                .expect("getrandom optional boolean")
+        );
         assert_eq!(getrandom["features"], serde_json::json!(["wasm_js"]));
         assert_eq!(
             getrandom["target"],
