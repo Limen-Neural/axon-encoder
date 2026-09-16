@@ -480,7 +480,7 @@ fn checkpoint_continuation_derivative_non_finite_state_is_not_json_round_trippab
     let err = serde_json::from_str::<DerivativeEncoder>(&json)
         .expect_err("null last_values must not deserialize into a restorable DerivativeEncoder");
     assert!(
-        !err.to_string().is_empty(),
-        "deserialize error should explain the invalid last_values"
+        err.to_string().contains("invalid type"),
+        "deserialize error should explain the invalid last_values, got: {err}"
     );
 }
