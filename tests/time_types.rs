@@ -252,6 +252,49 @@ fn cursor_saturates_instead_of_wrapping() {
 }
 
 #[test]
+fn cursor_checked_absolute_reports_overflow_without_mutating() {
+    let cursor = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX - 1);
+    assert_eq!(cursor.checked_absolute(TickOffset::new(1)), Some(u64::MAX));
+    assert_eq!(cursor.checked_absolute(TickOffset::new(2)), None);
+    assert_eq!(cursor.origin(), u64::MAX - 1);
+}
+
+#[test]
+fn cursor_checked_advance_leaves_the_origin_on_overflow() {
+    let mut cursor = TimeCursor::starting_at(TimeModel::window(11), u64::MAX - 5);
+    assert_eq!(cursor.checked_advance(), None);
+    assert_eq!(cursor.origin(), u64::MAX - 5);
+    assert_eq!(cursor.checked_advance_by(0), Some(u64::MAX - 5));
+}
+
+#[test]
+fn cursor_checked_advance_by_reports_multiplication_overflow() {
+    let mut cursor = TimeCursor::new(TimeModel::window(3));
+    assert_eq!(cursor.checked_advance_by(u64::MAX), None);
+    assert_eq!(cursor.origin(), 0);
+}
+
+#[test]
+fn cursor_checked_nanos_report_missing_timebase_and_overflow() {
+    let dimensionless = TimeCursor::new(TimeModel::INSTANT);
+    assert_eq!(dimensionless.checked_absolute_nanos(TickOffset::ZERO), None);
+
+    let physical =
+        TimeCursor::starting_at(TimeModel::INSTANT.with_timebase(Timebase::MILLISECOND), 3);
+    assert_eq!(
+        physical.checked_absolute_nanos(TickOffset::new(1)),
+        Some(4_000_000)
+    );
+
+    let overflowing = TimeCursor::starting_at(
+        TimeModel::INSTANT.with_timebase(Timebase::try_from_nanos(2).expect("2 ns")),
+        u64::MAX / 2 + 1,
+    );
+    assert_eq!(overflowing.checked_absolute_nanos(TickOffset::ZERO), None);
+    assert_eq!(overflowing.absolute_nanos(TickOffset::ZERO), Some(u64::MAX));
+}
+
+#[test]
 fn cursor_nanos_require_a_timebase() {
     let dimensionless = TimeCursor::new(TimeModel::INSTANT);
     assert_eq!(dimensionless.absolute_nanos(TickOffset::ZERO), None);
