@@ -496,6 +496,48 @@ mod tests {
         assert!(forbidden.is_empty(), "{detail}");
     }
 
+    /// Guard: browser entropy stays explicit and target-specific.
+    #[test]
+    fn wasm_js_backend_is_opt_in_and_browser_target_only() {
+        let output = std::process::Command::new(env!("CARGO"))
+            .args(["metadata", "--no-deps", "--locked", "--format-version", "1"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("spawn cargo metadata");
+        let metadata_detail = format!(
+            "cargo metadata failed (status={:?}): {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{metadata_detail}");
+
+        let meta: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("parse cargo metadata json");
+        let package = meta["packages"]
+            .as_array()
+            .expect("packages array")
+            .iter()
+            .find(|p| p["name"] == "axon-encoder")
+            .expect("axon-encoder package in metadata");
+        assert_eq!(
+            package["features"]["wasm-js"],
+            serde_json::json!(["dep:getrandom"])
+        );
+
+        let getrandom = package["dependencies"]
+            .as_array()
+            .expect("dependencies array")
+            .iter()
+            .find(|dependency| dependency["name"] == "getrandom")
+            .expect("target-specific getrandom dependency");
+        assert_eq!(getrandom["optional"], true);
+        assert_eq!(getrandom["features"], serde_json::json!(["wasm_js"]));
+        assert_eq!(
+            getrandom["target"],
+            "cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))"
+        );
+    }
+
     #[test]
     fn test_encoder_default_encode_step_delegates_to_encode() {
         use crate::prelude::*;

@@ -5,9 +5,11 @@
 //! stochastic encoding — **not** a general-purpose API for cryptographic
 //! secrets or key material.
 //!
-//! On `wasm32-unknown-unknown`, this crate enables `getrandom`'s supported
-//! `wasm_js` browser backend. Downstream crates do not need to select the
-//! backend themselves.
+//! Browser consumers compiling for `wasm32-unknown-unknown` must enable this
+//! crate's `wasm-js` feature to select `getrandom`'s supported `wasm_js`
+//! backend. The feature remains opt-in so non-Web WASM consumers can select a
+//! backend appropriate to their runtime at the final binary or application
+//! layer.
 
 use rand::{Rng, RngExt};
 

@@ -34,7 +34,7 @@ jobs:
           cargo +1.98.1 check --locked
           --target wasm32-unknown-unknown
           --no-default-features
-          --features serde
+          --features serde,wasm-js
 
   validate:
     name: Validate, Test & Doc (${{ matrix.os }})
