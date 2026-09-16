@@ -35,6 +35,29 @@
 //! See the [`time`] module for the full contract: batch versus streaming, spike
 //! ordering, and conversion guidance for simulators and hardware adapters.
 //!
+//! ## Serde checkpoints
+//!
+//! The optional `serde` feature round-trips encoder **configuration and live
+//! mutable state**. A JSON checkpoint taken mid-stream resumes deterministic
+//! [`encode_step`] paths exactly when that state is JSON-serializable (finite
+//! floats): the restored encoder emits the same spikes on the remaining inputs
+//! and finishes in the same state. Encoders that persist a non-finite sample
+//! (notably [`DerivativeEncoder`] writing `last_values`) cannot be restored
+//! from `serde_json` after that sample: JSON has no NaN/Inf (`serde_json`
+//! writes `null`), and deserialize rejects that payload.
+//!
+//! Stochastic paths stay excluded: batch [`RateEncoder::encode`], and both
+//! batch and streaming [`PopulationEncoder`] / [`PoissonEncoder`]. Those
+//! methods construct a thread-local generator internally; serde does not
+//! capture it, and they do not accept caller-owned RNG state. Replay of those
+//! paths is out of scope until RNG injection exists.
+//!
+//! [`encode_step`]: Encoder::encode_step
+//! [`RateEncoder::encode`]: encoders::RateEncoder
+//! [`DerivativeEncoder`]: encoders::DerivativeEncoder
+//! [`PopulationEncoder`]: encoders::PopulationEncoder
+//! [`PoissonEncoder`]: poisson::PoissonEncoder
+//!
 //! ## Reusing storage
 //!
 //! `encode` / `encode_step` allocate the `Vec<SpikeEvent>` they return.
