@@ -28,7 +28,7 @@ Optional features:
 | --- | --- |
 | `serde` | Serialize configs, gain types, and live encoder state. Deterministic `encode_step` paths resume exactly from a JSON-serializable checkpoint; stochastic paths that draw a thread-local RNG are not replay-stable. |
 | `ndarray` | Encode from `ndarray` views (`ArrayView1` / `ArrayView2`) |
-| `wasm-js` | Enable browser entropy for `wasm32-unknown-unknown` through `getrandom`'s `wasm_js` backend. Do not enable this for non-Web WASM runtimes. |
+| `wasm-js` | Enable JavaScript-host entropy for `wasm32-unknown-unknown` through `getrandom`'s `wasm_js` backend. Intended for browsers, Web Workers, and supported Node.js hosts. |
 
 ```toml
 [dependencies]
@@ -370,18 +370,19 @@ should normalize before calling `encode`, using the former formula
 
 ## WebAssembly
 
-Browser consumers targeting `wasm32-unknown-unknown` must enable the
-`wasm-js` feature to select `getrandom`'s supported `wasm_js` backend:
+Consumers targeting browsers, Web Workers, or supported Node.js hosts (Node.js
+19+) on `wasm32-unknown-unknown` must enable the `wasm-js` feature to select
+`getrandom`'s supported `wasm_js` backend:
 
 ```toml
 [dependencies]
 axon-encoder = { version = "0.4", features = ["wasm-js"] }
 ```
 
-The feature is opt-in because `wasm32-unknown-unknown` also supports non-Web
-runtimes where a JavaScript backend is unavailable. Leave `wasm-js` disabled
-for those targets and configure randomness for the runtime at the final binary
-or application layer.
+The feature is opt-in because `wasm32-unknown-unknown` also supports non-JS and
+non-Web runtimes where a JavaScript backend is unavailable. Leave `wasm-js`
+disabled for those targets and select a randomness backend appropriate to the
+runtime at the final binary or application layer.
 
 ## Examples
 

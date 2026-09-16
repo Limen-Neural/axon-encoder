@@ -23,7 +23,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust 1.98.1 with WASM target
+      - name: Install browser-WASM toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: 1.98.1
