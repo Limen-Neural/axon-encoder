@@ -1,8 +1,12 @@
 # Axon Encoder
 
+[![Crates.io](https://img.shields.io/crates/v/axon-encoder.svg)](https://crates.io/crates/axon-encoder)
+[![Documentation](https://docs.rs/axon-encoder/badge.svg)](https://docs.rs/axon-encoder)
+[![License](https://img.shields.io/crates/l/axon-encoder.svg)](https://github.com/Limen-Neural/axon-encoder#license)
 [![CI](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Limen-Neural/axon-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/Limen-Neural/axon-encoder)
-[![Docs](https://docs.rs/axon-encoder/badge.svg)](https://docs.rs/axon-encoder)
+[![Codacy code quality](https://img.shields.io/badge/code%20quality-Codacy-222f29?logo=codacy)](https://app.codacy.com/gh/Limen-Neural/axon-encoder/dashboard)
+[![Maintainability](https://qlty.sh/gh/Limen-Neural/projects/axon-encoder/maintainability.svg)](https://qlty.sh/gh/Limen-Neural/projects/axon-encoder)
 
 **A flexible sensory encoding library for spiking neural networks (SNNs).**
 
