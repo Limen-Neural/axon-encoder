@@ -419,31 +419,16 @@ predictive, gain-adapter patterns, and more).
 The library is intentionally unopinionated about which simulator or hardware
 stack you plug the spikes into.
 
-## Docker (optional)
-
-Published images ship **example binaries** (not a substitute for depending on
-the crate from Cargo):
-
-```bash
-docker pull ghcr.io/limen-neural/axon-encoder:0.4.0
-docker run --rm ghcr.io/limen-neural/axon-encoder:0.4.0
-```
-
-Build locally from a git checkout:
-
-```bash
-docker build -t axon-encoder:dev .
-docker run --rm axon-encoder:dev
-
-docker build --target builder -t axon-encoder:builder .
-docker run --rm axon-encoder:builder   # cargo test --all-features --locked
-```
-
 ## Contributing
 
 Issues and pull requests are welcome—new encoders, fixes, and docs improvements
 alike. Development notes and CI conventions live in the repository
 (`REVIEW.md`, `.github/`).
+
+The `.devcontainer/` configuration is available for VS Code Dev Containers
+and Codespaces contributor workflows. It is an editor development environment,
+not a published or supported distribution artifact; consumers should use the
+crate from Cargo as described in [Installation](#installation).
 
 ## License
 

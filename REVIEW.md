@@ -12,19 +12,18 @@ cannot land “green CI” while deleting product surface.
 
 `Cargo.toml` `rust-version`, `rust-toolchain.toml` `channel`, and the
 `toolchain:` string in `.github/workflows/ci.yml` must stay **identical**
-(currently **1.98.1**). When present, `Dockerfile` and
-`.devcontainer/Dockerfile` `FROM rust:<ver>` tags must match too. CI fails
-if they drift (issue #67 / LIM-1014, #61 / LIM-972).
+(currently **1.98.1**). The contributor-only `.devcontainer/Dockerfile`
+`FROM rust:<ver>` tag must match too. CI fails if these pins drift
+(issue #67 / LIM-1014, #61 / LIM-972).
 
 To bump MSRV:
 
-1. Set the new version in Cargo.toml, rust-toolchain.toml, ci.yml, and any
-   `FROM rust:` image tags (root `Dockerfile`, `.devcontainer/Dockerfile`).
+1. Set the new version in Cargo.toml, rust-toolchain.toml, ci.yml, and the
+   `FROM rust:` tag in `.devcontainer/Dockerfile`.
 2. Run the mandatory commands below on that toolchain
    (`rustup run <ver> cargo test --locked`, etc.).
 3. Confirm GitHub Actions matrix (Linux / macOS / Windows) is green.
-4. Rebuild Docker images (`docker build -t axon-encoder:dev .` and
-   `docker build --target builder -t axon-encoder:builder .`).
+4. Rebuild the devcontainer and confirm the editor tooling starts correctly.
 
 Do not bump only one pin.
 

@@ -17,16 +17,14 @@ keywords = ["snn", "spiking", "neuromorphic", "encoding", "spike"]
 categories = ["science", "algorithms", "simulation"]
 # crates.io surface: keep licenses, README, sources, examples, and tests.
 # Drop agent/CI/dev-only paths. Hidden git-tracked files still pack unless
-# listed here (e.g. .gitignore). `cargo package` does not read .dockerignore.
+# listed here (e.g. .gitignore).
 exclude = [
     "/.codacy.yml",
     "/.codecov.yml",
     "/.deepsource.toml",
     "/.devcontainer/",
-    "/.dockerignore",
     "/.github/",
     "/.gitignore",
-    "/Dockerfile",
     "/REVIEW.md",
     "/docs/",
     "/rust-toolchain.toml",

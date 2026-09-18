@@ -98,8 +98,8 @@ jobs:
             echo "ERROR: MSRV pins disagree (must be identical)." >&2
             exit 1
           fi
-          # Docker / Dev Container images must track the same major.minor.patch.
-          for df in Dockerfile .devcontainer/Dockerfile; do
+          # The contributor devcontainer must track the same major.minor.patch.
+          for df in .devcontainer/Dockerfile; do
             if [ -f "$df" ]; then
               # Do not let missing matches abort under pipefail before the ERROR.
               img=$(grep -m1 -E '^FROM[[:space:]]+rust:' "$df" 2>/dev/null | sed -E 's/.*rust:([0-9]+\.[0-9]+\.[0-9]+).*/\1/' | tr -d '\r' || true)
