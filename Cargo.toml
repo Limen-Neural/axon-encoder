@@ -1,6 +1,6 @@
 [package]
 name = "axon-encoder"
-version = "0.4.0"
+version = "0.5.0"
 # Kept for cargo metadata / CARGO_PKG_AUTHORS. crates.io UI lists the
 # publishing account instead of this field (RFC 3052).
 authors = ["Raul Cardenas Montoya <montoyaraul34@gmail.com>"]

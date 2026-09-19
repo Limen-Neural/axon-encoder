@@ -92,10 +92,11 @@ impl SpikeEvent {
 pub struct EncodedOutput {
     /// Spike events emitted by the encoder call.
     pub spikes: Vec<SpikeEvent>,
-    /// Optional dense embedding produced alongside the spikes.
+    /// Optional dense vector supplied by a custom encoder or downstream adapter.
     ///
-    /// [`EmbeddingRateEncoder::forward`](crate::encoder::EmbeddingRateEncoder::forward)
-    /// populates this with the normalized embedding that drives its channels.
+    /// Built-in encoders currently leave this as `None`. In particular,
+    /// [`EmbeddingRateEncoder`](crate::encoder::EmbeddingRateEncoder) consumes
+    /// caller-provided drive values but does not normalize or copy them here.
     pub embeddings: Option<Vec<f32>>,
 }
 
