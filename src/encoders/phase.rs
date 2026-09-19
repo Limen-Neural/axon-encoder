@@ -19,7 +19,7 @@ use crate::prelude::*;
 ///
 /// [`current_phase`](Self::current_phase) exposes the encoder's own cycle
 /// counter for callers that track the oscillation directly rather than through a
-/// [`TimeCursor`](crate::time::TimeCursor).
+/// [`TimeCursor`].
 ///
 /// # Examples
 ///
@@ -134,7 +134,7 @@ impl PhaseEncoder {
 
     /// Absolute tick of the background oscillation, advanced once per call.
     ///
-    /// Equivalent to the origin of a [`TimeCursor`](crate::time::TimeCursor)
+    /// Equivalent to the origin of a [`TimeCursor`]
     /// driven by this encoder's [`time_model`](Encoder::time_model), and useful
     /// when a caller wants the cycle position without keeping its own cursor:
     /// `(encoder.current_phase() + spike.timestamp.ticks()) % cycle_steps`.

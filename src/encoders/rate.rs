@@ -439,7 +439,7 @@ impl Encoder for RateEncoder {
     /// and mutually unordered, so the run length is a spike count.
     ///
     /// Unlike the other step-wise encoders this one is calibrated in physical
-    /// time, so it reports a [`Timebase`](crate::time::Timebase) of
+    /// time, so it reports a [`Timebase`] of
     /// `dt_seconds`. The timebase is omitted when `dt_seconds` has no whole-
     /// nanosecond representation — it rounds below one nanosecond, or exceeds
     /// the `u64` nanosecond range — since `try_new` accepts any finite positive
