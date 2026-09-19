@@ -54,8 +54,7 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Audit locked dependencies
-        # cargo-audit 0.22.2 has no --locked flag; default/file path is Cargo.lock.
-        run: cargo audit --file Cargo.lock
+        run: cargo audit
 
   validate:
     name: Validate, Test & Doc (${{ matrix.os }})
