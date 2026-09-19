@@ -16,14 +16,14 @@ front-end of a neuromorphic pipeline without pulling in a full SNN simulator.
 
 ## Installation
 
-**0.4.x is experimental (pre-1.0).** Cargo treats `axon-encoder = "0.4"` as
-`^0.4` (that is `>= 0.4.0, < 0.5.0`): compatible **patch** updates only.
-A `0.5` release is a new breaking line; pin `"=0.4.0"` if you need an exact
-crate version.
+**0.5.x is experimental (pre-1.0).** Cargo treats `axon-encoder = "0.5"` as
+`^0.5` (that is `>= 0.5.0, < 0.6.0`): compatible **patch** updates only.
+The 0.5 release is a breaking line from 0.4; pin `"=0.5.0"` if you need an
+exact crate version.
 
 ```toml
 [dependencies]
-axon-encoder = "0.4"
+axon-encoder = "0.5"
 ```
 
 Optional features:
@@ -36,7 +36,7 @@ Optional features:
 
 ```toml
 [dependencies]
-axon-encoder = { version = "0.4", features = ["ndarray"] }
+axon-encoder = { version = "0.5", features = ["ndarray"] }
 ndarray = "0.16" # declare yourself so you can build ArrayView values
 ```
 
@@ -240,8 +240,10 @@ The 0.5 line removes public placeholders that had no authoritative consumer:
   semantics are handled by the explicit time types introduced in
   [issue #62](https://github.com/Limen-Neural/axon-encoder/issues/62), rather
   than a catch-all metadata bag.
-- **`EncodedOutput::embeddings` remains.** It is the optional normalized dense
-  vector produced alongside spikes by `EmbeddingRateEncoder::forward`.
+- **`EncodedOutput::embeddings` remains.** It is an optional dense-vector slot
+  for custom encoders and downstream adapters. `EmbeddingRateEncoder` no
+  longer normalizes its input or populates this field; its standardized output
+  contains spikes and leaves `embeddings` as `None`.
 
 Additional breaking changes in the 0.5 line:
 
@@ -380,7 +382,7 @@ Consumers targeting browsers, Web Workers, or supported Node.js hosts (Node.js
 
 ```toml
 [dependencies]
-axon-encoder = { version = "0.4", features = ["wasm-js"] }
+axon-encoder = { version = "0.5", features = ["wasm-js"] }
 ```
 
 The feature is opt-in because `wasm32-unknown-unknown` also supports non-JS and

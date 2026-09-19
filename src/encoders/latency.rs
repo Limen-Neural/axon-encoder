@@ -13,7 +13,7 @@ use crate::prelude::*;
 /// One call is one *presentation* spanning `max_latency + 1` ticks, and offsets
 /// are relative to the start of that call — so repeated calls with the same
 /// input produce the same offsets, and it is the caller's
-/// [`TimeCursor`](crate::time::TimeCursor) that separates them in absolute
+/// [`TimeCursor`] that separates them in absolute
 /// time. `encode` and `encode_step` are the same stateless path.
 ///
 /// Spikes are emitted in channel order, *not* in time order: a later channel

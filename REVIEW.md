@@ -44,6 +44,7 @@ cargo fmt --check
 cargo test --locked
 cargo test --features serde --locked
 cargo clippy --all-features -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features
 cargo test --package axon-encoder --lib -- rng::tests
 cargo test --message-format=json-diagnostic-rendered-ansi \
   --color=always --no-run --package axon-encoder --lib \
@@ -128,6 +129,7 @@ IDE/terminal dumps. Prefer **verdict first**, then small tables.
 | `cargo test --locked` | pass |
 | `cargo test --features serde --locked` | pass (8 serde tests) |
 | `cargo clippy --all-features -- -D warnings` | pass |
+| `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features` | pass |
 | `rng::tests` | pass |
 | Edge filters | pass |
 | Regression guards | pass |
