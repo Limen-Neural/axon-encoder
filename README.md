@@ -1,8 +1,12 @@
 # Axon Encoder
 
+[![Crates.io](https://img.shields.io/crates/v/axon-encoder.svg)](https://crates.io/crates/axon-encoder)
+[![Documentation](https://docs.rs/axon-encoder/badge.svg)](https://docs.rs/axon-encoder)
+[![License](https://img.shields.io/crates/l/axon-encoder.svg)](https://github.com/Limen-Neural/axon-encoder#license)
 [![CI](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Limen-Neural/axon-encoder/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Limen-Neural/axon-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/Limen-Neural/axon-encoder)
-[![Docs](https://docs.rs/axon-encoder/badge.svg)](https://docs.rs/axon-encoder)
+[![Codacy code quality](https://img.shields.io/badge/code%20quality-Codacy-222f29?logo=codacy)](https://app.codacy.com/gh/Limen-Neural/axon-encoder/dashboard)
+[![Maintainability](https://qlty.sh/gh/Limen-Neural/projects/axon-encoder/maintainability.svg)](https://qlty.sh/gh/Limen-Neural/projects/axon-encoder)
 
 **A flexible sensory encoding library for spiking neural networks (SNNs).**
 
@@ -12,14 +16,14 @@ front-end of a neuromorphic pipeline without pulling in a full SNN simulator.
 
 ## Installation
 
-**0.4.x is experimental (pre-1.0).** Cargo treats `axon-encoder = "0.4"` as
-`^0.4` (that is `>= 0.4.0, < 0.5.0`): compatible **patch** updates only.
-A `0.5` release is a new breaking line; pin `"=0.4.0"` if you need an exact
-crate version.
+**0.5.x is experimental (pre-1.0).** Cargo treats `axon-encoder = "0.5"` as
+`^0.5` (that is `>= 0.5.0, < 0.6.0`): compatible **patch** updates only.
+The 0.5 release is a breaking line from 0.4; pin `"=0.5.0"` if you need an
+exact crate version.
 
 ```toml
 [dependencies]
-axon-encoder = "0.4"
+axon-encoder = "0.5"
 ```
 
 Optional features:
@@ -32,7 +36,7 @@ Optional features:
 
 ```toml
 [dependencies]
-axon-encoder = { version = "0.4", features = ["ndarray"] }
+axon-encoder = { version = "0.5", features = ["ndarray"] }
 ndarray = "0.16" # declare yourself so you can build ArrayView values
 ```
 
@@ -236,8 +240,10 @@ The 0.5 line removes public placeholders that had no authoritative consumer:
   semantics are handled by the explicit time types introduced in
   [issue #62](https://github.com/Limen-Neural/axon-encoder/issues/62), rather
   than a catch-all metadata bag.
-- **`EncodedOutput::embeddings` remains.** It is the optional normalized dense
-  vector produced alongside spikes by `EmbeddingRateEncoder::forward`.
+- **`EncodedOutput::embeddings` remains.** It is an optional dense-vector slot
+  for custom encoders and downstream adapters. `EmbeddingRateEncoder` no
+  longer normalizes its input or populates this field; its standardized output
+  contains spikes and leaves `embeddings` as `None`.
 
 Additional breaking changes in the 0.5 line:
 
@@ -376,7 +382,7 @@ Consumers targeting browsers, Web Workers, or supported Node.js hosts (Node.js
 
 ```toml
 [dependencies]
-axon-encoder = { version = "0.4", features = ["wasm-js"] }
+axon-encoder = { version = "0.5", features = ["wasm-js"] }
 ```
 
 The feature is opt-in because `wasm32-unknown-unknown` also supports non-JS and
@@ -419,31 +425,16 @@ predictive, gain-adapter patterns, and more).
 The library is intentionally unopinionated about which simulator or hardware
 stack you plug the spikes into.
 
-## Docker (optional)
-
-Published images ship **example binaries** (not a substitute for depending on
-the crate from Cargo):
-
-```bash
-docker pull ghcr.io/limen-neural/axon-encoder:0.4.0
-docker run --rm ghcr.io/limen-neural/axon-encoder:0.4.0
-```
-
-Build locally from a git checkout:
-
-```bash
-docker build -t axon-encoder:dev .
-docker run --rm axon-encoder:dev
-
-docker build --target builder -t axon-encoder:builder .
-docker run --rm axon-encoder:builder   # cargo test --all-features --locked
-```
-
 ## Contributing
 
 Issues and pull requests are welcome—new encoders, fixes, and docs improvements
 alike. Development notes and CI conventions live in the repository
 (`REVIEW.md`, `.github/`).
+
+The `.devcontainer/` configuration is available for VS Code Dev Containers
+and Codespaces contributor workflows. It is an editor development environment,
+not a published or supported distribution artifact; consumers should use the
+crate from Cargo as described in [Installation](#installation).
 
 ## License
 

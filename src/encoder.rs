@@ -278,7 +278,7 @@ impl ModulatedEncoder for EmbeddingRateEncoder {
     }
 
     /// Skips the intermediate [`EncodedOutput`] the trait default builds; see
-    /// [`RateEncoder`](crate::encoders::RateEncoder)'s override of the same
+    /// [`RateEncoder`]'s override of the same
     /// method for why every encoder in this crate does this.
     fn encode_with_modulators_into(
         &mut self,

@@ -1,6 +1,6 @@
 [package]
 name = "axon-encoder"
-version = "0.4.0"
+version = "0.5.0"
 # Kept for cargo metadata / CARGO_PKG_AUTHORS. crates.io UI lists the
 # publishing account instead of this field (RFC 3052).
 authors = ["Raul Cardenas Montoya <montoyaraul34@gmail.com>"]
@@ -17,16 +17,14 @@ keywords = ["snn", "spiking", "neuromorphic", "encoding", "spike"]
 categories = ["science", "algorithms", "simulation"]
 # crates.io surface: keep licenses, README, sources, examples, and tests.
 # Drop agent/CI/dev-only paths. Hidden git-tracked files still pack unless
-# listed here (e.g. .gitignore). `cargo package` does not read .dockerignore.
+# listed here (e.g. .gitignore).
 exclude = [
     "/.codacy.yml",
     "/.codecov.yml",
     "/.deepsource.toml",
     "/.devcontainer/",
-    "/.dockerignore",
     "/.github/",
     "/.gitignore",
-    "/Dockerfile",
     "/REVIEW.md",
     "/docs/",
     "/rust-toolchain.toml",
