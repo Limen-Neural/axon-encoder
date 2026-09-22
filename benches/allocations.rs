@@ -1,5 +1,5 @@
 use axon_encoder::encoders::{
-    DeltaEncoder, LatencyEncoder, PopulationEncoder, PredictiveEncoder, RateEncoder,
+    DeltaEncoder, LatencyEncoder, PhaseEncoder, PopulationEncoder, PredictiveEncoder, RateEncoder,
     TemporalEncoder,
 };
 use axon_encoder::prelude::*;
@@ -227,6 +227,16 @@ fn report_latency_encoder() {
     }
 }
 
+fn report_phase_encoder() {
+    for scale in SCALES {
+        let mut encoder = PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid PhaseEncoder");
+        let input = normalized_input(scale);
+
+        let stats = measure_encode(|| encoder.encode(&input));
+        print_stats("PhaseEncoder", "encode", "scale", scale, stats);
+    }
+}
+
 fn report_rate_encoder_into() {
     for scale in SCALES {
         let mut encoder =
@@ -352,6 +362,19 @@ fn report_latency_encoder_into() {
     }
 }
 
+fn report_phase_encoder_into() {
+    for scale in SCALES {
+        let mut encoder = PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid PhaseEncoder");
+        let input = normalized_input(scale);
+        let mut buffer = Vec::with_capacity(scale);
+
+        let stats = measure_reused_step(2, &mut buffer, |sink| {
+            encoder.encode_into(&input, sink);
+        });
+        print_stats("PhaseEncoder", "encode_into", "scale", scale, stats);
+    }
+}
+
 /// Backlog drain on the returning path.
 ///
 /// A rate high enough to queue more than `MAX_SPIKES_PER_CHANNEL_PER_STEP`
@@ -443,6 +466,7 @@ fn main() {
     report_temporal_encoder();
     report_predictive_encoder();
     report_latency_encoder();
+    report_phase_encoder();
     report_rate_encoder_backlog();
     // Reusable-storage counterparts: same encoders, same scales, one buffer.
     report_rate_encoder_into();
@@ -451,6 +475,7 @@ fn main() {
     report_temporal_encoder_into();
     report_predictive_encoder_into();
     report_latency_encoder_into();
+    report_phase_encoder_into();
     report_delta_encoder_modulated_into();
     report_poisson_encoder();
 }

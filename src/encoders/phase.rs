@@ -103,6 +103,8 @@ impl PhaseEncoder {
     /// path on this encoder routes through here, so the returning and
     /// sink-based APIs cannot drift apart.
     fn encode_current_cycle_into<S: SpikeSink + ?Sized>(&self, input: &[f32], sink: &mut S) {
+        sink.reserve(input.len().min(usize::from(u16::MAX) + 1));
+
         for (channel, &value) in input.iter().enumerate() {
             // Non-finite inputs are invalid readings — skip rather than emit a
             // misleading phase-0 spike (NaN as u64 saturates to 0).
@@ -165,6 +167,8 @@ impl PhaseEncoder {
         if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
             return;
         }
+
+        sink.reserve(input.len().min(usize::from(u16::MAX) + 1));
 
         // Use f64 to prevent overflow for valid f32 ranges and scales.
         let lo = self.range.0 as f64;

@@ -176,6 +176,7 @@ impl EmbeddingRateEncoder {
     ) {
         let effective_threshold = self.config.v_th * threshold_scale;
         let aligned_len = input.len().min(self.membrane_potentials.len());
+        sink.reserve(aligned_len);
 
         for (i, &value) in input[..aligned_len].iter().enumerate() {
             if !value.is_finite() {
