@@ -76,6 +76,7 @@ impl DeltaEncoder {
         sink: &mut S,
     ) {
         let effective_threshold = (self.threshold * threshold_scale).max(0.0);
+        sink.reserve(input.len().min(self.last_values.len()));
 
         for (i, &value) in input.iter().enumerate() {
             if i >= self.last_values.len() {

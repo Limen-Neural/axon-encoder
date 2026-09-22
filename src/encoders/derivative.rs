@@ -90,6 +90,8 @@ impl DerivativeEncoder {
         current_values: &[f32],
         sink: &mut S,
     ) {
+        sink.reserve(current_values.len().min(self.thresholds.len()));
+
         for (i, &current_val) in current_values.iter().enumerate() {
             if i >= self.thresholds.len() {
                 break;

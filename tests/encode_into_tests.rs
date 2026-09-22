@@ -409,6 +409,36 @@ fn custom_sink_receives_spikes_through_dyn_dispatch() {
 }
 
 #[test]
+fn one_spike_per_channel_encoders_reserve_only_processed_channels() {
+    fn reserved_by(encoder: &mut dyn Encoder, input: &[f32]) -> usize {
+        let mut log = EventLog::default();
+        encoder.encode_into(input, &mut log);
+        log.reserved
+    }
+
+    let mut phase = PhaseEncoder::new(8, (0.0, 1.0));
+    assert_eq!(reserved_by(&mut phase, &[]), 0);
+    assert_eq!(
+        reserved_by(&mut phase, &vec![0.5; usize::from(u16::MAX) + 2]),
+        usize::from(u16::MAX) + 1
+    );
+
+    let short = [1.0, 1.0];
+    let long = [1.0, 1.0, 1.0, 1.0];
+    let mut delta = DeltaEncoder::new(0.1, 3);
+    assert_eq!(reserved_by(&mut delta, &short), 2);
+    assert_eq!(reserved_by(&mut delta, &long), 3);
+
+    let mut derivative = DerivativeEncoder::new(vec![0.1; 3]);
+    assert_eq!(reserved_by(&mut derivative, &short), 2);
+    assert_eq!(reserved_by(&mut derivative, &long), 3);
+
+    let mut embedding = EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.5 });
+    assert_eq!(reserved_by(&mut embedding, &short), 2);
+    assert_eq!(reserved_by(&mut embedding, &long), 3);
+}
+
+#[test]
 fn modulated_encoders_reach_the_sink_through_dyn_dispatch() {
     fn encode_with_gains_via_dyn(
         encoder: &mut dyn ModulatedEncoder,
