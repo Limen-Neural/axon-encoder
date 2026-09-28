@@ -19,7 +19,7 @@ fn main() {
         PopulationEncoder::try_new(20, (0.0, 100.0), 10.0).expect("valid PopulationEncoder");
     let num_neurons = encoder.num_neurons();
 
-    let test_values = [10.0, 50.0, 90.0];
+    let test_values = [0.0, 10.0, 50.0, 90.0, 100.0];
 
     println!("=== Population Encoding ===");
     println!(
