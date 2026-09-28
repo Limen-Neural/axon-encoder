@@ -1,22 +1,34 @@
 use crate::prelude::*;
 
-/// Encodes a single analog value across a population of neurons
+/// Encodes each analog input channel across its own population of neurons.
 ///
 /// Each neuron in the population is "tuned" to a specific preferred value within
 /// the input range. The neuron fires based on a Gaussian-like tuning curve centered
 /// on its preferred value. This creates a distributed representation where multiple
-/// neurons contribute to encoding a single input value
+/// neurons contribute to encoding each input value. For input channel `j`,
+/// neuron `i` emits on spike channel `j * num_neurons + i`. The total number
+/// of spike channels must fit in the `u16` channel-ID space.
 ///
 /// # Mathematical Model
 ///
-/// Uses a Gaussian tuning curve to determine each neuron's firing rate:
+/// Uses a Gaussian tuning curve to determine each neuron's per-call firing probability:
 ///
 /// ```text
-/// preferred_value[i] = range_min + (i / num_neurons) * (range_max - range_min)
+/// preferred_value[i] = range_min + (i / (num_neurons - 1)) * (range_max - range_min)
 /// distance = |input - preferred_value[i]|
-/// rate = exp(-distance² / (2 * tuning_width²))
-/// spike if random() < rate
+/// probability = exp(-distance² / (2 * tuning_width²))
+/// spike if random() < probability
 /// ```
+///
+/// For one neuron, the only preferred value is `range_min`; one neuron cannot
+/// represent both endpoints. The tuning-curve result is a per-call firing
+/// probability, not a rate in hertz. Every emitted timestamp is zero, so it
+/// contains no timing information within a call.
+///
+/// # Panics
+///
+/// Encoding panics if `input.len() * num_neurons` exceeds 65,536, because
+/// spike channel IDs are `u16`. No input channel is silently truncated.
 ///
 /// # When to Use
 ///
@@ -36,9 +48,9 @@ use crate::prelude::*;
 /// use axon_encoder::prelude::*;
 /// # fn main() -> Result<(), EncoderError> {
 /// let mut enc = PopulationEncoder::try_new(8, (0.0, 1.0), 0.15)?;
-/// // Population encoders take a single scalar in the first channel.
-/// let out = enc.encode(&[0.5]);
-/// assert!(out.spikes.len() <= 8);
+/// let out = enc.encode(&[0.5, 1.0]);
+/// assert!(out.spikes.len() <= 16);
+/// assert!(out.spikes.iter().all(|spike| spike.channel < 16));
 /// # Ok(())
 /// # }
 /// ```
@@ -96,8 +108,13 @@ impl PopulationEncoder {
         tuning_width: f32,
     ) -> f32 {
         let range_span = self.input_range.1 - self.input_range.0;
-        let preferred_value =
-            self.input_range.0 + (neuron_index as f32 / self.num_neurons as f32) * range_span;
+        let preferred_value = if self.num_neurons == 1 || neuron_index == 0 {
+            self.input_range.0
+        } else if neuron_index == self.num_neurons - 1 {
+            self.input_range.1
+        } else {
+            self.input_range.0 + (neuron_index as f32 / (self.num_neurons - 1) as f32) * range_span
+        };
 
         let distance = (input - preferred_value).abs();
         // Gaussian-like response curve
@@ -131,6 +148,15 @@ impl PopulationEncoder {
         sensitivity_scale: f32,
         sink: &mut S,
     ) {
+        let spike_channels = input
+            .len()
+            .checked_mul(self.num_neurons)
+            .expect("population channel count overflow");
+        assert!(
+            spike_channels <= crate::error::MAX_SPIKE_CHANNELS,
+            "population channel count exceeds u16 channel-ID space"
+        );
+
         // Zero/negative/non-finite sensitivity fully suppresses population responses.
         if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
             return;
@@ -140,14 +166,12 @@ impl PopulationEncoder {
         // so small positive gains never produce near-universal firing.
         let rate_gain = sensitivity_scale.min(1.0);
 
-        // This encoder expects a single value in the input slice
-        if let Some(&value) = input.first() {
-            let mut rng = rand::rng();
+        let mut rng = rand::rng();
+        for (input_channel, &value) in input.iter().enumerate() {
+            let channel_base = input_channel * self.num_neurons;
             for i in 0..self.num_neurons {
-                let Ok(channel) = u16::try_from(i) else {
-                    // Remaining neurons exceed u16::MAX; stop rather than wrap.
-                    break;
-                };
+                let channel = u16::try_from(channel_base + i)
+                    .expect("population channel count was validated above");
                 let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
                 if crate::rng::gen_unit_f32_with_rng(&mut rng) < rate {
                     sink.push(SpikeEvent::at_step_start(channel, true));
@@ -315,6 +339,101 @@ mod tests {
             "Peak activity should be near the middle neuron for an input of 50."
         );
         assert!(output.spikes.len() <= 10);
+    }
+
+    #[test]
+    fn preferred_grid_and_center_of_mass_cover_both_endpoints() {
+        let encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        let preferred: Vec<f64> = (0..10).map(|i| i as f64 * 100.0 / 9.0).collect();
+
+        // A pooled-count CoM over many calls has this deterministic expectation.
+        // Gaussian neighbors pull both endpoints inward, so the bound is 5
+        // input units at the endpoints rather than exact reconstruction.
+        for (input, bound) in [
+            (0.0_f32, 5.0),
+            (25.0, 0.1),
+            (50.0, 0.1),
+            (75.0, 0.1),
+            (100.0, 5.0),
+        ] {
+            let rates: Vec<f64> = (0..10)
+                .map(|i| encoder.get_rate_with_tuning_width(input, i, 10.0) as f64)
+                .collect();
+            let decoded = preferred
+                .iter()
+                .zip(&rates)
+                .map(|(value, rate)| value * rate)
+                .sum::<f64>()
+                / rates.iter().sum::<f64>();
+            assert!(
+                (decoded - input as f64).abs() <= bound,
+                "input {input}: pooled CoM {decoded} exceeds error bound {bound}"
+            );
+        }
+
+        assert_eq!(encoder.get_rate_with_tuning_width(0.0, 0, 10.0), 1.0);
+        assert_eq!(encoder.get_rate_with_tuning_width(100.0, 9, 10.0), 1.0);
+    }
+
+    #[test]
+    fn one_neuron_keeps_the_minimum_as_its_only_preference() {
+        let encoder = PopulationEncoder::new(1, (0.0, 100.0), 10.0);
+        assert_eq!(encoder.get_rate_with_tuning_width(0.0, 0, 10.0), 1.0);
+        assert!(encoder.get_rate_with_tuning_width(100.0, 0, 10.0) < 1.0);
+    }
+
+    #[test]
+    fn emitted_spikes_reconstruct_the_probe_grid() {
+        let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
+        // The empirical pooled CoM converges to the expectation above. These
+        // bounds allow sampling noise while retaining the endpoint bias limit.
+        for (input, bound) in [
+            (0.0_f32, 6.5),
+            (25.0, 1.0),
+            (50.0, 1.0),
+            (75.0, 1.0),
+            (100.0, 6.5),
+        ] {
+            let mut weighted_sum = 0.0_f64;
+            let mut spike_count = 0usize;
+            for _ in 0..5_000 {
+                for spike in encoder.encode(&[input]).spikes {
+                    weighted_sum += spike.channel as f64 * 100.0 / 9.0;
+                    spike_count += 1;
+                }
+            }
+            assert!(spike_count > 0);
+            let decoded = weighted_sum / spike_count as f64;
+            assert!(
+                (decoded - input as f64).abs() <= bound,
+                "input {input}: spike CoM {decoded} exceeds error bound {bound}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_input_channel_has_an_independent_population() {
+        let mut encoder = PopulationEncoder::new(3, (0.0, 100.0), 1.0);
+        let expected = vec![
+            SpikeEvent::at_step_start(0, true),
+            SpikeEvent::at_step_start(5, true),
+        ];
+        assert_eq!(encoder.encode(&[0.0, 100.0]).spikes, expected);
+        assert_eq!(encoder.encode_step(&[0.0, 100.0]).spikes, expected);
+
+        let mut sink = Vec::new();
+        encoder.encode_into(&[0.0, 100.0], &mut sink);
+        assert_eq!(sink, expected);
+
+        let output = encoder.encode_with_gains(&[0.0, 100.0], EncodingGains::identity());
+        assert_eq!(output.spikes, expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "population channel count exceeds u16 channel-ID space")]
+    fn population_rejects_more_channels_than_spike_ids() {
+        let mut encoder = PopulationEncoder::new(2, (0.0, 1.0), 0.1);
+        encoder.encode(&vec![0.0; crate::error::MAX_SPIKE_CHANNELS / 2 + 1]);
     }
 
     #[test]
