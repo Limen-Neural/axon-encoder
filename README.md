@@ -101,9 +101,9 @@ Full API docs: [docs.rs/axon-encoder](https://docs.rs/axon-encoder).
 
 ## Reusing storage: `encode_into` and `SpikeSink`
 
-`encode` / `encode_step` allocate a fresh `Vec<SpikeEvent>` per call. That is
-the right default for exploration, but a runtime stepping thousands of channels
-wants one buffer, allocated once. `encode_into` / `encode_step_into` write into
+`encode` / `encode_step` create a fresh output vector per call; producing
+spikes generally allocates storage. For a runtime stepping thousands of
+channels, a reusable buffer can avoid those allocations. `encode_into` / `encode_step_into` write into
 any `SpikeSink` you own instead:
 
 ```rust
@@ -121,8 +121,18 @@ fn main() {
 }
 ```
 
-Same spikes, same order, same state advancement as the returning APIs — and
-zero allocations per step once the buffer is warm. `Vec<SpikeEvent>` and
+The returning path (`encode`), step path (`encode_step`), and reusable path
+(`encode_into` / `encode_step_into`) preserve the corresponding spikes, order,
+and state advancement. Warm reusable path zero-allocation claims apply only to
+rows reporting zero in `cargo bench --bench allocations`, for the measured
+fixture and scale. See [measured coverage and local regression procedure](REVIEW.md#measured-encoder-coverage)
+for the matrix, warm-up details, and separate timing/allocation comparisons.
+The local Rust 1.98.1 allocation report for these fixtures recorded zero
+allocations and zero bytes for all 36 reusable rows, including the Delta
+modulated smoke rows; no reusable path exception was observed. Unexpected
+allocations should be documented here and in REVIEW.md with a separate issue.
+
+`Vec<SpikeEvent>` and
 `EncodedOutput` implement `SpikeSink` out of the box; a downstream event
 buffer, ring queue, or hardware adapter implements the one-method trait itself,
 so no `Vec<SpikeEvent>` is ever built — it keeps spikes in whatever form it
