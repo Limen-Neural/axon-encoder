@@ -8,6 +8,22 @@
 //! queue, and delivers whole batches to a [`BatchSink`] under a
 //! [`FlushPolicy`] the caller chooses.
 //!
+//! # Ownership: everything is borrowed
+//!
+//! [`StreamingEncoder`] owns neither the encoder it drives nor the target its
+//! batches land in. It holds the encoder as `&'a mut E` where
+//! `E: `[`Encoder`]` + ?Sized`, so it wraps a concrete encoder *or* a
+//! `&mut dyn `[`Encoder`] trait object without a generic monomorphization per
+//! type. The caller keeps ownership of the encoder for the wrapper's lifetime
+//! and gets it back when the borrow ends; nothing is moved in. Delivery targets
+//! are borrowed the same way: [`encode_step`](StreamingEncoder::encode_step)
+//! and [`flush_into`](StreamingEncoder::flush_into) take a
+//! `&mut dyn `[`BatchSink`], and the caller owns whatever storage that sink
+//! writes into (a `Vec<`[`SpikeEvent`]`>`, a ring queue, a hardware adapter, or
+//! just a closure). This mirrors how [`Encoder`] hands spikes to a caller-owned
+//! [`SpikeSink`](crate::sink::SpikeSink); the wrapper allocates only its own
+//! bounded queue.
+//!
 //! # What a batch is
 //!
 //! Each accepted [`encode_step`](StreamingEncoder::encode_step) call becomes at
@@ -17,6 +33,17 @@
 //! advanced past the call. Spike timestamps inside a batch stay **call-relative
 //! [`TickOffset`](crate::time::TickOffset)s**; they are never rebased. Absolute time for a spike is
 //! `batch.origin() + spike.timestamp.ticks()`.
+//!
+//! # Memory bound
+//!
+//! The buffering is hard-bounded, not merely advisory. At any instant the
+//! wrapper holds at most `capacity` queued spikes, plus the output staged or
+//! held for the one call in flight. The staging buffer for the current call is
+//! reused across calls, and a call whose own output is larger than `capacity`
+//! is delivered straight through as a single batch rather than being retained,
+//! so nothing grows without a bound the caller set. There is no per-batch
+//! overhead that scales with call count once batches are delivered: the queue
+//! reclaims its contiguous storage on every full drain.
 //!
 //! # Capacity and blocking
 //!
@@ -37,6 +64,55 @@
 //!
 //! The encoder is only ever invoked by
 //! [`encode_step`](StreamingEncoder::encode_step); flushing never touches it.
+//!
+//! # Age is measured in ticks, never wall-clock
+//!
+//! This crate owns no clock, and neither does the wrapper. The "age" that
+//! [`FlushPolicy::OnCapacityOrAge`] acts on is a count of encoder **ticks**: the
+//! difference between the current [`TimeCursor`] origin and the oldest queued
+//! batch's origin, both advanced by
+//! [`TimeModel::step_ticks`](crate::time::TimeModel::step_ticks) once per
+//! accepted call. The wrapper never reads a system clock, so its behavior is
+//! fully determined by the calls the caller makes.
+//!
+//! A caller that wants a *real-time* deadline builds it themselves without the
+//! wrapper touching a clock: read [`pending_age_ticks`] (or your own timer)
+//! and, when your policy says so, call [`flush_into`] explicitly. That keeps
+//! the wall-clock decision in caller code where the clock actually lives.
+//!
+//! [`pending_age_ticks`]: StreamingEncoder::pending_age_ticks
+//! [`flush_into`]: StreamingEncoder::flush_into
+//!
+//! # Reset
+//!
+//! [`reset`](StreamingEncoder::reset) forwards [`Encoder::reset`] to the
+//! borrowed encoder and **discards** every queued and held spike; it is not a
+//! flush. Call [`flush_into`] first if the buffered output still matters. The
+//! call sequence counter and the [`TimeCursor`] are not rewound, so the caller
+//! timeline stays monotonic across a reset.
+//!
+//! # Sink panics
+//!
+//! Delivery follows a take-before-call discipline: a batch is removed from the
+//! queue before it is handed to the sink. So if a [`BatchSink`] panics, the
+//! batches already delivered in that call are **not** replayed on a later
+//! flush, and the in-flight batch is lost. A wrapper whose sink panicked should
+//! be [`reset`](StreamingEncoder::reset) before reuse. This mirrors the
+//! [`SpikeSink`](crate::sink::SpikeSink) panic contract, where a panic ends the
+//! call and keeps the accepted prefix.
+//!
+//! # Why this is not an [`Encoder`]
+//!
+//! [`StreamingEncoder`] deliberately does not implement [`Encoder`]. The trait's
+//! contract is per-call: the spikes an [`encode_step`](Encoder::encode_step)
+//! produces belong to that call and are returned or written to the sink before
+//! it returns. The whole point of this wrapper is the opposite: delivery is
+//! deferred and policy-driven, so a single [`encode_step`](StreamingEncoder::encode_step)
+//! may deliver nothing, deliver several earlier calls' batches, or be rejected
+//! outright with [`StreamingError::Backpressure`]. That cannot honor the trait's
+//! "output belongs to this call" guarantee, so the buffering API is expressed as
+//! inherent methods instead, and [`reset`](StreamingEncoder::reset) is an
+//! inherent method rather than [`Encoder::reset`].
 
 use std::collections::VecDeque;
 
