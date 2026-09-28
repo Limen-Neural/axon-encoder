@@ -383,6 +383,19 @@ mod tests {
     }
 
     #[test]
+    fn minimum_positive_width_still_fires_at_both_endpoint_preferences() {
+        let mut encoder = PopulationEncoder::new(2, (0.0, 100.0), f32::MIN_POSITIVE);
+        assert_eq!(encoder.effective_tuning_width(1.0), f32::EPSILON);
+        assert_eq!(
+            encoder.encode(&[0.0, 100.0]).spikes,
+            vec![
+                SpikeEvent::at_step_start(0, true),
+                SpikeEvent::at_step_start(3, true),
+            ]
+        );
+    }
+
+    #[test]
     fn emitted_spikes_reconstruct_the_probe_grid() {
         let mut encoder = PopulationEncoder::new(10, (0.0, 100.0), 10.0);
         // The empirical pooled CoM converges to the expectation above. These
