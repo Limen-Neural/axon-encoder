@@ -60,7 +60,11 @@
 //!   [`FlushReason::Capacity`]) when a new call would overflow the queue.
 //! - [`FlushPolicy::OnCapacityOrAge`] additionally delivers (reason
 //!   [`FlushReason::Age`]) once the oldest queued batch has aged
-//!   `max_age_ticks` encoder ticks.
+//!   `max_age_ticks` encoder ticks. The age deadline is checked on every
+//!   accepted [`encode_step`](StreamingEncoder::encode_step) call, including
+//!   calls whose encoder output is empty: an accepted call always advances the
+//!   cursor, so a queued batch can age out and be delivered on an empty call
+//!   even though that call queues nothing of its own.
 //!
 //! The encoder is only ever invoked by
 //! [`encode_step`](StreamingEncoder::encode_step); flushing never touches it.
@@ -551,7 +555,14 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
     /// advance exactly once, and a [`StepReport`] describes the result. Under
     /// [`FlushPolicy::Manual`] no batch is ever delivered during this call; an
     /// oversized-or-overflowing call is held instead. Empty encoder output
-    /// queues nothing and makes no sink call.
+    /// queues no batch of its own and makes no sink call for that (nonexistent)
+    /// output.
+    ///
+    /// The age trigger is evaluated on every accepted call, empty output
+    /// included: an accepted call always advances the cursor, so under
+    /// [`FlushPolicy::OnCapacityOrAge`] a pre-existing queued batch that ages
+    /// past `max_age_ticks` on this call is delivered here (reason
+    /// [`FlushReason::Age`]), whether or not this call produced any spikes.
     pub fn encode_step(
         &mut self,
         input: &[f32],
@@ -580,47 +591,51 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
         let mut reason: Option<FlushReason> = None;
         let mut delivered_batches = 0usize;
 
-        // (4) Empty output: queue nothing, call no sink.
-        if staged_len == 0 {
-            return Ok(self.finish_step(reason, delivered_batches));
-        }
-
-        if self.buffered_spikes() + staged_len <= self.capacity {
-            // (5) Fits in remaining capacity: append and queue.
-            self.push_staged_batch(sequence, origin);
-        } else {
-            match self.policy {
-                FlushPolicy::OnCapacity | FlushPolicy::OnCapacityOrAge { .. } => {
-                    // (6) Does not fit: deliver the queue, then place this call.
-                    delivered_batches += self.drain_queue(sink);
-                    reason = Some(FlushReason::Capacity);
-                    if staged_len <= self.capacity {
-                        self.push_staged_batch(sequence, origin);
-                    } else {
-                        // Oversized single call: deliver directly as one batch.
-                        delivered_batches += 1;
-                        sink.deliver(SpikeBatch {
+        // (4) Empty output: this call queues nothing and makes no sink call of
+        // its own. It still counts as an accepted call, so the cursor advanced
+        // above and any pre-existing queued batch may now have aged out; fall
+        // through to the age trigger (8) instead of returning early.
+        if staged_len != 0 {
+            if self.buffered_spikes() + staged_len <= self.capacity {
+                // (5) Fits in remaining capacity: append and queue.
+                self.push_staged_batch(sequence, origin);
+            } else {
+                match self.policy {
+                    FlushPolicy::OnCapacity | FlushPolicy::OnCapacityOrAge { .. } => {
+                        // (6) Does not fit: deliver the queue, then place this call.
+                        delivered_batches += self.drain_queue(sink);
+                        reason = Some(FlushReason::Capacity);
+                        if staged_len <= self.capacity {
+                            self.push_staged_batch(sequence, origin);
+                        } else {
+                            // Oversized single call: deliver directly as one batch.
+                            delivered_batches += 1;
+                            sink.deliver(SpikeBatch {
+                                sequence,
+                                origin,
+                                spikes: &self.staging,
+                            });
+                        }
+                    }
+                    FlushPolicy::Manual => {
+                        // (7) Hold the staged batch; block; no sink call.
+                        self.held_spikes.clear();
+                        self.held_spikes.extend_from_slice(&self.staging);
+                        self.held = Some(HeldBatch {
                             sequence,
                             origin,
-                            spikes: &self.staging,
+                            len: staged_len,
                         });
+                        return Ok(self.finish_step(reason, delivered_batches));
                     }
-                }
-                FlushPolicy::Manual => {
-                    // (7) Hold the staged batch; block; no sink call.
-                    self.held_spikes.clear();
-                    self.held_spikes.extend_from_slice(&self.staging);
-                    self.held = Some(HeldBatch {
-                        sequence,
-                        origin,
-                        len: staged_len,
-                    });
-                    return Ok(self.finish_step(reason, delivered_batches));
                 }
             }
         }
 
-        // (8) Age trigger after admission (OnCapacityOrAge only).
+        // (8) Age trigger after admission (OnCapacityOrAge only). Evaluated on
+        // every accepted call, empty output included: the cursor advanced for
+        // this call, so a pre-existing queued batch can legitimately age past
+        // `max_age_ticks` on an empty call and must be delivered here.
         if let FlushPolicy::OnCapacityOrAge { max_age_ticks } = self.policy
             && !self.queue.is_empty()
             && self.pending_age_ticks() >= max_age_ticks

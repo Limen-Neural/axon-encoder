@@ -349,6 +349,104 @@ fn on_capacity_or_age_flushes_by_age_after_configured_ticks() {
     assert_eq!(delivered.len(), 3, "all three calls delivered exactly once");
 }
 
+#[test]
+fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
+    // A queued batch must age out and flush even when the intervening calls
+    // produce no spikes of their own. Before the fix, `encode_step` returned at
+    // the empty-output early exit before the age check, so the queued batch was
+    // stranded until the next non-empty call or an explicit `flush_into`.
+    //
+    // step_ticks == 1 for RateEncoder. The batch is queued on call 0 (origin 0).
+    // The age trigger runs after the current call's cursor advance, so with
+    // max_age_ticks == 3 the batch ages out once the cursor origin reaches 3,
+    // i.e. on call 2 (age 3 - 0 == 3). Input 0.0 (base_rate 0.0) produces no
+    // spikes, so calls 1 and 2 are empty-output calls.
+    let mut encoder = rate_one_per_step();
+
+    // Confirm the empty-output premise on an identical reference encoder: input
+    // 0.0 yields no spikes, input 1.0 yields exactly one.
+    let mut reference = rate_one_per_step();
+    assert!(
+        reference_step(&mut reference, &[0.0]).is_empty(),
+        "input 0.0 must produce empty encoder output for this test to be meaningful"
+    );
+    let queued_spikes = reference_step(&mut reference, &[1.0]);
+    assert_eq!(queued_spikes.len(), 1, "input 1.0 queues exactly one spike");
+
+    let mut delivered = Vec::new();
+
+    {
+        let mut streaming = StreamingEncoder::try_new(
+            &mut encoder,
+            64,
+            FlushPolicy::OnCapacityOrAge { max_age_ticks: 3 },
+        )
+        .expect("valid");
+
+        // Call 0: queue one batch (origin 0). No flush yet.
+        let report = streaming
+            .encode_step(&[1.0], &mut capture(&mut delivered))
+            .expect("call 0 queues");
+        assert_eq!(report.reason(), None, "nothing flushes on the queuing call");
+        assert_eq!(streaming.pending_batches(), 1);
+        assert!(delivered.is_empty());
+
+        // Call 1: empty output, batch not yet aged out (age 2 < 3). No flush,
+        // and the empty call queues nothing of its own.
+        let report = streaming
+            .encode_step(&[0.0], &mut capture(&mut delivered))
+            .expect("call 1 empty");
+        assert_eq!(report.reason(), None, "not aged out yet");
+        assert_eq!(report.delivered_batches(), 0);
+        assert_eq!(
+            report.queued_spikes(),
+            1,
+            "the empty call queues nothing of its own; the batch is still held"
+        );
+        assert_eq!(streaming.pending_batches(), 1);
+        assert!(delivered.is_empty(), "no delivery before the deadline");
+
+        // Call 2: empty output, batch now aged out (age 3 >= 3). The pre-existing
+        // batch must be delivered with FlushReason::Age on this empty call.
+        let report = streaming
+            .encode_step(&[0.0], &mut capture(&mut delivered))
+            .expect("call 2 empty, ages out");
+        assert_eq!(
+            report.reason(),
+            Some(FlushReason::Age),
+            "the queued batch ages out on an empty-output call"
+        );
+        assert_eq!(
+            report.delivered_batches(),
+            1,
+            "exactly the one pre-existing batch is delivered"
+        );
+        assert_eq!(report.queued_spikes(), 0, "the age flush drains the queue");
+        assert!(streaming.is_empty(), "queue is empty after the age flush");
+
+        // A trailing flush must deliver nothing: the batch was already delivered
+        // exactly once by the age trigger.
+        let flush = streaming.flush_into(&mut capture(&mut delivered));
+        assert_eq!(flush.delivered_batches(), 0, "nothing left to flush");
+        assert_eq!(flush.reason(), None);
+    }
+
+    assert_eq!(
+        delivered.len(),
+        1,
+        "the queued batch is delivered exactly once, via the Age trigger"
+    );
+    assert_eq!(delivered[0].sequence, 0, "it is the batch from call 0");
+    assert_eq!(
+        delivered[0].origin, 0,
+        "delivered with its original call origin, not rebased"
+    );
+    assert_eq!(
+        delivered[0].spikes, queued_spikes,
+        "delivered spikes match the reference encoder's output for call 0"
+    );
+}
+
 // --- Manual: held output, backpressure, flush order -------------------------
 
 #[test]
