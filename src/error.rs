@@ -80,6 +80,54 @@ impl fmt::Display for EncoderError {
 
 impl std::error::Error for EncoderError {}
 
+/// Error returned by a runtime streaming operation on a
+/// [`StreamingEncoder`](crate::streaming::StreamingEncoder).
+///
+/// Unlike [`EncoderError`], which reports invalid *construction* parameters,
+/// this reports a failed *operation* on an otherwise valid wrapper. It is kept
+/// a dedicated enum so a caller can match the streaming backpressure case
+/// without pulling in constructor-validation variants.
+///
+/// # Backpressure
+///
+/// [`StreamingEncoder::encode_step`](crate::streaming::StreamingEncoder::encode_step)
+/// returns [`StreamingError::Backpressure`] when the wrapper is blocked: a
+/// prior call under [`FlushPolicy::Manual`](crate::streaming::FlushPolicy::Manual)
+/// produced output that did not fit the remaining capacity and is being held.
+/// The caller must
+/// [`flush_into`](crate::streaming::StreamingEncoder::flush_into) (or
+/// [`reset`](crate::streaming::StreamingEncoder::reset)) before encoding again.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamingError {
+    /// The wrapper is blocked and cannot accept a new call until it is flushed.
+    ///
+    /// `buffered_spikes` is the number of spikes currently held, and `capacity`
+    /// is the configured bound they are held against.
+    Backpressure {
+        /// Spikes currently buffered in the wrapper.
+        buffered_spikes: usize,
+        /// The configured spike capacity.
+        capacity: usize,
+    },
+}
+
+impl fmt::Display for StreamingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backpressure {
+                buffered_spikes,
+                capacity,
+            } => write!(
+                f,
+                "cannot encode while blocked: {buffered_spikes} spike(s) buffered at capacity {capacity}; flush first"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StreamingError {}
+
 pub(crate) const MAX_SPIKE_CHANNELS: usize = u16::MAX as usize + 1;
 
 pub(crate) fn validate_range(
