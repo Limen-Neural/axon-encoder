@@ -235,14 +235,14 @@ fn manual_holds_and_blocks_without_sink_call() {
     assert_eq!(
         err,
         StreamingError::Backpressure {
-            buffered_spikes: 1,
+            buffered_spikes: 2,
             capacity: 1
         }
     );
     assert_eq!(s.cursor().origin(), origin_before);
     assert_eq!(
         err.to_string(),
-        "cannot encode while blocked: 1 spike(s) buffered at capacity 1; flush first"
+        "cannot encode while blocked: 2 spike(s) buffered (queue capacity 1); flush first"
     );
 }
 

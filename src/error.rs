@@ -102,10 +102,10 @@ impl std::error::Error for EncoderError {}
 pub enum StreamingError {
     /// The wrapper is blocked and cannot accept a new call until it is flushed.
     ///
-    /// `buffered_spikes` is the number of spikes currently held, and `capacity`
-    /// is the configured bound they are held against.
+    /// `buffered_spikes` counts both queued and held spikes, and `capacity` is
+    /// the queue's configured bound. A held call can make the total exceed it.
     Backpressure {
-        /// Spikes currently buffered in the wrapper.
+        /// Spikes currently queued or held in the wrapper.
         buffered_spikes: usize,
         /// The configured spike capacity.
         capacity: usize,
@@ -120,7 +120,7 @@ impl fmt::Display for StreamingError {
                 capacity,
             } => write!(
                 f,
-                "cannot encode while blocked: {buffered_spikes} spike(s) buffered at capacity {capacity}; flush first"
+                "cannot encode while blocked: {buffered_spikes} spike(s) buffered (queue capacity {capacity}); flush first"
             ),
         }
     }

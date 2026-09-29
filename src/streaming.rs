@@ -570,9 +570,9 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
     ) -> Result<StepReport, StreamingError> {
         // (1) Pre-encode backpressure: reject before touching the encoder or
         // advancing the timeline.
-        if self.is_blocked() {
+        if let Some(held) = self.held.as_ref() {
             return Err(StreamingError::Backpressure {
-                buffered_spikes: self.buffered_spikes(),
+                buffered_spikes: self.buffered_spikes().saturating_add(held.len),
                 capacity: self.capacity,
             });
         }

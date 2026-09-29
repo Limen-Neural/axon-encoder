@@ -486,7 +486,7 @@ fn manual_holds_blocks_and_rejects_without_advancing_the_encoder() {
         assert_eq!(
             err,
             StreamingError::Backpressure {
-                buffered_spikes: 2,
+                buffered_spikes: 3,
                 capacity: 2,
             }
         );
@@ -542,6 +542,32 @@ fn manual_holds_blocks_and_rejects_without_advancing_the_encoder() {
         post_flush_delivered[0].spikes, expected_next,
         "the encoder's state advanced by exactly the accepted calls"
     );
+}
+
+#[test]
+fn backpressure_counts_an_oversized_held_batch_without_queued_spikes() {
+    let mut encoder = RateEncoder::try_new(0.0, 30.0, (0.0, 1.0), 0.1).expect("valid");
+    let mut streaming =
+        StreamingEncoder::try_new(&mut encoder, 2, FlushPolicy::Manual).expect("valid");
+    let mut delivered = Vec::new();
+
+    let report = streaming
+        .encode_step(&[1.0], &mut capture(&mut delivered))
+        .expect("oversized batch is held");
+    assert_step(report, None, 0, 0, true);
+    assert_eq!(streaming.buffered_spikes(), 0);
+
+    let err = streaming
+        .encode_step(&[1.0], &mut capture(&mut delivered))
+        .expect_err("held batch blocks the next call");
+    assert_eq!(
+        err,
+        StreamingError::Backpressure {
+            buffered_spikes: 3,
+            capacity: 2,
+        }
+    );
+    assert_eq!(streaming.cursor().origin(), 1);
 }
 
 // --- Constructor validation --------------------------------------------------
