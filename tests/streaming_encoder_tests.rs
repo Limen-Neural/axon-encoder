@@ -51,13 +51,7 @@ fn rate_one_per_step() -> RateEncoder {
     RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), 0.1).expect("valid RateEncoder")
 }
 
-fn assert_step(
-    report: StepReport,
-    reason: Option<FlushReason>,
-    delivered: usize,
-    queued: usize,
-    blocked: bool,
-) {
+fn assert_step(report: StepReport, expected: (Option<FlushReason>, usize, usize, bool)) {
     assert_eq!(
         (
             report.reason(),
@@ -65,7 +59,7 @@ fn assert_step(
             report.queued_spikes(),
             report.blocked()
         ),
-        (reason, delivered, queued, blocked)
+        expected
     );
 }
 
@@ -309,7 +303,7 @@ fn oversized_call_is_delivered_directly_as_one_batch() {
             .encode_step(&[1.0], &mut capture(&mut delivered))
             .expect("not blocked");
         // First call: 3 spikes > capacity 2, queue empty, delivered directly.
-        assert_step(report, Some(FlushReason::Capacity), 1, 0, false);
+        assert_step(report, (Some(FlushReason::Capacity), 1, 0, false));
         assert!(streaming.is_empty());
     }
 
@@ -402,7 +396,7 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
         let report = streaming
             .encode_step(&[1.0], &mut capture(&mut delivered))
             .expect("call 0 queues");
-        assert_step(report, None, 0, 1, false);
+        assert_step(report, (None, 0, 1, false));
         assert_eq!(streaming.pending_batches(), 1);
         assert!(delivered.is_empty());
 
@@ -411,7 +405,7 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
         let report = streaming
             .encode_step(&[0.0], &mut capture(&mut delivered))
             .expect("call 1 empty");
-        assert_step(report, None, 0, 1, false);
+        assert_step(report, (None, 0, 1, false));
         assert_eq!(streaming.pending_batches(), 1);
         assert!(delivered.is_empty(), "no delivery before the deadline");
 
@@ -420,7 +414,7 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
         let report = streaming
             .encode_step(&[0.0], &mut capture(&mut delivered))
             .expect("call 2 empty, ages out");
-        assert_step(report, Some(FlushReason::Age), 1, 0, false);
+        assert_step(report, (Some(FlushReason::Age), 1, 0, false));
         assert!(streaming.is_empty(), "queue is empty after the age flush");
 
         // A trailing flush must deliver nothing: the batch was already delivered
@@ -444,68 +438,62 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
 
 // --- Manual: held output, backpressure, flush order -------------------------
 
+fn run_manual_backpressure_scenario(encoder: &mut RateEncoder) -> Vec<CapturedBatch> {
+    let mut delivered = Vec::new();
+    let mut streaming = StreamingEncoder::try_new(encoder, 2, FlushPolicy::Manual).expect("valid");
+
+    streaming
+        .encode_step(&[1.0], &mut capture(&mut delivered))
+        .expect("call 0 queues");
+    streaming
+        .encode_step(&[1.0], &mut capture(&mut delivered))
+        .expect("call 1 queues");
+    assert_eq!(streaming.buffered_spikes(), 2);
+    assert!(!streaming.is_blocked());
+
+    // Call 2 does not fit under Manual: held, blocked, nothing delivered.
+    let report = streaming
+        .encode_step(&[1.0], &mut capture(&mut delivered))
+        .expect("held, not an error");
+    assert_step(report, (None, 0, 2, true));
+    assert!(streaming.is_blocked());
+    assert!(delivered.is_empty(), "Manual never delivers during a step");
+
+    let origin_before = streaming.cursor().origin();
+
+    // Call 3 is rejected with Backpressure BEFORE touching the encoder.
+    let err = streaming
+        .encode_step(&[1.0], &mut capture(&mut delivered))
+        .expect_err("blocked wrapper must reject");
+    assert_eq!(
+        err,
+        StreamingError::Backpressure {
+            buffered_spikes: 3,
+            capacity: 2,
+        }
+    );
+    // Neither cursor nor sequence advanced on the rejected call.
+    assert_eq!(streaming.cursor().origin(), origin_before);
+
+    // Flush: queued batches (seq 0,1) BEFORE the held batch (seq 2).
+    let flush = streaming.flush_into(&mut capture(&mut delivered));
+    assert_eq!(
+        (flush.delivered_batches(), flush.reason()),
+        (3, Some(FlushReason::Manual))
+    );
+    assert!(!streaming.is_blocked(), "flush clears the blocked state");
+
+    // Sanity: the rejected call did not advance the timeline, so after the
+    // three accepted calls the origin is exactly 3.
+    assert_eq!(streaming.cursor().origin(), 3);
+    delivered
+}
+
 #[test]
 fn manual_holds_blocks_and_rejects_without_advancing_the_encoder() {
-    // Capacity 2 with 1 spike/step: two calls fill the queue, the third does
-    // not fit and is held under Manual, blocking the wrapper.
     let mut encoder = rate_one_per_step();
-    let mut delivered = Vec::new();
-
-    // Reference sequence: what the encoder SHOULD emit across the accepted
-    // calls, if the rejected call never reaches it.
+    let delivered = run_manual_backpressure_scenario(&mut encoder);
     let mut reference = rate_one_per_step();
-
-    {
-        let mut streaming =
-            StreamingEncoder::try_new(&mut encoder, 2, FlushPolicy::Manual).expect("valid");
-
-        streaming
-            .encode_step(&[1.0], &mut capture(&mut delivered))
-            .expect("call 0 queues");
-        streaming
-            .encode_step(&[1.0], &mut capture(&mut delivered))
-            .expect("call 1 queues");
-        assert_eq!(streaming.buffered_spikes(), 2);
-        assert!(!streaming.is_blocked());
-
-        // Call 2 does not fit under Manual: held, blocked, nothing delivered.
-        let report = streaming
-            .encode_step(&[1.0], &mut capture(&mut delivered))
-            .expect("held, not an error");
-        assert_step(report, None, 0, 2, true);
-        assert!(streaming.is_blocked());
-        assert!(delivered.is_empty(), "Manual never delivers during a step");
-
-        let origin_before = streaming.cursor().origin();
-        let sequence_before = origin_before; // step_ticks == 1
-
-        // Call 3 is rejected with Backpressure BEFORE touching the encoder.
-        let err = streaming
-            .encode_step(&[1.0], &mut capture(&mut delivered))
-            .expect_err("blocked wrapper must reject");
-        assert_eq!(
-            err,
-            StreamingError::Backpressure {
-                buffered_spikes: 3,
-                capacity: 2,
-            }
-        );
-        // Neither cursor nor sequence advanced on the rejected call.
-        assert_eq!(streaming.cursor().origin(), origin_before);
-
-        // Flush: queued batches (seq 0,1) BEFORE the held batch (seq 2).
-        let flush = streaming.flush_into(&mut capture(&mut delivered));
-        assert_eq!(
-            (flush.delivered_batches(), flush.reason()),
-            (3, Some(FlushReason::Manual))
-        );
-        assert!(!streaming.is_blocked(), "flush clears the blocked state");
-
-        // Sanity: the rejected call did not advance the timeline, so after the
-        // three accepted calls the origin is exactly 3.
-        assert_eq!(streaming.cursor().origin(), 3);
-        let _ = sequence_before;
-    }
 
     // Ordering: queued-before-held, sequence strictly increasing.
     assert_eq!(delivered.len(), 3);
@@ -554,7 +542,7 @@ fn backpressure_counts_an_oversized_held_batch_without_queued_spikes() {
     let report = streaming
         .encode_step(&[1.0], &mut capture(&mut delivered))
         .expect("oversized batch is held");
-    assert_step(report, None, 0, 0, true);
+    assert_step(report, (None, 0, 0, true));
     assert_eq!(streaming.buffered_spikes(), 0);
 
     let err = streaming
@@ -691,7 +679,7 @@ fn empty_input_advances_phase_encoder_through_the_wrapper() {
             let report = streaming
                 .encode_step(&[], &mut capture(&mut delivered))
                 .expect("not blocked");
-            assert_step(report, None, 0, 0, false);
+            assert_step(report, (None, 0, 0, false));
             assert!(streaming.is_empty());
             assert_eq!(
                 streaming.cursor().origin(),

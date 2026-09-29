@@ -56,13 +56,7 @@ fn collector(sink: &mut Vec<(u64, u64, usize)>) -> impl BatchSink + '_ {
     }
 }
 
-fn assert_step(
-    report: StepReport,
-    reason: Option<FlushReason>,
-    delivered: usize,
-    queued: usize,
-    blocked: bool,
-) {
+fn assert_step(report: StepReport, expected: (Option<FlushReason>, usize, usize, bool)) {
     assert_eq!(
         (
             report.reason(),
@@ -70,7 +64,7 @@ fn assert_step(
             report.queued_spikes(),
             report.blocked()
         ),
-        (reason, delivered, queued, blocked)
+        expected
     );
 }
 
@@ -129,7 +123,7 @@ fn fitting_calls_queue_without_delivery() {
     let report = s
         .encode_step(&[1.0, 1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_step(report, None, 0, 2, false);
+    assert_step(report, (None, 0, 2, false));
     assert_eq!((s.buffered_spikes(), s.pending_batches()), (2, 1));
     assert!(delivered.is_empty());
 }
@@ -143,7 +137,7 @@ fn empty_output_queues_nothing_and_calls_no_sink() {
     let report = s
         .encode_step(&[0.0, 0.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_step(report, None, 0, 0, false);
+    assert_step(report, (None, 0, 0, false));
     assert!(s.is_empty());
     assert!(delivered.is_empty());
     // Cursor and sequence still advanced for the accepted call.
@@ -179,7 +173,7 @@ fn on_capacity_flushes_queue_then_queues_new_batch() {
     let report = s
         .encode_step(&[1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_step(report, Some(FlushReason::Capacity), 2, 1, false);
+    assert_step(report, (Some(FlushReason::Capacity), 2, 1, false));
     assert_eq!(delivered, vec![(0, 0, 1), (1, 1, 1)]);
     assert_eq!(s.buffered_spikes(), 1);
 }
@@ -197,7 +191,7 @@ fn oversized_call_is_delivered_directly() {
     let report = s
         .encode_step(&[1.0, 1.0, 1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_step(report, Some(FlushReason::Capacity), 2, 0, false);
+    assert_step(report, (Some(FlushReason::Capacity), 2, 0, false));
     // Second delivered batch is the oversized one, seq 1, 3 spikes.
     assert_eq!(delivered, vec![(0, 0, 1), (1, 1, 3)]);
     assert!(s.is_empty());
@@ -219,7 +213,7 @@ fn manual_holds_and_blocks_without_sink_call() {
     let report = s
         .encode_step(&[1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_step(report, None, 0, 1, true);
+    assert_step(report, (None, 0, 1, true));
     assert_eq!(
         (s.is_blocked(), s.staging.is_empty(), s.held_spikes.len()),
         (true, true, 1),
@@ -294,7 +288,7 @@ fn age_trigger_delivers_when_oldest_batch_ages_out() {
     let report = s
         .encode_step(&[1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_step(report, Some(FlushReason::Age), 1, 0, false);
+    assert_step(report, (Some(FlushReason::Age), 1, 0, false));
     assert_eq!(delivered, vec![(0, 0, 1)]);
     assert!(s.is_empty());
     s.reset();
