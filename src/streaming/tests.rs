@@ -4,16 +4,21 @@ use super::*;
 /// channel at tick zero. `TimeModel::INSTANT` (step_ticks 1).
 struct CountingEncoder {
     resets: usize,
+    calls: usize,
 }
 
 impl CountingEncoder {
     fn new() -> Self {
-        Self { resets: 0 }
+        Self {
+            resets: 0,
+            calls: 0,
+        }
     }
 }
 
 impl Encoder for CountingEncoder {
     fn encode(&mut self, input: &[f32]) -> crate::types::EncodedOutput {
+        self.calls += 1;
         let mut out = crate::types::EncodedOutput::new();
         for (i, &v) in input.iter().enumerate() {
             if v != 0.0 {
@@ -352,4 +357,128 @@ fn panic_mid_flush_does_not_redeliver() {
     let mut after: Vec<u64> = Vec::new();
     s.flush_into(&mut |batch: SpikeBatch<'_>| after.push(batch.sequence()));
     assert!(!after.contains(&0));
+}
+
+#[test]
+fn oversized_direct_delivery_does_not_retain_staging_allocation() {
+    let mut enc = CountingEncoder::new();
+    let mut stream = StreamingEncoder::try_new(&mut enc, 2, FlushPolicy::OnCapacity).unwrap();
+    let mut delivered = Vec::new();
+    stream
+        .encode_step(&[1.0; 128], &mut collector(&mut delivered))
+        .unwrap();
+
+    assert_eq!(delivered, vec![(0, 0, 128)]);
+    assert!(stream.staging.capacity() <= stream.capacity());
+    assert!(stream.is_empty());
+    for _ in 0..2 {
+        stream
+            .encode_step(&[1.0], &mut collector(&mut delivered))
+            .unwrap();
+    }
+    assert!(stream.staging.capacity() <= stream.capacity());
+}
+
+#[test]
+fn flush_and_reset_release_oversized_held_allocation() {
+    let mut enc = CountingEncoder::new();
+    let mut stream = StreamingEncoder::try_new(&mut enc, 2, FlushPolicy::Manual).unwrap();
+    let mut delivered = Vec::new();
+    stream
+        .encode_step(&[1.0; 128], &mut collector(&mut delivered))
+        .unwrap();
+    assert!(stream.held_spikes.capacity() >= 128);
+    stream.flush_into(&mut collector(&mut delivered));
+    assert!(stream.held_spikes.capacity() <= stream.capacity());
+
+    stream
+        .encode_step(&[1.0; 128], &mut collector(&mut delivered))
+        .unwrap();
+    stream.reset();
+    assert_eq!(
+        (stream.held_spikes.capacity(), stream.staging.capacity()),
+        (0, 0)
+    );
+}
+
+#[test]
+fn reset_releases_staging_after_a_direct_sink_panic() {
+    let mut enc = CountingEncoder::new();
+    let mut stream = StreamingEncoder::try_new(&mut enc, 2, FlushPolicy::OnCapacity).unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stream
+            .encode_step(&[1.0; 128], &mut |_batch: SpikeBatch<'_>| {
+                panic!("sink failed")
+            })
+            .unwrap();
+    }));
+    assert!(result.is_err());
+    assert!(stream.staging.capacity() >= 128);
+    stream.reset();
+    assert!(stream.staging.capacity() <= stream.capacity());
+}
+
+#[test]
+fn sequence_exhaustion_rejects_input_before_encoder_or_timeline_advance() {
+    let mut enc = CountingEncoder::new();
+    let mut stream = StreamingEncoder::try_new(&mut enc, 2, FlushPolicy::Manual).unwrap();
+    stream.sequence = Some(u64::MAX - 1);
+    let mut delivered = Vec::new();
+    stream
+        .encode_step(&[1.0], &mut collector(&mut delivered))
+        .unwrap();
+    stream
+        .encode_step(&[1.0], &mut collector(&mut delivered))
+        .unwrap();
+    assert_eq!(
+        (
+            stream.sequence,
+            stream.cursor().origin(),
+            stream.encoder.calls
+        ),
+        (None, 2, 2)
+    );
+
+    assert_eq!(
+        stream.encode_step(&[1.0], &mut collector(&mut delivered)),
+        Err(StreamingError::SequenceExhausted)
+    );
+    assert_eq!((stream.cursor().origin(), stream.encoder.calls), (2, 2));
+    stream.flush_into(&mut collector(&mut delivered));
+    assert_eq!(delivered, vec![(u64::MAX - 1, 0, 1), (u64::MAX, 1, 1)]);
+    stream.reset();
+    assert_eq!(
+        stream.encode_step(&[1.0], &mut collector(&mut delivered)),
+        Err(StreamingError::SequenceExhausted)
+    );
+    assert_eq!(
+        StreamingError::SequenceExhausted.to_string(),
+        "streaming call sequence exhausted"
+    );
+}
+
+#[test]
+fn capacity_precedes_age_when_both_apply_to_oldest_batch() {
+    let mut enc = WideStepEncoder;
+    let mut stream = StreamingEncoder::try_new(
+        &mut enc,
+        1,
+        FlushPolicy::OnCapacityOrAge { max_age_ticks: 8 },
+    )
+    .unwrap();
+    let mut delivered = Vec::new();
+    stream
+        .encode_step(&[1.0], &mut collector(&mut delivered))
+        .unwrap();
+    let report = stream
+        .encode_step(&[1.0], &mut collector(&mut delivered))
+        .unwrap();
+    assert_step(report, (Some(FlushReason::Capacity), 1, 1, false));
+    assert_eq!(delivered, vec![(0, 0, 1)]);
+
+    let report = stream
+        .encode_step(&[], &mut collector(&mut delivered))
+        .unwrap();
+    assert_step(report, (Some(FlushReason::Age), 1, 0, false));
+    assert_eq!(delivered, vec![(0, 0, 1), (1, 4, 1)]);
 }

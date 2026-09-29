@@ -110,6 +110,11 @@ pub enum StreamingError {
         /// The configured spike capacity.
         capacity: usize,
     },
+    /// No further call sequence number can be assigned.
+    ///
+    /// The input was not passed to the encoder. Reset does not rewind the
+    /// sequence, so this wrapper cannot accept another call.
+    SequenceExhausted,
 }
 
 impl fmt::Display for StreamingError {
@@ -122,6 +127,7 @@ impl fmt::Display for StreamingError {
                 f,
                 "cannot encode while blocked: {buffered_spikes} spike(s) buffered (queue capacity {capacity}); flush first"
             ),
+            Self::SequenceExhausted => write!(f, "streaming call sequence exhausted"),
         }
     }
 }

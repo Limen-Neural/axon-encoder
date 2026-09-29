@@ -38,12 +38,12 @@
 //!
 //! The buffering is hard-bounded, not merely advisory. At any instant the
 //! wrapper holds at most `capacity` queued spikes, plus the output staged or
-//! held for the one call in flight. The staging buffer for the current call is
-//! reused across calls, and a call whose own output is larger than `capacity`
-//! is delivered straight through as a single batch rather than being retained,
-//! so nothing grows without a bound the caller set. There is no per-batch
-//! overhead that scales with call count once batches are delivered: the queue
-//! reclaims its contiguous storage on every full drain.
+//! held for the one call in flight. The staging buffer for ordinary calls is
+//! reused. A call whose output is larger than `capacity` is delivered straight
+//! through as a single batch; its oversized allocation is released after
+//! delivery. Oversized held storage is released after flush or reset. There is
+//! no per-batch overhead that scales with call count once batches are delivered:
+//! the queue reclaims its contiguous storage on every full drain.
 //!
 //! # Capacity and blocking
 //!
@@ -68,6 +68,9 @@
 //!
 //! The encoder is only ever invoked by
 //! [`encode_step`](StreamingEncoder::encode_step); flushing never touches it.
+//! When capacity and age would both apply to an older queued batch on one
+//! call, capacity is checked first and [`StepReport::reason`] is
+//! [`FlushReason::Capacity`]. Age is checked after admitting the new batch.
 //!
 //! # Age is measured in ticks, never wall-clock
 //!
@@ -94,6 +97,15 @@
 //! flush. Call [`flush_into`] first if the buffered output still matters. The
 //! call sequence counter and the [`TimeCursor`] are not rewound, so the caller
 //! timeline stays monotonic across a reset.
+//! Dropping the wrapper also discards pending output: it has no sink to flush
+//! into during destruction. Call [`flush_into`] before dropping it when those
+//! batches must be delivered.
+//!
+//! # Sequence exhaustion
+//!
+//! After assigning sequence `u64::MAX`, the wrapper returns
+//! [`StreamingError::SequenceExhausted`] before invoking the encoder. Reset
+//! preserves this exhausted state because it cannot rewind sequence numbers.
 //!
 //! # Sink panics
 //!
@@ -286,7 +298,9 @@ pub struct StepReport {
 }
 
 impl StepReport {
-    /// Why any batches were delivered during the step, or `None` if none were.
+    /// Why batches were delivered, or `None` if none were. Capacity is checked
+    /// before age; an older batch removed for capacity is reported as
+    /// [`FlushReason::Capacity`] even if it reached the age deadline too.
     #[inline]
     pub fn reason(&self) -> Option<FlushReason> {
         self.reason
@@ -399,8 +413,8 @@ pub struct StreamingEncoder<'a, E: Encoder + ?Sized> {
     held: Option<HeldBatch>,
     /// Caller-timeline cursor, advanced once per accepted call.
     cursor: TimeCursor,
-    /// Monotonic call sequence counter.
-    sequence: u64,
+    /// Next call sequence, or `None` after assigning `u64::MAX`.
+    sequence: Option<u64>,
 }
 
 impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
@@ -455,7 +469,7 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
             held_spikes: Vec::new(),
             held: None,
             cursor,
-            sequence: 0,
+            sequence: Some(0),
         })
     }
 
@@ -537,8 +551,18 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
             });
         }
         // Fully drained: reclaim the contiguous storage in one shot.
-        self.storage.clear();
+        Self::clear_reusable(&mut self.storage, self.capacity);
         delivered
+    }
+
+    /// Retain reusable storage only while its allocation fits the configured
+    /// queue bound. Oversized calls can otherwise leave a large idle buffer.
+    fn clear_reusable(buffer: &mut Vec<SpikeEvent>, capacity: usize) {
+        if buffer.capacity() > capacity {
+            *buffer = Vec::new();
+        } else {
+            buffer.clear();
+        }
     }
 
     /// Encodes one streaming step, buffering its output and delivering batches
@@ -550,6 +574,9 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
     /// blocked (a held [`FlushPolicy::Manual`] batch). In that case the encoder
     /// is **not** invoked and neither the cursor nor the sequence advances;
     /// the caller must [`flush_into`](Self::flush_into) first.
+    /// Returns [`StreamingError::SequenceExhausted`] after the call numbered
+    /// `u64::MAX`; this also rejects input before invoking the encoder and is
+    /// not cleared by [`reset`](Self::reset).
     ///
     /// Otherwise the encoder is invoked exactly once, the cursor and sequence
     /// advance exactly once, and a [`StepReport`] describes the result. Under
@@ -576,16 +603,16 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
                 capacity: self.capacity,
             });
         }
+        let sequence = self.sequence.ok_or(StreamingError::SequenceExhausted)?;
 
         // (2) Stage this call's output through the borrowed encoder.
-        self.staging.clear();
+        Self::clear_reusable(&mut self.staging, self.capacity);
         self.encoder.encode_step_into(input, &mut self.staging);
 
         // (3) Record this call's metadata, then advance exactly once.
-        let sequence = self.sequence;
         let origin = self.cursor.origin();
         self.cursor.advance();
-        self.sequence += 1;
+        self.sequence = sequence.checked_add(1);
 
         let (mut reason, mut delivered_batches) = self.admit_staged(sequence, origin, sink);
 
@@ -601,7 +628,9 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
             reason = Some(FlushReason::Age);
         }
 
-        Ok(self.finish_step(reason, delivered_batches))
+        let report = self.finish_step(reason, delivered_batches);
+        Self::clear_reusable(&mut self.staging, self.capacity);
+        Ok(report)
     }
 
     /// Admit one non-empty staged call under the configured capacity policy.
@@ -646,6 +675,7 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
                         origin,
                         spikes: &self.staging,
                     });
+                    Self::clear_reusable(&mut self.staging, self.capacity);
                 }
                 (Some(FlushReason::Capacity), delivered)
             }
@@ -699,7 +729,7 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
                 origin: held.origin,
                 spikes,
             });
-            self.held_spikes.clear();
+            Self::clear_reusable(&mut self.held_spikes, self.capacity);
         }
 
         let reason = if delivered_batches > 0 {
@@ -725,10 +755,10 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
     /// does not implement [`Encoder`].
     pub fn reset(&mut self) {
         self.encoder.reset();
-        self.storage.clear();
+        Self::clear_reusable(&mut self.storage, self.capacity);
         self.queue.clear();
-        self.staging.clear();
-        self.held_spikes.clear();
+        Self::clear_reusable(&mut self.staging, self.capacity);
+        Self::clear_reusable(&mut self.held_spikes, self.capacity);
         self.held = None;
     }
 }

@@ -237,6 +237,12 @@ batches to a `BatchSink` under an explicit `FlushPolicy` you choose —
 holds at most `capacity` spikes plus the one call in flight, and the wrapper
 owns neither the encoder nor the delivery target.
 
+Oversized calls may temporarily need more memory than `capacity`; their
+staging or held allocation is released after delivery or reset. Call
+`flush_into` before dropping the wrapper if pending batches matter: dropping
+it cannot deliver them without a sink. After sequence `u64::MAX`, new inputs
+return `StreamingError::SequenceExhausted` before reaching the encoder.
+
 Each delivered `SpikeBatch` corresponds to one accepted call and carries that
 call's monotonically increasing sequence number and its `origin`, the absolute
 tick the call started at. Spike timestamps inside a batch stay the unchanged
