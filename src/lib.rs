@@ -81,10 +81,11 @@ pub mod ndarray_ext;
 pub mod poisson;
 pub mod rng;
 pub mod sink;
+pub mod streaming;
 pub mod time;
 pub mod types;
 
-pub use error::EncoderError;
+pub use error::{EncoderError, StreamingError};
 #[cfg(feature = "ndarray")]
 pub use ndarray_ext::NdarrayEncoderExt;
 pub use sink::SpikeSink;
@@ -100,6 +101,7 @@ pub mod prelude {
     pub use crate::ndarray_ext::NdarrayEncoderExt;
     pub use crate::poisson::*;
     pub use crate::sink::*;
+    pub use crate::streaming::*;
     pub use crate::time::*;
     pub use crate::types::*;
 }

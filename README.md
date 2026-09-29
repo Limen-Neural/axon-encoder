@@ -159,6 +159,23 @@ step boundaries are. The trait is object-safe, so `&mut dyn Encoder` and
 a documented exception — it does not implement `Encoder`. See
 `cargo run --example encode_into_sink`.
 
+## Buffered streaming
+
+`StreamingEncoder` borrows an encoder, including `&mut dyn Encoder`, and sends
+each non-empty call as a `SpikeBatch` to a caller-owned `BatchSink`. The batch
+keeps its call sequence and origin; add `batch.origin()` to each spike's unchanged
+call-relative offset to obtain an absolute tick. It buffers up to a configured
+number of spikes, plus one held call under `FlushPolicy::Manual`. When that call
+does not fit, the next encode call returns `StreamingError::Backpressure` before
+the encoder sees its input. Flush or reset to resume.
+
+`OnCapacity` flushes when new output does not fit, while `OnCapacityOrAge` also
+flushes after a specified number of encoder ticks. Age is advanced by calls,
+not a wall clock. A real-time caller can check `pending_age_ticks()` and call
+`flush_into()` at its own deadline. `reset()` discards queued output, so flush
+first if it is needed. The caller owns the delivery target and must drain it at
+the rate its transport requires. See `cargo run --example streaming_encoder`.
+
 ## Output and configuration ownership
 
 `EncodedOutput` is deliberately small and framework-agnostic: it carries the

@@ -80,6 +80,34 @@ impl fmt::Display for EncoderError {
 
 impl std::error::Error for EncoderError {}
 
+/// An input rejected before the underlying encoder was called.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamingError {
+    /// Manual buffering is full; flush before submitting another step.
+    Backpressure {
+        /// Spikes currently retained, including the held call.
+        buffered_spikes: usize,
+        /// Configured queue capacity in spikes.
+        capacity: usize,
+    },
+}
+
+impl fmt::Display for StreamingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backpressure {
+                buffered_spikes,
+                capacity,
+            } => write!(
+                f,
+                "streaming buffer holds {buffered_spikes} spikes (capacity {capacity}); flush before encoding"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StreamingError {}
+
 pub(crate) const MAX_SPIKE_CHANNELS: usize = u16::MAX as usize + 1;
 
 pub(crate) fn validate_range(
