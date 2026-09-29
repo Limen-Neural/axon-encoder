@@ -12,6 +12,31 @@ fn collect(batches: &mut Vec<Delivered>, batch: SpikeBatch<'_>) {
 }
 
 #[test]
+fn stream_reports_its_configuration() {
+    let mut encoder = LatencyEncoder::new(3, (0.0, 1.0));
+    let model = encoder.time_model();
+    let policy = FlushPolicy::OnCapacityOrAge { max_age_ticks: 8 };
+    let stream = StreamingEncoder::new(&mut encoder, 5, policy).unwrap();
+
+    assert_eq!(stream.capacity(), 5);
+    assert_eq!(stream.policy(), policy);
+    assert_eq!(stream.time_model(), model);
+}
+
+#[test]
+fn backpressure_error_reports_buffer_occupancy() {
+    let error = StreamingError::Backpressure {
+        buffered_spikes: 3,
+        capacity: 2,
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "streaming buffer holds 3 spikes (capacity 2); flush before encoding"
+    );
+}
+
+#[test]
 fn manual_flush_preserves_calls_through_trait_object() {
     let mut encoder = LatencyEncoder::new(9, (0.0, 1.0));
     let mut reference = LatencyEncoder::new(9, (0.0, 1.0));
