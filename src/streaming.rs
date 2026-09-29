@@ -587,52 +587,9 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
         self.cursor.advance();
         self.sequence += 1;
 
-        let staged_len = self.staging.len();
-        let mut reason: Option<FlushReason> = None;
-        let mut delivered_batches = 0usize;
+        let (mut reason, mut delivered_batches) = self.admit_staged(sequence, origin, sink);
 
-        // (4) Empty output: this call queues nothing and makes no sink call of
-        // its own. It still counts as an accepted call, so the cursor advanced
-        // above and any pre-existing queued batch may now have aged out; fall
-        // through to the age trigger (8) instead of returning early.
-        if staged_len != 0 {
-            if self.buffered_spikes() + staged_len <= self.capacity {
-                // (5) Fits in remaining capacity: append and queue.
-                self.push_staged_batch(sequence, origin);
-            } else {
-                match self.policy {
-                    FlushPolicy::OnCapacity | FlushPolicy::OnCapacityOrAge { .. } => {
-                        // (6) Does not fit: deliver the queue, then place this call.
-                        delivered_batches += self.drain_queue(sink);
-                        reason = Some(FlushReason::Capacity);
-                        if staged_len <= self.capacity {
-                            self.push_staged_batch(sequence, origin);
-                        } else {
-                            // Oversized single call: deliver directly as one batch.
-                            delivered_batches += 1;
-                            sink.deliver(SpikeBatch {
-                                sequence,
-                                origin,
-                                spikes: &self.staging,
-                            });
-                        }
-                    }
-                    FlushPolicy::Manual => {
-                        // (7) Hold the staged batch; block; no sink call.
-                        self.held_spikes.clear();
-                        self.held_spikes.extend_from_slice(&self.staging);
-                        self.held = Some(HeldBatch {
-                            sequence,
-                            origin,
-                            len: staged_len,
-                        });
-                        return Ok(self.finish_step(reason, delivered_batches));
-                    }
-                }
-            }
-        }
-
-        // (8) Age trigger after admission (OnCapacityOrAge only). Evaluated on
+        // Age trigger after admission (OnCapacityOrAge only). Evaluated on
         // every accepted call, empty output included: the cursor advanced for
         // this call, so a pre-existing queued batch can legitimately age past
         // `max_age_ticks` on an empty call and must be delivered here.
@@ -645,6 +602,54 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
         }
 
         Ok(self.finish_step(reason, delivered_batches))
+    }
+
+    /// Admit one non-empty staged call under the configured capacity policy.
+    /// Empty calls leave the queue alone; `encode_step` still checks its age.
+    fn admit_staged(
+        &mut self,
+        sequence: u64,
+        origin: u64,
+        sink: &mut dyn BatchSink,
+    ) -> (Option<FlushReason>, usize) {
+        let staged_len = self.staging.len();
+        if staged_len == 0 {
+            return (None, 0);
+        }
+        if staged_len <= self.capacity - self.buffered_spikes() {
+            self.push_staged_batch(sequence, origin);
+            return (None, 0);
+        }
+
+        match self.policy {
+            FlushPolicy::Manual => {
+                // Move the call's spikes into the held slot; keeping a second
+                // copy in staging would exceed the documented memory bound.
+                self.held_spikes.clear();
+                std::mem::swap(&mut self.staging, &mut self.held_spikes);
+                self.held = Some(HeldBatch {
+                    sequence,
+                    origin,
+                    len: staged_len,
+                });
+                (None, 0)
+            }
+            FlushPolicy::OnCapacity | FlushPolicy::OnCapacityOrAge { .. } => {
+                let mut delivered = self.drain_queue(sink);
+                if staged_len <= self.capacity {
+                    self.push_staged_batch(sequence, origin);
+                } else {
+                    // A single oversized call bypasses the bounded queue.
+                    delivered += 1;
+                    sink.deliver(SpikeBatch {
+                        sequence,
+                        origin,
+                        spikes: &self.staging,
+                    });
+                }
+                (Some(FlushReason::Capacity), delivered)
+            }
+        }
     }
 
     /// Appends the current staging buffer to contiguous storage and records a
@@ -722,6 +727,7 @@ impl<'a, E: Encoder + ?Sized> StreamingEncoder<'a, E> {
         self.encoder.reset();
         self.storage.clear();
         self.queue.clear();
+        self.staging.clear();
         self.held_spikes.clear();
         self.held = None;
     }
@@ -790,35 +796,27 @@ mod tests {
     #[test]
     fn zero_capacity_is_rejected() {
         let mut enc = CountingEncoder::new();
-        // `StreamingEncoder` is intentionally not `Debug`, so match on the
-        // error rather than calling `unwrap_err`.
-        match StreamingEncoder::try_new(&mut enc, 0, FlushPolicy::Manual) {
-            Err(err) => assert_eq!(
-                err,
-                EncoderError::CountMustBePositive {
-                    parameter: "capacity"
-                }
-            ),
-            Ok(_) => panic!("zero capacity must be rejected"),
-        }
+        assert!(matches!(
+            StreamingEncoder::try_new(&mut enc, 0, FlushPolicy::Manual),
+            Err(EncoderError::CountMustBePositive {
+                parameter: "capacity"
+            })
+        ));
     }
 
     #[test]
     fn zero_max_age_is_rejected() {
         let mut enc = CountingEncoder::new();
-        match StreamingEncoder::try_new(
-            &mut enc,
-            4,
-            FlushPolicy::OnCapacityOrAge { max_age_ticks: 0 },
-        ) {
-            Err(err) => assert_eq!(
-                err,
-                EncoderError::CountMustBePositive {
-                    parameter: "max_age_ticks"
-                }
+        assert!(matches!(
+            StreamingEncoder::try_new(
+                &mut enc,
+                4,
+                FlushPolicy::OnCapacityOrAge { max_age_ticks: 0 },
             ),
-            Ok(_) => panic!("zero max_age_ticks must be rejected"),
-        }
+            Err(EncoderError::CountMustBePositive {
+                parameter: "max_age_ticks"
+            })
+        ));
     }
 
     #[test]
@@ -947,6 +945,11 @@ mod tests {
         assert!(report.blocked());
         assert_eq!(report.delivered_batches(), 0);
         assert!(s.is_blocked());
+        assert!(
+            s.staging.is_empty(),
+            "held output must be moved, not copied"
+        );
+        assert_eq!(s.held_spikes.len(), 1);
         assert!(delivered.is_empty());
 
         // Next call is rejected with backpressure, without advancing.
@@ -962,6 +965,10 @@ mod tests {
             }
         );
         assert_eq!(s.cursor().origin(), origin_before);
+        assert_eq!(
+            err.to_string(),
+            "cannot encode while blocked: 1 spike(s) buffered at capacity 1; flush first"
+        );
     }
 
     #[test]
@@ -1015,6 +1022,7 @@ mod tests {
         assert_eq!(report.delivered_batches(), 1);
         assert_eq!(delivered, vec![(0, 0, 1)]);
         assert!(s.is_empty());
+        s.reset();
     }
 
     #[test]
@@ -1064,9 +1072,7 @@ mod tests {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             s.flush_into(&mut |batch: SpikeBatch<'_>| {
                 seen.push(batch.sequence());
-                if batch.sequence() == 0 {
-                    panic!("sink refused batch");
-                }
+                panic!("sink refused batch");
             });
         }));
         assert!(result.is_err());
