@@ -129,22 +129,29 @@ fn empty_input_preserves_rate_backlog_for_the_next_call() {
     let mut reference = encoder.clone();
     let mut stream = StreamingEncoder::new(&mut encoder, 2048, FlushPolicy::Manual).unwrap();
     let mut received = Vec::new();
-    let mut expected_batches = Vec::new();
-    for (sequence, input) in [&[1.0][..], &[][..], &[0.0][..]].into_iter().enumerate() {
-        let expected = reference.encode_step(input).spikes;
-        stream
-            .encode_step(input, &mut |b: SpikeBatch<'_>| collect(&mut received, b))
-            .unwrap();
-        if sequence == 1 {
-            assert_eq!(stream.pending_batches(), 1);
-        }
-        if !expected.is_empty() {
-            assert_eq!(expected.len(), if sequence == 0 { 1024 } else { 976 });
-            expected_batches.push(Delivered(sequence as u64, sequence as u64, expected));
-        }
-    }
+    let first = reference.encode_step(&[1.0]).spikes;
+    assert_eq!(first.len(), 1024);
+    stream
+        .encode_step(&[1.0], &mut |b: SpikeBatch<'_>| collect(&mut received, b))
+        .unwrap();
+
+    assert!(reference.encode_step(&[]).spikes.is_empty());
+    stream
+        .encode_step(&[], &mut |b: SpikeBatch<'_>| collect(&mut received, b))
+        .unwrap();
+    assert_eq!(stream.pending_batches(), 1);
+
+    let remaining = reference.encode_step(&[0.0]).spikes;
+    assert_eq!(remaining.len(), 976);
+    stream
+        .encode_step(&[0.0], &mut |b: SpikeBatch<'_>| collect(&mut received, b))
+        .unwrap();
+
     stream.flush_into(&mut |b: SpikeBatch<'_>| collect(&mut received, b));
-    assert_eq!(received, expected_batches);
+    assert_eq!(
+        received,
+        [Delivered(0, 0, first), Delivered(2, 2, remaining)]
+    );
 }
 
 #[test]
