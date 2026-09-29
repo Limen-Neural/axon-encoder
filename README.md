@@ -238,6 +238,59 @@ step_ticks`), since a call can place a spike anywhere in the ongoing cycle.
 Run `cargo run --example spike_timebase` for a worked integration: two encoders,
 two cursors, one merged nanosecond-timed stream.
 
+## Buffered streaming
+
+`encode` and `encode_step` hand every call's spikes straight to the caller.
+`StreamingEncoder` inverts that: it wraps a borrowed encoder (`&mut dyn Encoder`
+works), buffers each call's output in a bounded queue, and delivers whole
+batches to a `BatchSink` under an explicit `FlushPolicy` you choose —
+`Manual`, `OnCapacity`, or `OnCapacityOrAge`. The queue is hard-bounded: it
+holds at most `capacity` spikes plus the one call in flight, and the wrapper
+owns neither the encoder nor the delivery target.
+
+Oversized calls may temporarily need more memory than `capacity`; their
+staging or held allocation is released after delivery or reset. Call
+`flush_into` before dropping the wrapper if pending batches matter: dropping
+it cannot deliver them without a sink. After sequence `u64::MAX`, new inputs
+return `StreamingError::SequenceExhausted` before reaching the encoder.
+
+Each delivered `SpikeBatch` corresponds to one accepted call and carries that
+call's monotonically increasing sequence number and its `origin`, the absolute
+tick the call started at. Spike timestamps inside a batch stay the unchanged
+call-relative offsets the encoder emitted — they are never rebased onto the
+absolute timeline. Absolute time is reconstructed the same way as everywhere
+else in the crate, from the batch origin and the untouched offset:
+
+```rust
+use axon_encoder::prelude::*;
+
+fn main() -> Result<(), EncoderError> {
+    let mut encoder = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010)?;
+    let mut streaming = StreamingEncoder::try_new(&mut encoder, 32, FlushPolicy::OnCapacity)?;
+
+    let mut absolute_ticks: Vec<u64> = Vec::new();
+    let mut sink = |batch: SpikeBatch<'_>| {
+        for spike in batch.spikes() {
+            // origin is absolute; the offset is left exactly as emitted.
+            absolute_ticks.push(batch.origin() + spike.timestamp.ticks());
+        }
+    };
+
+    for _ in 0..8 {
+        streaming.encode_step(&[0.9], &mut sink)?;
+    }
+    streaming.flush_into(&mut sink); // deliver whatever is still queued
+    Ok(())
+}
+```
+
+The wrapper reads no clock: `OnCapacityOrAge` measures age in encoder ticks, so
+a real-time deadline stays in caller code (check `pending_age_ticks()` or your
+own timer, then call `flush_into` when you decide). `StreamingEncoder` does not
+implement `Encoder`, because deferred, policy-driven delivery cannot honor the
+trait's per-call output contract. See
+`cargo run --example streaming_encoder`.
+
 ## Migrating from 0.4
 
 The 0.5 line removes public placeholders that had no authoritative consumer:
@@ -411,6 +464,7 @@ cargo run --example delta_encoding
 cargo run --example embedding_encoding
 cargo run --example spike_timebase
 cargo run --example encode_into_sink
+cargo run --example streaming_encoder
 cargo run --example ndarray_encoding --features ndarray
 ```
 

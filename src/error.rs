@@ -80,6 +80,60 @@ impl fmt::Display for EncoderError {
 
 impl std::error::Error for EncoderError {}
 
+/// Error returned by a runtime streaming operation on a
+/// [`StreamingEncoder`](crate::streaming::StreamingEncoder).
+///
+/// Unlike [`EncoderError`], which reports invalid *construction* parameters,
+/// this reports a failed *operation* on an otherwise valid wrapper. It is kept
+/// a dedicated enum so a caller can match the streaming backpressure case
+/// without pulling in constructor-validation variants.
+///
+/// # Backpressure
+///
+/// [`StreamingEncoder::encode_step`](crate::streaming::StreamingEncoder::encode_step)
+/// returns [`StreamingError::Backpressure`] when the wrapper is blocked: a
+/// prior call under [`FlushPolicy::Manual`](crate::streaming::FlushPolicy::Manual)
+/// produced output that did not fit the remaining capacity and is being held.
+/// The caller must
+/// [`flush_into`](crate::streaming::StreamingEncoder::flush_into) (or
+/// [`reset`](crate::streaming::StreamingEncoder::reset)) before encoding again.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamingError {
+    /// The wrapper is blocked and cannot accept a new call until it is flushed.
+    ///
+    /// `buffered_spikes` counts both queued and held spikes, and `capacity` is
+    /// the queue's configured bound. A held call can make the total exceed it.
+    Backpressure {
+        /// Spikes currently queued or held in the wrapper.
+        buffered_spikes: usize,
+        /// The configured spike capacity.
+        capacity: usize,
+    },
+    /// No further call sequence number can be assigned.
+    ///
+    /// The input was not passed to the encoder. Reset does not rewind the
+    /// sequence, so this wrapper cannot accept another call.
+    SequenceExhausted,
+}
+
+impl fmt::Display for StreamingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backpressure {
+                buffered_spikes,
+                capacity,
+            } => write!(
+                f,
+                "cannot encode while blocked: {buffered_spikes} spike(s) buffered (queue capacity {capacity}); flush first"
+            ),
+            Self::SequenceExhausted => write!(f, "streaming call sequence exhausted"),
+        }
+    }
+}
+
+impl std::error::Error for StreamingError {}
+
 pub(crate) const MAX_SPIKE_CHANNELS: usize = u16::MAX as usize + 1;
 
 pub(crate) fn validate_range(
