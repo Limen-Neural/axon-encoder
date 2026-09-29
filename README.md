@@ -88,6 +88,17 @@ fn main() {
 
 Full API docs: [docs.rs/axon-encoder](https://docs.rs/axon-encoder).
 
+## Guides and runnable examples
+
+- [Encoder guide](https://github.com/Limen-Neural/axon-encoder/blob/main/docs/ENCODER_GUIDE.md) — choose an encoder, run it in a
+  streaming loop, interpret call-relative time, and manage state.
+- [Benchmark guide](https://github.com/Limen-Neural/axon-encoder/blob/main/docs/BENCHMARKS.md) — run the included Criterion and
+  allocation benches and compare results responsibly.
+- `cargo run --example streaming_sensor` — a sensor loop with `TimeCursor` and
+  a reusable spike buffer.
+- `cargo run --example neuromodulated_encoding` — deterministic streaming rate
+  encoding controlled by public neuromodulator gain curves.
+
 ## Reusing storage: `encode_into` and `SpikeSink`
 
 `encode` / `encode_step` allocate a fresh `Vec<SpikeEvent>` per call. That is
