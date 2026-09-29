@@ -56,6 +56,24 @@ fn collector(sink: &mut Vec<(u64, u64, usize)>) -> impl BatchSink + '_ {
     }
 }
 
+fn assert_step(
+    report: StepReport,
+    reason: Option<FlushReason>,
+    delivered: usize,
+    queued: usize,
+    blocked: bool,
+) {
+    assert_eq!(
+        (
+            report.reason(),
+            report.delivered_batches(),
+            report.queued_spikes(),
+            report.blocked()
+        ),
+        (reason, delivered, queued, blocked)
+    );
+}
+
 #[test]
 fn zero_capacity_is_rejected() {
     let mut enc = CountingEncoder::new();
@@ -86,15 +104,20 @@ fn zero_max_age_is_rejected() {
 fn accessors_reflect_construction() {
     let mut enc = CountingEncoder::new();
     let s = StreamingEncoder::try_new(&mut enc, 7, FlushPolicy::OnCapacity).unwrap();
-    assert_eq!(s.capacity(), 7);
-    assert_eq!(s.policy(), FlushPolicy::OnCapacity);
-    assert_eq!(s.buffered_spikes(), 0);
-    assert_eq!(s.pending_batches(), 0);
-    assert!(s.is_empty());
-    assert!(!s.is_blocked());
-    assert_eq!(s.pending_age_ticks(), 0);
-    assert_eq!(s.time_model(), TimeModel::INSTANT);
-    assert_eq!(s.cursor().origin(), 0);
+    assert_eq!((s.capacity(), s.policy()), (7, FlushPolicy::OnCapacity));
+    assert_eq!(
+        (
+            s.buffered_spikes(),
+            s.pending_batches(),
+            s.is_empty(),
+            s.is_blocked()
+        ),
+        (0, 0, true, false)
+    );
+    assert_eq!(
+        (s.pending_age_ticks(), s.time_model(), s.cursor().origin()),
+        (0, TimeModel::INSTANT, 0)
+    );
 }
 
 #[test]
@@ -106,12 +129,8 @@ fn fitting_calls_queue_without_delivery() {
     let report = s
         .encode_step(&[1.0, 1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_eq!(report.reason(), None);
-    assert_eq!(report.delivered_batches(), 0);
-    assert_eq!(report.queued_spikes(), 2);
-    assert!(!report.blocked());
-    assert_eq!(s.buffered_spikes(), 2);
-    assert_eq!(s.pending_batches(), 1);
+    assert_step(report, None, 0, 2, false);
+    assert_eq!((s.buffered_spikes(), s.pending_batches()), (2, 1));
     assert!(delivered.is_empty());
 }
 
@@ -124,8 +143,7 @@ fn empty_output_queues_nothing_and_calls_no_sink() {
     let report = s
         .encode_step(&[0.0, 0.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_eq!(report.delivered_batches(), 0);
-    assert_eq!(report.queued_spikes(), 0);
+    assert_step(report, None, 0, 0, false);
     assert!(s.is_empty());
     assert!(delivered.is_empty());
     // Cursor and sequence still advanced for the accepted call.
@@ -161,9 +179,7 @@ fn on_capacity_flushes_queue_then_queues_new_batch() {
     let report = s
         .encode_step(&[1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_eq!(report.reason(), Some(FlushReason::Capacity));
-    assert_eq!(report.delivered_batches(), 2);
-    assert_eq!(report.queued_spikes(), 1);
+    assert_step(report, Some(FlushReason::Capacity), 2, 1, false);
     assert_eq!(delivered, vec![(0, 0, 1), (1, 1, 1)]);
     assert_eq!(s.buffered_spikes(), 1);
 }
@@ -181,9 +197,7 @@ fn oversized_call_is_delivered_directly() {
     let report = s
         .encode_step(&[1.0, 1.0, 1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_eq!(report.reason(), Some(FlushReason::Capacity));
-    assert_eq!(report.delivered_batches(), 2);
-    assert_eq!(report.queued_spikes(), 0);
+    assert_step(report, Some(FlushReason::Capacity), 2, 0, false);
     // Second delivered batch is the oversized one, seq 1, 3 spikes.
     assert_eq!(delivered, vec![(0, 0, 1), (1, 1, 3)]);
     assert!(s.is_empty());
@@ -205,14 +219,12 @@ fn manual_holds_and_blocks_without_sink_call() {
     let report = s
         .encode_step(&[1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert!(report.blocked());
-    assert_eq!(report.delivered_batches(), 0);
-    assert!(s.is_blocked());
-    assert!(
-        s.staging.is_empty(),
+    assert_step(report, None, 0, 1, true);
+    assert_eq!(
+        (s.is_blocked(), s.staging.is_empty(), s.held_spikes.len()),
+        (true, true, 1),
         "held output must be moved, not copied"
     );
-    assert_eq!(s.held_spikes.len(), 1);
     assert!(delivered.is_empty());
 
     // Next call is rejected with backpressure, without advancing.
@@ -246,12 +258,13 @@ fn flush_delivers_queue_then_held_and_unblocks() {
         .unwrap(); // seq 1 held
 
     let report = s.flush_into(&mut collector(&mut delivered));
-    assert_eq!(report.reason(), Some(FlushReason::Manual));
-    assert_eq!(report.delivered_batches(), 2);
+    assert_eq!(
+        (report.reason(), report.delivered_batches()),
+        (Some(FlushReason::Manual), 2)
+    );
     // Queue (seq 0) first, then held (seq 1).
     assert_eq!(delivered, vec![(0, 0, 1), (1, 1, 1)]);
-    assert!(!s.is_blocked());
-    assert!(s.is_empty());
+    assert_eq!((s.is_blocked(), s.is_empty()), (false, true));
 }
 
 #[test]
@@ -281,8 +294,7 @@ fn age_trigger_delivers_when_oldest_batch_ages_out() {
     let report = s
         .encode_step(&[1.0], &mut collector(&mut delivered))
         .unwrap();
-    assert_eq!(report.reason(), Some(FlushReason::Age));
-    assert_eq!(report.delivered_batches(), 1);
+    assert_step(report, Some(FlushReason::Age), 1, 0, false);
     assert_eq!(delivered, vec![(0, 0, 1)]);
     assert!(s.is_empty());
     s.reset();
@@ -315,9 +327,10 @@ fn reset_discards_output_but_keeps_timeline() {
     let origin_before = s.cursor().origin();
 
     s.reset();
-    assert!(s.is_empty());
-    assert!(!s.is_blocked());
-    assert_eq!(s.buffered_spikes(), 0);
+    assert_eq!(
+        (s.is_empty(), s.is_blocked(), s.buffered_spikes()),
+        (true, false, 0)
+    );
     // Timeline is monotonic: cursor not rewound.
     assert_eq!(s.cursor().origin(), origin_before);
     assert!(delivered.is_empty());

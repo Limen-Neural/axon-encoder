@@ -51,6 +51,24 @@ fn rate_one_per_step() -> RateEncoder {
     RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), 0.1).expect("valid RateEncoder")
 }
 
+fn assert_step(
+    report: StepReport,
+    reason: Option<FlushReason>,
+    delivered: usize,
+    queued: usize,
+    blocked: bool,
+) {
+    assert_eq!(
+        (
+            report.reason(),
+            report.delivered_batches(),
+            report.queued_spikes(),
+            report.blocked()
+        ),
+        (reason, delivered, queued, blocked)
+    );
+}
+
 // --- Borrows: concrete and trait-object -------------------------------------
 
 #[test]
@@ -291,19 +309,16 @@ fn oversized_call_is_delivered_directly_as_one_batch() {
             .encode_step(&[1.0], &mut capture(&mut delivered))
             .expect("not blocked");
         // First call: 3 spikes > capacity 2, queue empty, delivered directly.
-        assert_eq!(report.delivered_batches(), 1);
-        assert_eq!(report.reason(), Some(FlushReason::Capacity));
-        assert_eq!(report.queued_spikes(), 0);
+        assert_step(report, Some(FlushReason::Capacity), 1, 0, false);
         assert!(streaming.is_empty());
     }
 
     assert_eq!(delivered.len(), 1);
     assert_eq!(
-        delivered[0].spikes.len(),
-        3,
+        (delivered[0].spikes.len(), delivered[0].sequence),
+        (3, 0),
         "the oversized call is delivered whole as a single batch"
     );
-    assert_eq!(delivered[0].sequence, 0);
     assert!(
         delivered[0].spikes.len() > 2,
         "oversized batch legitimately exceeds capacity"
@@ -387,7 +402,7 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
         let report = streaming
             .encode_step(&[1.0], &mut capture(&mut delivered))
             .expect("call 0 queues");
-        assert_eq!(report.reason(), None, "nothing flushes on the queuing call");
+        assert_step(report, None, 0, 1, false);
         assert_eq!(streaming.pending_batches(), 1);
         assert!(delivered.is_empty());
 
@@ -396,13 +411,7 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
         let report = streaming
             .encode_step(&[0.0], &mut capture(&mut delivered))
             .expect("call 1 empty");
-        assert_eq!(report.reason(), None, "not aged out yet");
-        assert_eq!(report.delivered_batches(), 0);
-        assert_eq!(
-            report.queued_spikes(),
-            1,
-            "the empty call queues nothing of its own; the batch is still held"
-        );
+        assert_step(report, None, 0, 1, false);
         assert_eq!(streaming.pending_batches(), 1);
         assert!(delivered.is_empty(), "no delivery before the deadline");
 
@@ -411,17 +420,7 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
         let report = streaming
             .encode_step(&[0.0], &mut capture(&mut delivered))
             .expect("call 2 empty, ages out");
-        assert_eq!(
-            report.reason(),
-            Some(FlushReason::Age),
-            "the queued batch ages out on an empty-output call"
-        );
-        assert_eq!(
-            report.delivered_batches(),
-            1,
-            "exactly the one pre-existing batch is delivered"
-        );
-        assert_eq!(report.queued_spikes(), 0, "the age flush drains the queue");
+        assert_step(report, Some(FlushReason::Age), 1, 0, false);
         assert!(streaming.is_empty(), "queue is empty after the age flush");
 
         // A trailing flush must deliver nothing: the batch was already delivered
@@ -434,13 +433,9 @@ fn on_capacity_or_age_flushes_by_age_during_empty_output_calls() {
     assert_eq!(
         delivered.len(),
         1,
-        "the queued batch is delivered exactly once, via the Age trigger"
+        "the queued batch is delivered exactly once"
     );
-    assert_eq!(delivered[0].sequence, 0, "it is the batch from call 0");
-    assert_eq!(
-        delivered[0].origin, 0,
-        "delivered with its original call origin, not rebased"
-    );
+    assert_eq!((delivered[0].sequence, delivered[0].origin), (0, 0));
     assert_eq!(
         delivered[0].spikes, queued_spikes,
         "delivered spikes match the reference encoder's output for call 0"
@@ -477,8 +472,7 @@ fn manual_holds_blocks_and_rejects_without_advancing_the_encoder() {
         let report = streaming
             .encode_step(&[1.0], &mut capture(&mut delivered))
             .expect("held, not an error");
-        assert!(report.blocked());
-        assert_eq!(report.delivered_batches(), 0);
+        assert_step(report, None, 0, 2, true);
         assert!(streaming.is_blocked());
         assert!(delivered.is_empty(), "Manual never delivers during a step");
 
@@ -501,8 +495,10 @@ fn manual_holds_blocks_and_rejects_without_advancing_the_encoder() {
 
         // Flush: queued batches (seq 0,1) BEFORE the held batch (seq 2).
         let flush = streaming.flush_into(&mut capture(&mut delivered));
-        assert_eq!(flush.delivered_batches(), 3);
-        assert_eq!(flush.reason(), Some(FlushReason::Manual));
+        assert_eq!(
+            (flush.delivered_batches(), flush.reason()),
+            (3, Some(FlushReason::Manual))
+        );
         assert!(!streaming.is_blocked(), "flush clears the blocked state");
 
         // Sanity: the rejected call did not advance the timeline, so after the
@@ -513,9 +509,13 @@ fn manual_holds_blocks_and_rejects_without_advancing_the_encoder() {
 
     // Ordering: queued-before-held, sequence strictly increasing.
     assert_eq!(delivered.len(), 3);
-    assert_eq!(delivered[0].sequence, 0);
-    assert_eq!(delivered[1].sequence, 1);
-    assert_eq!(delivered[2].sequence, 2);
+    assert_eq!(
+        delivered
+            .iter()
+            .map(|batch| batch.sequence)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
 
     // The rejected input was never consumed by the wrapper's encoder: the three
     // delivered batches match a reference driven with exactly three calls.
@@ -604,12 +604,15 @@ fn reset_clears_buffer_keeps_timeline_and_matches_fresh_encoder() {
     assert_eq!(origin_before, 3);
 
     streaming.reset();
-    assert!(
-        streaming.is_empty(),
+    assert_eq!(
+        (
+            streaming.is_empty(),
+            streaming.is_blocked(),
+            streaming.buffered_spikes()
+        ),
+        (true, false, 0),
         "reset discards queued and held output"
     );
-    assert!(!streaming.is_blocked(), "reset clears the blocked state");
-    assert_eq!(streaming.buffered_spikes(), 0);
     // Timeline is monotonic: cursor is NOT rewound.
     assert_eq!(
         streaming.cursor().origin(),
@@ -639,8 +642,7 @@ fn reset_clears_buffer_keeps_timeline_and_matches_fresh_encoder() {
         post_reset[0].origin >= seq_before_next,
         "origin stays monotonic across reset"
     );
-    assert_eq!(post_reset[0].sequence, 3, "sequence continues, not rewound");
-    assert_eq!(post_reset[0].origin, 3);
+    assert_eq!((post_reset[0].sequence, post_reset[0].origin), (3, 3));
 }
 
 // --- Empty input reaches the encoder and advances the timeline ---------------
@@ -663,8 +665,7 @@ fn empty_input_advances_phase_encoder_through_the_wrapper() {
             let report = streaming
                 .encode_step(&[], &mut capture(&mut delivered))
                 .expect("not blocked");
-            assert_eq!(report.delivered_batches(), 0, "empty output queues nothing");
-            assert_eq!(report.queued_spikes(), 0);
+            assert_step(report, None, 0, 0, false);
             assert!(streaming.is_empty());
             assert_eq!(
                 streaming.cursor().origin(),
