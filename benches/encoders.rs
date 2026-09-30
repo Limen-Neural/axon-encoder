@@ -1,6 +1,6 @@
 use axon_encoder::encoders::{
-    DeltaEncoder, LatencyEncoder, PopulationEncoder, PredictiveEncoder, RateEncoder,
-    TemporalEncoder,
+    DeltaEncoder, DerivativeEncoder, LatencyEncoder, PhaseEncoder, PopulationEncoder,
+    PredictiveEncoder, RateEncoder, TemporalEncoder,
 };
 use axon_encoder::prelude::*;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -377,6 +377,200 @@ fn bench_poisson_encoder(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_derivative_encoder(c: &mut Criterion) {
+    let mut group = c.benchmark_group("DerivativeEncoder::encode");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let mut encoder =
+                DerivativeEncoder::try_new(vec![0.1; size]).expect("valid DerivativeEncoder");
+            let zero = vec![0.0; size];
+            let high = vec![0.25; size];
+            let mut use_high = true;
+            encoder.encode(&zero);
+
+            b.iter(|| {
+                let input = if use_high { &high } else { &zero };
+                use_high = !use_high;
+                black_box(encoder.encode(black_box(input)))
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_derivative_encoder_step(c: &mut Criterion) {
+    let mut group = c.benchmark_group("DerivativeEncoder::encode_step");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let mut encoder =
+                DerivativeEncoder::try_new(vec![0.1; size]).expect("valid DerivativeEncoder");
+            let zero = vec![0.0; size];
+            let high = vec![0.25; size];
+            let mut use_high = true;
+            encoder.encode_step(&zero);
+
+            b.iter(|| {
+                let input = if use_high { &high } else { &zero };
+                use_high = !use_high;
+                black_box(encoder.encode_step(black_box(input)))
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_derivative_encoder_step_into(c: &mut Criterion) {
+    let mut group = c.benchmark_group("DerivativeEncoder::encode_step_into");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let mut encoder =
+                DerivativeEncoder::try_new(vec![0.1; size]).expect("valid DerivativeEncoder");
+            let zero = vec![0.0; size];
+            let high = vec![0.25; size];
+            let mut use_high = true;
+            let mut buffer = Vec::with_capacity(size);
+            encoder.encode_step_into(&zero, &mut buffer);
+
+            b.iter(|| {
+                let input = if use_high { &high } else { &zero };
+                use_high = !use_high;
+                buffer.clear();
+                encoder.encode_step_into(black_box(input), &mut buffer);
+                black_box(buffer.len())
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_phase_encoder(c: &mut Criterion) {
+    let mut group = c.benchmark_group("PhaseEncoder::encode");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let mut encoder = PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid PhaseEncoder");
+            let input = normalized_input(size);
+            assert_eq!(encoder.encode(&input).spikes.len(), size);
+
+            b.iter(|| black_box(encoder.encode(black_box(&input))));
+        });
+    }
+    group.finish();
+}
+
+fn bench_phase_encoder_step(c: &mut Criterion) {
+    let mut group = c.benchmark_group("PhaseEncoder::encode_step");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let mut encoder = PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid PhaseEncoder");
+            let input = normalized_input(size);
+            assert_eq!(encoder.encode_step(&input).spikes.len(), size);
+
+            b.iter(|| black_box(encoder.encode_step(black_box(&input))));
+        });
+    }
+    group.finish();
+}
+
+fn bench_phase_encoder_into(c: &mut Criterion) {
+    let mut group = c.benchmark_group("PhaseEncoder::encode_into");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let mut encoder = PhaseEncoder::try_new(16, (0.0, 1.0)).expect("valid PhaseEncoder");
+            let input = normalized_input(size);
+            let mut buffer = Vec::with_capacity(size);
+            encoder.encode_into(&input, &mut buffer);
+
+            b.iter(|| {
+                buffer.clear();
+                encoder.encode_into(black_box(&input), &mut buffer);
+                black_box(buffer.len())
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_embedding_rate_encoder(c: &mut Criterion) {
+    let mut group = c.benchmark_group("EmbeddingRateEncoder::encode");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            // Drive equals the exactly representable threshold: every call fires
+            // all channels and subtracts the drive, keeping membrane state bounded.
+            let v_th = 0.5;
+            let mut encoder = EmbeddingRateEncoder::try_new(size, EmbeddingEncoderConfig { v_th })
+                .expect("valid EmbeddingRateEncoder");
+            let input = vec![v_th; size];
+            assert_eq!(encoder.encode(&input).spikes.len(), size);
+
+            b.iter(|| black_box(encoder.encode(black_box(&input))));
+        });
+    }
+    group.finish();
+}
+
+fn bench_embedding_rate_encoder_step(c: &mut Criterion) {
+    let mut group = c.benchmark_group("EmbeddingRateEncoder::encode_step");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            // Drive equals the exactly representable threshold: every call fires
+            // all channels and subtracts the drive, keeping membrane state bounded.
+            let v_th = 0.5;
+            let mut encoder = EmbeddingRateEncoder::try_new(size, EmbeddingEncoderConfig { v_th })
+                .expect("valid EmbeddingRateEncoder");
+            let input = vec![v_th; size];
+            assert_eq!(encoder.encode_step(&input).spikes.len(), size);
+
+            b.iter(|| black_box(encoder.encode_step(black_box(&input))));
+        });
+    }
+    group.finish();
+}
+
+fn bench_embedding_rate_encoder_step_into(c: &mut Criterion) {
+    let mut group = c.benchmark_group("EmbeddingRateEncoder::encode_step_into");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            // Drive equals the exactly representable threshold: every call fires
+            // all channels and subtracts the drive, keeping membrane state bounded.
+            let v_th = 0.5;
+            let mut encoder = EmbeddingRateEncoder::try_new(size, EmbeddingEncoderConfig { v_th })
+                .expect("valid EmbeddingRateEncoder");
+            let input = vec![v_th; size];
+            let mut buffer = Vec::with_capacity(size);
+            encoder.encode_step_into(&input, &mut buffer);
+            assert_eq!(buffer.len(), size);
+
+            b.iter(|| {
+                buffer.clear();
+                encoder.encode_step_into(black_box(&input), &mut buffer);
+                black_box(buffer.len())
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_rate_encoder_into(c: &mut Criterion) {
+    let mut group = c.benchmark_group("RateEncoder::encode_into");
+    for size in SCALES {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let mut encoder =
+                RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), RateEncoder::DEFAULT_DT_SECONDS)
+                    .expect("valid RateEncoder");
+            let input = normalized_input(size);
+            let mut buffer = Vec::with_capacity(size);
+            encoder.encode_into(&input, &mut buffer);
+
+            b.iter(|| {
+                buffer.clear();
+                encoder.encode_into(black_box(&input), &mut buffer);
+                black_box(buffer.len())
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_rate_encoder,
@@ -395,6 +589,16 @@ criterion_group!(
     bench_temporal_encoder_step_into,
     bench_predictive_encoder_step_into,
     bench_latency_encoder_into,
-    bench_poisson_encoder
+    bench_poisson_encoder,
+    bench_derivative_encoder,
+    bench_derivative_encoder_step,
+    bench_derivative_encoder_step_into,
+    bench_phase_encoder,
+    bench_phase_encoder_step,
+    bench_phase_encoder_into,
+    bench_embedding_rate_encoder,
+    bench_embedding_rate_encoder_step,
+    bench_embedding_rate_encoder_step_into,
+    bench_rate_encoder_into,
 );
 criterion_main!(benches);

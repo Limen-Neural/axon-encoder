@@ -71,6 +71,133 @@ cargo bench --bench encoders
 cargo bench --bench allocations
 ```
 
+### Measured encoder coverage
+
+`benches/encoders.rs` has **27 Criterion groups**, each with three scales.
+**T+A** below means both elapsed time and allocations are measured. The
+returning path is `encode`, the step path is `encode_step`, and the reusable
+path writes into a caller-owned sink (`encode_into` or `encode_step_into`).
+
+| Encoder | Returning path | Step path | Reusable path |
+| --- | --- | --- | --- |
+| Rate | `encode`: T+A | `encode_step`: T+A | `encode_into` and `encode_step_into`: T+A |
+| Population | `encode`: T+A | Delegates to `encode`; represented by returning path | `encode_into`: T+A; equivalent `encode_step_into` represented by it |
+| Delta | `encode`: T+A | `encode_step`: T+A | `encode_step_into`: T+A; `encode_into` equivalent at these configured widths |
+| Derivative | `encode`: T+A | `encode_step`: T+A (same core) | `encode_step_into`: T+A; equivalent `encode_into` represented by it |
+| Temporal | `encode`: T+A | `encode_step`: T+A | `encode_step_into`: T+A; `encode_into` equivalent at these configured widths |
+| Predictive | `encode`: T+A | `encode_step`: T+A | `encode_step_into`: T+A; `encode_into` equivalent at these configured widths |
+| Latency | `encode`: T+A | Allocation only; stateless and equivalent to returning path | `encode_into`: T+A; equivalent `encode_step_into`: allocation only |
+| Phase | `encode`: T+A | `encode_step`: T+A (same phase advancement) | `encode_into`: T+A; equivalent `encode_step_into` represented by it |
+| EmbeddingRate | `encode`: T+A | `encode_step`: T+A (same core) | `encode_step_into`: T+A; equivalent `encode_into` represented by it |
+| Poisson | Scalar `encode`: T+A | Scalar `encode_step`: not measured; no `Encoder` implementation | Not applicable: no sink API |
+| `ModulatedEncoder` | Not timed or allocation-profiled | Not timed or allocation-profiled | Allocation-only Delta `encode_step_with_modulators_into` smoke; no per-encoder modulated timing coverage |
+
+Scale and fixture details:
+
+- Ordinary `BenchmarkId`s are **256, 1,000, 10,000 input channels**. Population
+  uses those values as **neuron counts for one scalar input** (`[75.0]`), not
+  input-channel counts. Poisson uses **10, 100, 1,000 simulation steps** for
+  scalar probability `0.5`; it returns a bit train, whose set bits are counted
+  as spikes in the allocation report.
+- Derivative uses thresholds `vec![0.1; size]`, seeds zeros, and alternates
+  `0.25` and zero per channel. Returning path and step path are equivalent;
+  the reusable path starts with a capacity-`size` sink seeded with zeros.
+- Phase uses 16 cycle steps, range `(0.0, 1.0)`, and normalized input. Each call
+  emits `size` spikes and advances the same encoder's phase by one tick.
+- **EmbeddingRate** means `EmbeddingRateEncoder`, not a separate `Embedding`
+  encoder. `EmbeddingEncoderConfig { v_th: 0.5 }` and drive `vec![0.5; size]`
+  keep every membrane bounded: each call adds and subtracts exactly `0.5`.
+  Warm calls verify full output before measurement; there are no timed resets.
+- Rate's returning path and `encode_into` reusable path sample stochastic
+  spikes from normalized input. Its step path and `encode_step_into` reusable
+  path accumulate deterministic phase using the same normalized input. These
+  are distinct workloads: compare like operations. The allocation-only
+  `encode_step(backlog)` row retains eight channels at 100,000 Hz and `dt=0.1`.
+- Delta's returning path holds shifted input constant and settles silent;
+  its step path and reusable path alternate normalized and shifted inputs.
+  Temporal's returning path holds normalized input constant; its step path
+  and reusable path prime and cycle three low then three high inputs.
+  Predictive primes five low calls and cycles three low then three high inputs
+  on all measured paths. The allocation report samples its first high call
+  after advancing through the cycle's three low calls. These workload
+  differences matter when interpreting returning path and reusable path comparisons.
+
+Criterion measures **elapsed time over repeated calls**, including returning
+output destruction or reusable sink clear/refill. Construction, fixtures,
+explicit priming, and buffer allocation stay outside `b.iter`; state persists.
+Criterion defaults are unchanged. `benches/allocations.rs` instead counts
+**one warmed call**, with the matching fixture and priming. Constant-input
+returning paths are warmed to steady state (six calls for Temporal); stochastic
+paths warm their thread-local RNG. New Derivative, Phase, and EmbeddingRate
+rows assert `spikes == size`. Counts are observations, not timing estimates.
+The CSV schema remains:
+
+```text
+encoder,operation,scale_type,scale,allocations,bytes,spikes
+```
+
+`allocations` counts successful allocation/reallocation requests; `bytes`
+counts allocated bytes plus net reallocation growth, not peak resident memory.
+Only rows reporting zero establish zero allocations for that operation,
+fixture, scale, and warm-up. A silent (`spikes=0`) call does not establish
+allocation behavior under active output. Buffer reuse alone proves nothing;
+reusable path allocations are reported without failing the benchmark. Document
+any unexpected allocations here and in README.md and open a separate issue;
+keep encoder implementation changes out of coverage work.
+
+The local Rust 1.98.1 run recorded **91 allocation rows**, including **36
+reusable rows** with zero allocations and zero bytes at every measured scale.
+All 27 Derivative, Phase, and EmbeddingRate rows emitted `size` spikes. No
+unexpected reusable path allocation was observed, so no allocation follow-up
+issue was needed. Delta and Temporal constant-input returning paths reported
+zero spikes; their counts do not describe active output.
+
+### Repeatable local regression comparison
+
+Use **Rust 1.98.1**, the **same host**, the same lockfile/dependencies where
+possible, and Criterion defaults on both commits. Keep load and power settings
+stable. Record any dependency differences. Use one checkout and retain its
+`target/criterion` directory across switches; do not run `cargo clean` between
+runs. With separate worktrees, set the same absolute `CARGO_TARGET_DIR` on both
+so the branch reuses the comparison's `target/criterion` baseline directory.
+Keep logs and CSVs outside the checkout. Start with a clean tree or commit your
+branch changes before switching:
+
+```bash
+# On the chosen comparison commit (record its full SHA; "main" is a label):
+git switch --detach <comparison-commit>
+cargo +1.98.1 bench --bench encoders -- --save-baseline main
+cargo +1.98.1 bench --bench allocations > /tmp/allocations-main.csv
+
+# On the branch commit, on the same host and using the saved baseline directory:
+git switch <branch>
+cargo +1.98.1 bench --bench encoders -- --baseline main
+cargo +1.98.1 bench --bench allocations > /tmp/allocations-branch.csv
+diff -u /tmp/allocations-main.csv /tmp/allocations-branch.csv
+```
+
+Both baseline commands select **`--bench encoders`** because the flags belong to
+Criterion; `allocations` is a separate custom CSV harness, and the library test
+harness does not accept those flags. Allocation counts require their own run
+on **each** commit; Criterion cannot infer them. Compare CSVs by
+`(encoder, operation, scale_type, scale)`, including spikes and bytes, allowing
+for stochastic output differences and explicitly identifying new rows.
+
+If the comparison predates a group, that group has no baseline: report it as
+new coverage, not a regression. Run common groups with the same positional
+Criterion filter on both baseline commands, and run new groups separately
+without `--baseline`. Do not copy branch results into a comparison baseline.
+Use `cargo bench` as the final local completion check for both targets. CI
+runs `cargo bench --no-run` on the pinned toolchain; timing stays local.
+
+A benchmark PR report must include comparison and branch **full SHAs** (and
+whether the tree was dirty), Rust version, host/OS/CPU and noise/load conditions,
+commands and baseline label/directory, encoder **operation and scale**, elapsed
+time and Criterion **change % / confidence interval**, and allocation
+**allocations / bytes / spikes** on both commits. Mark missing baselines and
+allocation-only rows, summarize the verdict, and link any allocation follow-up
+issue. Include the complete CSVs as artifacts rather than full timing logs.
+
 ### How to read results
 
 - Prefer Criterion **change %** over absolute ns
