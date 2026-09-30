@@ -19,8 +19,13 @@
 //!     at `1.0`, not `0.875`.
 //!   * The durable population invariant is therefore *not* a hardcoded
 //!     `0.951 / 0.875` figure but the endpoint bias: the center-of-mass decode
-//!     at `x = max` is strictly less than `max` for `N > 1`, because the
-//!     Gaussian neighbors all sit below the maximum and pull the CoM inward.
+//!     at `x = max` is strictly less than `max` for `N > 1` **when the neighbor
+//!     tuning responses are representable (non-underflowing)**, because the
+//!     Gaussian neighbors all sit below the maximum and pull the CoM inward. For
+//!     very narrow tuning widths the lower neurons' response underflows to
+//!     exactly `0.0`, the inward pull vanishes, and the CoM lands on `max`
+//!     exactly; the strict inequality is only claimed and tested in the
+//!     representable regime.
 //!
 //! There is intentionally **no public decoder API**: these inverses live in the
 //! test tree until a later 0.5 design explicitly asks for one.
@@ -39,8 +44,25 @@ use axon_encoder::prelude::*;
 ///
 /// Inverting the linear map (ignoring the integer rounding) gives
 /// `x = min + (1 - ts / max_latency) * (max - min)`.
+///
+/// # Degenerate `max_latency == 0`
+///
+/// `LatencyEncoder::try_new(0, range)` is a documented-valid configuration: the
+/// presentation window is `max_latency + 1 == 1` tick wide and *every* input
+/// collapses onto tick `0` (see `latency_zero_max_latency_is_non_invertible`).
+/// That map is non-invertible — the whole range maps to a single tick, so no
+/// spike timestamp can recover which value produced it. Rather than silently
+/// computing `1 - 0/0 = NaN`, the oracle documents this collision explicitly by
+/// returning the range midpoint, the minimum-squared-error point estimate when
+/// every value in `[min, max]` collapses to the same tick.
 fn latency_decode(ts: u64, max_latency: u64, range: (f32, f32)) -> f64 {
     let (min, max) = (range.0 as f64, range.1 as f64);
+    if max_latency == 0 {
+        // Non-invertible collision: the entire range maps to tick 0. Report the
+        // range midpoint as the defined (documented) degenerate answer instead
+        // of a silent NaN from the 0/0 division below.
+        return min + 0.5 * (max - min);
+    }
     let fraction = 1.0 - (ts as f64 / max_latency as f64);
     min + fraction * (max - min)
 }
@@ -154,6 +176,55 @@ fn latency_non_finite_inputs_collide_with_the_endpoints() {
     let plus_inf_ts = encoder.encode(&[f32::INFINITY]).spikes[0].timestamp.ticks();
     assert_eq!(plus_inf_ts, max_ts, "+inf must collide with range max");
     assert!((latency_decode(plus_inf_ts, max_latency, range) - range.1 as f64).abs() < 1e-12);
+}
+
+#[test]
+fn latency_zero_max_latency_is_non_invertible() {
+    // `max_latency == 0` is a documented-valid config: the presentation window
+    // is one tick wide (max_latency + 1) and every input, regardless of
+    // magnitude or sign, collapses onto tick 0. The forward map is therefore
+    // non-invertible — all values share a single tick, so a TTFS decoder cannot
+    // recover the input from the timestamp.
+    let range = (0.0f32, 1.0f32);
+    let mut encoder = LatencyEncoder::try_new(0, range).expect("max_latency 0 is valid");
+
+    // The declared window is a single tick.
+    assert_eq!(encoder.time_model().span_ticks(), 1);
+
+    // Every input — endpoints, interior, out-of-range, and non-finite — emits
+    // exactly one spike at tick 0.
+    for value in [
+        range.0,
+        range.1,
+        0.5,
+        -5.0,
+        5.0,
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+    ] {
+        let out = encoder.encode(&[value]);
+        assert_eq!(out.spikes.len(), 1, "input {value} emits one spike");
+        assert_eq!(
+            out.spikes[0].timestamp.ticks(),
+            0,
+            "input {value} collapses onto tick 0"
+        );
+    }
+
+    // The oracle represents this collision explicitly rather than returning a
+    // silent NaN from `1 - 0/0`: it reports the range midpoint (0.5 here), the
+    // minimum-squared-error estimate when the whole range maps to one tick.
+    let decoded = latency_decode(0, 0, range);
+    assert!(
+        decoded.is_finite(),
+        "the degenerate decode must be finite, not NaN"
+    );
+    let midpoint = (range.0 as f64 + range.1 as f64) / 2.0;
+    assert!(
+        (decoded - midpoint).abs() < 1e-12,
+        "degenerate decode {decoded} must be the range midpoint {midpoint}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -366,42 +437,63 @@ fn rate_batch_is_bernoulli_capped_while_streaming_recovers_hz() {
 // 4. Population: preferred-value grid and center-of-mass endpoint bias.
 // ---------------------------------------------------------------------------
 
-/// The preferred value of neuron `i` in an `n`-neuron population over `range`.
-///
-/// This mirrors the CURRENT source (`src/encoders/population.rs`): neuron 0 is
-/// pinned to `min`, neuron `n - 1` to `max`, and the interior neurons sit on the
-/// endpoint-covering grid `min + (i / (n - 1)) * span`. This replaces the stale
-/// `i / n` grid in the LIM-1340 issue table (which put neuron 7 of 8 at 0.875);
-/// on the current grid neuron 7 of 8 sits at `1.0`.
-fn population_preferred(i: usize, n: usize, range: (f32, f32)) -> f64 {
-    let (min, max) = (range.0 as f64, range.1 as f64);
-    if n == 1 || i == 0 {
-        min
-    } else if i == n - 1 {
-        max
-    } else {
-        min + (i as f64 / (n - 1) as f64) * (max - min)
-    }
+/// Reference-oracle configuration for a single population, bundling the three
+/// primitives (`n`, `range`, `width`) the helpers used to pass around
+/// individually. Grouping them removes the 5-argument `response` helper and the
+/// primitive-argument churn CodeScene flagged, without changing any behavior.
+struct PopulationOracle {
+    n: usize,
+    range: (f32, f32),
+    width: f64,
 }
 
-/// Gaussian tuning response of neuron `i` to `input`, matching the encoder's
-/// `get_rate_with_tuning_width`.
-fn population_response(input: f64, i: usize, n: usize, range: (f32, f32), width: f64) -> f64 {
-    let preferred = population_preferred(i, n, range);
-    let distance = (input - preferred).abs();
-    (-(distance * distance) / (2.0 * width * width)).exp()
-}
-
-/// Pooled center-of-mass decode: the tuning-weighted mean of preferred values.
-fn population_center_of_mass(input: f64, n: usize, range: (f32, f32), width: f64) -> f64 {
-    let mut weighted = 0.0f64;
-    let mut total = 0.0f64;
-    for i in 0..n {
-        let response = population_response(input, i, n, range, width);
-        weighted += population_preferred(i, n, range) * response;
-        total += response;
+impl PopulationOracle {
+    /// The preferred value of neuron `i` in this `n`-neuron population.
+    ///
+    /// This mirrors the CURRENT source (`src/encoders/population.rs`): neuron 0
+    /// is pinned to `min`, neuron `n - 1` to `max`, and the interior neurons sit
+    /// on the endpoint-covering grid `min + (i / (n - 1)) * span`. This replaces
+    /// the stale `i / n` grid in the LIM-1340 issue table (which put neuron 7 of
+    /// 8 at 0.875); on the current grid neuron 7 of 8 sits at `1.0`.
+    ///
+    /// The interior term is computed in **f32 with the same operation order as
+    /// `PopulationEncoder::get_rate_with_tuning_width`** (`range.0 + (i as f32 /
+    /// (n - 1) as f32) * span`), then widened to f64. Computing it directly in
+    /// f64 would diverge from the encoder for large-magnitude ranges, where the
+    /// f32 rounding shifts a preferred value by several units.
+    fn preferred(&self, i: usize) -> f64 {
+        let (min, max) = self.range;
+        if self.n == 1 || i == 0 {
+            min as f64
+        } else if i == self.n - 1 {
+            max as f64
+        } else {
+            let span = max - min;
+            let preferred = min + (i as f32 / (self.n - 1) as f32) * span;
+            preferred as f64
+        }
     }
-    weighted / total
+
+    /// Gaussian tuning response of neuron `i` to `input`, matching the encoder's
+    /// `get_rate_with_tuning_width`.
+    fn response(&self, input: f64, i: usize) -> f64 {
+        let preferred = self.preferred(i);
+        let distance = (input - preferred).abs();
+        (-(distance * distance) / (2.0 * self.width * self.width)).exp()
+    }
+
+    /// Pooled center-of-mass decode: the tuning-weighted mean of preferred
+    /// values.
+    fn center_of_mass(&self, input: f64) -> f64 {
+        let mut weighted = 0.0f64;
+        let mut total = 0.0f64;
+        for i in 0..self.n {
+            let response = self.response(input, i);
+            weighted += self.preferred(i) * response;
+            total += response;
+        }
+        weighted / total
+    }
 }
 
 #[test]
@@ -411,15 +503,24 @@ fn population_preferred_grid_covers_both_endpoints() {
     // 1.0 (not 0.875), and neuron 0 sits at 0.0.
     let n = 8usize;
     let range = (0.0f32, 1.0f32);
+    let oracle = PopulationOracle {
+        n,
+        range,
+        width: 0.2,
+    };
 
-    assert_eq!(population_preferred(0, n, range), 0.0);
-    assert_eq!(population_preferred(n - 1, n, range), 1.0);
-    // Interior neuron on the i/(n-1) grid.
-    assert!((population_preferred(4, n, range) - 4.0 / 7.0).abs() < 1e-12);
+    assert_eq!(oracle.preferred(0), 0.0);
+    assert_eq!(oracle.preferred(n - 1), 1.0);
+    // Interior neuron on the i/(n-1) grid. The oracle computes the interior term
+    // in f32 (like the encoder) then widens, so compare against the f32 value.
+    let expected_4 = (4.0f32 / 7.0f32) as f64;
+    assert!((oracle.preferred(4) - expected_4).abs() < 1e-12);
+    // Neuron 7 of 8 is the pinned endpoint, exactly 1.0 (not the stale 0.875).
+    assert_eq!(oracle.preferred(7), 1.0);
 
     // The stale i/N grid would have put neuron 7 at 0.875; the current grid does
     // not. This guards against regressing to the old formula.
-    assert!((population_preferred(7, n, range) - 0.875).abs() > 0.1);
+    assert!((oracle.preferred(7) - 0.875).abs() > 0.1);
 }
 
 #[test]
@@ -444,15 +545,20 @@ fn population_peak_firer_pins_the_encoder_to_the_endpoint_grid() {
     let n = 10usize;
     let range = (0.0f32, 100.0f32);
     let width = 10.0f32;
-    let probe = 800.0f32 / 9.0; // == population_preferred(8, ...) on the current grid.
+    let probe = 800.0f32 / 9.0; // == oracle.preferred(8) on the current grid.
     let mut encoder = PopulationEncoder::try_new(n, range, width).expect("valid population");
+    let oracle = PopulationOracle {
+        n,
+        range,
+        width: width as f64,
+    };
 
     // The neuron whose preferred value is closest to the probe under the
     // current grid. Computed from the oracle helper, not hardcoded.
     let predicted_peak = (0..n)
         .min_by(|&a, &b| {
-            let da = (population_preferred(a, n, range) - probe as f64).abs();
-            let db = (population_preferred(b, n, range) - probe as f64).abs();
+            let da = (oracle.preferred(a) - probe as f64).abs();
+            let db = (oracle.preferred(b) - probe as f64).abs();
             da.partial_cmp(&db).unwrap()
         })
         .unwrap();
@@ -509,10 +615,16 @@ fn population_center_of_mass_is_biased_inward_at_the_maximum() {
     // every neuron below the top pulls the pooled mean down. This is the
     // endpoint-bias property a real decoder must account for.
     let range = (0.0f32, 1.0f32);
+    // The strict inequality holds only where the neighbor Gaussian responses are
+    // REPRESENTABLE (non-underflowing). width = 0.2 keeps every neighbor
+    // response well above f64's smallest positive value, so the inward pull is
+    // real. See `population_com_strict_bias_fails_under_narrow_width_underflow`
+    // for the degenerate narrow-width case where this inequality does NOT hold.
     let width = 0.2f64;
 
     for n in [2usize, 4, 8, 16] {
-        let com_at_max = population_center_of_mass(range.1 as f64, n, range, width);
+        let oracle = PopulationOracle { n, range, width };
+        let com_at_max = oracle.center_of_mass(range.1 as f64);
         assert!(
             com_at_max < range.1 as f64,
             "N={n}: CoM at max {com_at_max} must be strictly below {}",
@@ -521,7 +633,7 @@ fn population_center_of_mass_is_biased_inward_at_the_maximum() {
         // Symmetrically, the CoM at the minimum is biased upward (strictly
         // above min), confirming the bias is an endpoint effect, not a global
         // offset.
-        let com_at_min = population_center_of_mass(range.0 as f64, n, range, width);
+        let com_at_min = oracle.center_of_mass(range.0 as f64);
         assert!(
             com_at_min > range.0 as f64,
             "N={n}: CoM at min {com_at_min} must be strictly above {}",
@@ -531,12 +643,53 @@ fn population_center_of_mass_is_biased_inward_at_the_maximum() {
 
     // Interior points are reconstructed with far smaller error than the
     // endpoints: the bias is specific to the range edges.
-    let n = 8usize;
     let interior = 0.5f64;
-    let com_interior = population_center_of_mass(interior, n, range, width);
+    let interior_oracle = PopulationOracle { n: 8, range, width };
+    let com_interior = interior_oracle.center_of_mass(interior);
     assert!(
         (com_interior - interior).abs() < 0.05,
         "interior CoM {com_interior} should closely track {interior}"
+    );
+}
+
+#[test]
+fn population_com_strict_bias_fails_under_narrow_width_underflow() {
+    // Documents the LIMIT of the inward-bias invariant: for very narrow tuning
+    // widths the lower neurons' Gaussian response underflows to exactly 0.0, so
+    // their inward pull vanishes and the CoM at max equals max EXACTLY. A
+    // downstream decoder must not rely on the strict inequality outside the
+    // representable-neighbor regime.
+    //
+    // n = 2 over (0, 1), width = 0.01: the lower neuron sits at 0.0, so at
+    // input = 1.0 its response is exp(-(1.0)^2 / (2 * 0.01^2)) = exp(-5000),
+    // which underflows to 0.0 in f64. Only the top neuron (preferred 1.0,
+    // response 1.0) contributes, so CoM == 1.0 == max, NOT strictly below it.
+    let range = (0.0f32, 1.0f32);
+    let oracle = PopulationOracle {
+        n: 2,
+        range,
+        width: 0.01,
+    };
+
+    // The lower neuron's response has underflowed to exactly zero.
+    let lower_response = oracle.response(range.1 as f64, 0);
+    assert_eq!(
+        lower_response, 0.0,
+        "narrow width must underflow the lower neuron's response to exactly 0.0"
+    );
+
+    // Consequently the CoM at max equals max exactly: the strict inequality that
+    // holds at width 0.2 does NOT hold here.
+    let com_at_max = oracle.center_of_mass(range.1 as f64);
+    assert_eq!(
+        com_at_max, range.1 as f64,
+        "under neighbor underflow the CoM at max collapses onto max exactly"
+    );
+    // The strict inward-bias inequality (`CoM < max`) that holds at width 0.2
+    // does NOT hold here: the CoM sits exactly at max, not below it.
+    assert!(
+        com_at_max >= range.1 as f64,
+        "the strict inward-bias inequality must NOT hold under underflow"
     );
 }
 
@@ -577,12 +730,17 @@ fn population_fires_at_tick_zero_and_channels_map_to_neurons() {
     // Empirical pooled CoM at x = max, averaged over many calls, is strictly
     // below max (the same inward bias as the analytic oracle).
     let width_f64 = width as f64;
+    let oracle = PopulationOracle {
+        n,
+        range,
+        width: width_f64,
+    };
     let mut weighted = 0.0f64;
     let mut spikes = 0u64;
     for _ in 0..5_000 {
         for spike in encoder.encode(&[range.1]).spikes {
             let neuron = spike.channel as usize;
-            weighted += population_preferred(neuron, n, range);
+            weighted += oracle.preferred(neuron);
             spikes += 1;
         }
     }
@@ -604,6 +762,6 @@ fn population_fires_at_tick_zero_and_channels_map_to_neurons() {
     );
 
     // The analytic oracle stays consistent with the width the encoder uses.
-    let analytic_com = population_center_of_mass(range.1 as f64, n, range, width_f64);
+    let analytic_com = oracle.center_of_mass(range.1 as f64);
     assert!(analytic_com < range.1 as f64);
 }
