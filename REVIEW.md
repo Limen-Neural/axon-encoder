@@ -89,7 +89,7 @@ path writes into a caller-owned sink (`encode_into` or `encode_step_into`).
 | Latency | `encode`: T+A | Allocation only; stateless and equivalent to returning path | `encode_into`: T+A; equivalent `encode_step_into`: allocation only |
 | Phase | `encode`: T+A | `encode_step`: T+A (same phase advancement) | `encode_into`: T+A; equivalent `encode_step_into` represented by it |
 | EmbeddingRate | `encode`: T+A | `encode_step`: T+A (same core) | `encode_step_into`: T+A; equivalent `encode_into` represented by it |
-| Poisson | Scalar `encode`: T+A | Not applicable: no `Encoder` implementation or step API | Not applicable: no sink API |
+| Poisson | Scalar `encode`: T+A | Scalar `encode_step`: not measured; no `Encoder` implementation | Not applicable: no sink API |
 | `ModulatedEncoder` | Not timed or allocation-profiled | Not timed or allocation-profiled | Allocation-only Delta `encode_step_with_modulators_into` smoke; no per-encoder modulated timing coverage |
 
 Scale and fixture details:

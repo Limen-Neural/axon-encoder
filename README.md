@@ -125,7 +125,7 @@ The returning path (`encode`), step path (`encode_step`), and reusable path
 (`encode_into` / `encode_step_into`) preserve the corresponding spikes, order,
 and state advancement. Warm reusable path zero-allocation claims apply only to
 rows reporting zero in `cargo bench --bench allocations`, for the measured
-fixture and scale. See [measured coverage and local regression procedure](REVIEW.md#measured-encoder-coverage)
+fixture and scale. See [measured coverage and local regression procedure](https://github.com/Limen-Neural/axon-encoder/blob/main/REVIEW.md#measured-encoder-coverage)
 for the matrix, warm-up details, and separate timing/allocation comparisons.
 The local Rust 1.98.1 allocation report for these fixtures recorded zero
 allocations and zero bytes for all 36 reusable rows, including the Delta
