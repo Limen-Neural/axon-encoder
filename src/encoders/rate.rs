@@ -317,6 +317,13 @@ impl RateEncoder {
     ///
     /// Allocation-free once the per-channel accumulators are sized, which
     /// happens on the first call for a given channel count.
+    ///
+    /// Width-change policy: the accumulators only ever grow to the widest slice
+    /// seen. When a later call is narrower, the omitted trailing channels are
+    /// treated as absent for that tick and their pending backlog and phase are
+    /// cleared, so a frozen debt cannot resurface on a subsequent wider call.
+    /// This matches the zero-gain silence semantics in the loop. See the
+    /// [`encode_step`](Encoder::encode_step) docs for the caller-facing contract.
     fn encode_step_with_rate_scale_into<S: SpikeSink + ?Sized>(
         &mut self,
         input: &[f32],
@@ -344,6 +351,17 @@ impl RateEncoder {
             let increment = self.streaming_increment(value, rate_scale);
             self.apply_streaming_increment(i, increment);
             self.emit_capped_channel_spikes(channel, i, sink);
+        }
+
+        // Width-shrink policy (see `encode_step` docs): a channel omitted from
+        // this step's slice is treated as absent/inactive for the tick, exactly
+        // like the zero-gain silence branch above. Clear its backlog and phase
+        // so a frozen debt cannot resurrect and burst on a later, wider call.
+        // `ensure_accumulators` never shrinks the vectors, so we retain the
+        // allocation and only reset the state of the omitted tail.
+        for idx in input.len()..self.pending_spikes.len() {
+            self.pending_spikes[idx] = 0;
+            self.phases[idx] = 0.0;
         }
     }
 
@@ -414,6 +432,19 @@ impl Encoder for RateEncoder {
         self.encode_with_rate_scale(input, 1.0)
     }
 
+    /// # Width-change policy
+    ///
+    /// The per-channel streaming accumulators size to the widest `input` slice
+    /// ever seen and never shrink. When a later step passes a *shorter* slice,
+    /// the omitted trailing channels are treated as absent (not present this
+    /// tick): their pending spike backlog and fractional phase are cleared, the
+    /// same way a zero `firing_rate_scale` silences a channel. A frozen backlog
+    /// therefore cannot resurrect and burst on a subsequent wider call. If you
+    /// instead want an unsampled channel's debt to persist across a narrower
+    /// tick, keep the slice at full width and pass its previous value (or the
+    /// range minimum) rather than dropping the channel. This policy applies
+    /// identically to [`encode_step`](Encoder::encode_step) and
+    /// [`encode_step_into`](Encoder::encode_step_into), which share the same core.
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
         self.encode_step_with_rate_scale(input, 1.0)
     }
@@ -677,6 +708,46 @@ mod tests {
         // channels must not invent a ch1 spike.
         let quiet = encoder.encode_step(&[0.0, 0.0]);
         assert!(quiet.spikes.is_empty());
+    }
+
+    #[test]
+    fn test_rate_encoder_step_omitted_channel_pending_cleared() {
+        // Width-change policy (3): a channel omitted from a narrower step is
+        // treated as absent and its backlog is dropped, so it cannot resurrect
+        // on a later wider call. The streaming/accumulator path is deterministic
+        // so exact spike counts are asserted.
+        let mut encoder = RateEncoder::try_new(0.0, 1e6, (0.0, 1.0), 1.0).unwrap();
+
+        // Two-channel burst well past the per-channel cap: 1e6 Hz * 1 s spikes
+        // each, capped to MAX_SPIKES_PER_CHANNEL_PER_STEP with the remainder
+        // queued as a real backlog on both channels.
+        let cap = RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP;
+        let burst = encoder.encode_step(&[1.0, 1.0]);
+        assert_eq!(burst.spikes.len(), 2 * cap);
+        // Channel 1 now holds a large frozen backlog: 1e6 - cap whole spikes.
+        assert!(encoder.pending_spikes[1] > 0);
+
+        // A one-channel quiet step drains channel 0's cap and, under policy (3),
+        // clears the omitted channel 1's backlog entirely.
+        let quiet = encoder.encode_step(&[0.0]);
+        assert_eq!(quiet.spikes.len(), cap);
+        assert_eq!(
+            encoder.pending_spikes[1], 0,
+            "omitted channel backlog must be cleared, not frozen"
+        );
+
+        // A later two-channel step with both channels silent must not resurrect
+        // channel 1's dropped backlog. Channel 0 legitimately keeps draining its
+        // own (never-omitted) backlog, so only assert channel 1 stays silent.
+        let resumed = encoder.encode_step(&[0.0, 0.0]);
+        assert!(
+            resumed.spikes.iter().all(|spike| spike.channel == 0),
+            "cleared channel-1 backlog must not burst on a later wider call"
+        );
+        assert_eq!(
+            encoder.pending_spikes[1], 0,
+            "channel 1 must remain cleared after a wider call"
+        );
     }
 
     #[test]
