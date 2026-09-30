@@ -20,12 +20,20 @@
 //!   * The durable population invariant is therefore *not* a hardcoded
 //!     `0.951 / 0.875` figure but the endpoint bias: the center-of-mass decode
 //!     at `x = max` is strictly less than `max` for `N > 1` **when the neighbor
-//!     tuning responses are representable (non-underflowing)**, because the
-//!     Gaussian neighbors all sit below the maximum and pull the CoM inward. For
-//!     very narrow tuning widths the lower neurons' response underflows to
-//!     exactly `0.0`, the inward pull vanishes, and the CoM lands on `max`
-//!     exactly; the strict inequality is only claimed and tested in the
-//!     representable regime.
+//!     tuning responses survive the floating-point accumulation** — i.e. when a
+//!     lower neuron's contribution is large enough that adding it to the
+//!     endpoint term actually changes the sum (`1.0 + contribution != 1.0`),
+//!     rather than being lost to rounding against it. When that holds, the
+//!     Gaussian neighbors all sit below the maximum and pull the CoM inward.
+//!     A merely *nonzero* (representable, non-underflowing) neighbor response is
+//!     **not** sufficient: for a narrow-but-not-underflowing width the lower
+//!     neuron's response can be a tiny positive value (e.g. `exp(-50) ≈
+//!     1.93e-22` at `n = 2`, range `(0, 1)`, width `0.1`) that is nonzero yet
+//!     lost when summed against the endpoint's `1.0` (`1.0 + 1.93e-22 == 1.0`
+//!     in f64), so the CoM still lands on `max` exactly. For even narrower
+//!     widths the response underflows all the way to exactly `0.0` and the same
+//!     collapse happens for a stronger reason. The strict inequality is only
+//!     claimed and tested where the neighbor contribution survives accumulation.
 //!
 //! There is intentionally **no public decoder API**: these inverses live in the
 //! test tree until a later 0.5 design explicitly asks for one.
@@ -239,6 +247,18 @@ fn latency_zero_max_latency_is_non_invertible() {
 /// The best point estimate for a quantized bin is its center, so decode bin `b`
 /// to `x = min + ((b + 0.5) / cycle_steps) * (max - min)`. The reconstruction
 /// error is then bounded by half a bin width.
+///
+/// # Scope of the half-bin bound
+///
+/// The half-bin reconstruction bound is only meaningful for `cycle_steps` small
+/// enough that f64 can resolve a single bin — i.e. where the relative bin width
+/// `1 / cycle_steps` is well above f64's machine epsilon (`≈ 2.22e-16`). For
+/// astronomically large `cycle_steps` (relative bin width approaching or below
+/// `2^-52`), neither the forward `normalized * cycle_steps` product nor this
+/// inverse can distinguish adjacent bins in f64, so the advertised `0.5 /
+/// cycle_steps` bound stops being physically resolvable. The tests exercise the
+/// bound at resolvable cycle sizes; they make no claim at cycle sizes below
+/// f64's resolution.
 fn phase_decode(bin: u64, cycle_steps: u64, range: (f32, f32)) -> f64 {
     let (min, max) = (range.0 as f64, range.1 as f64);
     min + ((bin as f64 + 0.5) / cycle_steps as f64) * (max - min)
@@ -474,12 +494,32 @@ impl PopulationOracle {
         }
     }
 
+    /// The effective tuning width the encoder's unmodulated (identity,
+    /// `sensitivity_scale == 1.0`) path actually uses.
+    ///
+    /// `PopulationEncoder::effective_tuning_width(1.0)` takes the `>= 1.0`
+    /// branch and returns `(self.tuning_width / 1.0).max(f32::EPSILON)` ==
+    /// `self.tuning_width.max(f32::EPSILON)`: it FLOORS the configured width at
+    /// `f32::EPSILON` (see `src/encoders/population.rs`). Any configured width in
+    /// `(0, f32::EPSILON)` is therefore clamped up to `f32::EPSILON` before the
+    /// Gaussian is evaluated. The oracle mirrors that exact floor so it does not
+    /// diverge from the production encoder for sub-epsilon widths; for widths
+    /// already `>= f32::EPSILON` (e.g. 0.1, 0.2) this is a no-op.
+    fn effective_width(&self) -> f64 {
+        self.width.max(f32::EPSILON as f64)
+    }
+
     /// Gaussian tuning response of neuron `i` to `input`, matching the encoder's
-    /// `get_rate_with_tuning_width`.
+    /// `get_rate_with_tuning_width` evaluated at the encoder's effective width.
+    ///
+    /// The width used here is [`Self::effective_width`], which floors the
+    /// configured width at `f32::EPSILON` exactly as
+    /// `effective_tuning_width(1.0)` does on the encoder's unmodulated path.
     fn response(&self, input: f64, i: usize) -> f64 {
         let preferred = self.preferred(i);
         let distance = (input - preferred).abs();
-        (-(distance * distance) / (2.0 * self.width * self.width)).exp()
+        let width = self.effective_width();
+        (-(distance * distance) / (2.0 * width * width)).exp()
     }
 
     /// Pooled center-of-mass decode: the tuning-weighted mean of preferred
@@ -690,6 +730,147 @@ fn population_com_strict_bias_fails_under_narrow_width_underflow() {
     assert!(
         com_at_max >= range.1 as f64,
         "the strict inward-bias inequality must NOT hold under underflow"
+    );
+}
+
+#[test]
+fn population_com_strict_bias_fails_when_neighbor_is_nonzero_but_lost_to_rounding() {
+    // A SHARPER limit than plain underflow: the strict inward-bias inequality
+    // can fail even when the lower neuron's response is REPRESENTABLE (strictly
+    // nonzero, not underflowed). "Nonzero" is not the right condition; the
+    // neighbor contribution must SURVIVE THE FLOATING-POINT ACCUMULATION — be
+    // large enough that adding it to the endpoint's 1.0 actually changes the
+    // sum.
+    //
+    // n = 2 over (0, 1), width = 0.1: the lower neuron sits at 0.0, so at
+    // input = 1.0 its response is exp(-(1.0)^2 / (2 * 0.1^2)) = exp(-50)
+    // ≈ 1.93e-22. That value is strictly greater than 0.0 (NOT underflowed),
+    // yet `center_of_mass(1.0)` computes (0.0 * 1.93e-22 + 1.0 * 1.0) /
+    // (1.93e-22 + 1.0), and `1.0 + 1.93e-22 == 1.0` in f64, so the ratio rounds
+    // back to exactly 1.0 == max. The inward pull is lost to rounding even
+    // though the response is representable.
+    let range = (0.0f32, 1.0f32);
+    let oracle = PopulationOracle {
+        n: 2,
+        range,
+        width: 0.1,
+    };
+
+    // The lower neuron's response is strictly positive: it did NOT underflow to
+    // zero. This is the crux — the condition is not "nonzero" but "survives
+    // accumulation".
+    let lower_response = oracle.response(range.1 as f64, 0);
+    assert!(
+        lower_response > 0.0,
+        "width 0.1 keeps the lower neuron's response representable (nonzero), \
+         got {lower_response}"
+    );
+
+    // Yet the neighbor contribution is lost when summed against the endpoint's
+    // 1.0, so the CoM at max still equals max exactly: the strict inequality
+    // does NOT hold despite the nonzero response.
+    let com_at_max = oracle.center_of_mass(range.1 as f64);
+    assert_eq!(
+        com_at_max, range.1 as f64,
+        "a representable-but-rounding-lost neighbor still collapses the CoM onto max"
+    );
+
+    // Contrast with width 0.2, where the neighbor contribution DOES survive
+    // accumulation and the strict inward bias genuinely holds (≈ 0.99999627).
+    let representable = PopulationOracle {
+        n: 2,
+        range,
+        width: 0.2,
+    };
+    let com_representable = representable.center_of_mass(range.1 as f64);
+    assert!(
+        com_representable < range.1 as f64,
+        "width 0.2 keeps the neighbor contribution alive, so CoM {com_representable} \
+         is strictly below max"
+    );
+}
+
+#[test]
+fn population_oracle_floors_sub_epsilon_width_like_the_encoder() {
+    // The oracle must mirror the encoder's unmodulated-path width floor. The
+    // encoder's `effective_tuning_width(1.0)` returns
+    // `self.tuning_width.max(f32::EPSILON)`, so a configured width in
+    // (0, f32::EPSILON) is clamped UP to f32::EPSILON before the Gaussian is
+    // evaluated (see `src/encoders/population.rs`). Without the floor the oracle
+    // would underflow the neighbor to 0.0 and wrongly report CoM == max, while
+    // the encoder still fires the lower neuron.
+    //
+    // Setup mirrors the encoder's own
+    // `minimum_positive_width_still_fires_at_both_endpoint_preferences` unit
+    // test: n = 2 over (0, 2e-7), configured width f32::MIN_POSITIVE (far below
+    // f32::EPSILON). At the effective (floored) width f32::EPSILON the lower
+    // neuron's response at max is exp(-(2e-7)^2 / (2 * f32::EPSILON^2)), a
+    // healthy fraction (~0.24), NOT an underflow.
+    let range = (0.0f32, 2e-7f32);
+    let configured_width = f32::MIN_POSITIVE as f64;
+    let oracle = PopulationOracle {
+        n: 2,
+        range,
+        width: configured_width,
+    };
+
+    // The oracle floors the width at f32::EPSILON, matching effective_tuning_width(1.0).
+    assert!(
+        configured_width < f32::EPSILON as f64,
+        "the configured width must be sub-epsilon for this test to be meaningful"
+    );
+    assert_eq!(
+        oracle.effective_width(),
+        f32::EPSILON as f64,
+        "the oracle must clamp a sub-epsilon width up to f32::EPSILON"
+    );
+
+    // With the floored width the lower neuron's response at max is a healthy
+    // fraction, not an underflow to 0.0.
+    let lower_response = oracle.response(range.1 as f64, 0);
+    let span = range.1 as f64;
+    let floored = f32::EPSILON as f64;
+    let expected = (-(span * span) / (2.0 * floored * floored)).exp();
+    assert!(
+        lower_response > 0.1,
+        "floored width must keep the lower neuron firing (~0.24), got {lower_response}"
+    );
+    assert!(
+        (lower_response - expected).abs() < 1e-12,
+        "oracle response {lower_response} must match the analytically floored value {expected}"
+    );
+
+    // Because the neighbor now contributes meaningfully, the CoM at max is
+    // strictly below max — the oracle no longer diverges from the encoder by
+    // silently underflowing.
+    let com_at_max = oracle.center_of_mass(range.1 as f64);
+    assert!(
+        com_at_max < range.1 as f64,
+        "with the width floor the CoM at max {com_at_max} is biased inward, below {}",
+        range.1
+    );
+
+    // Cross-check against the PRODUCTION encoder: configured with the same
+    // sub-epsilon width it still fires the lower neuron (neuron 0) at the max
+    // endpoint, exactly as its own unit test asserts. This ties the oracle's
+    // floored behavior to real encoder output.
+    let mut encoder =
+        PopulationEncoder::try_new(2, range, f32::MIN_POSITIVE).expect("valid population");
+    let mut lower_fired = false;
+    for _ in 0..2_000 {
+        if encoder
+            .encode(&[range.1])
+            .spikes
+            .iter()
+            .any(|s| s.channel == 0)
+        {
+            lower_fired = true;
+            break;
+        }
+    }
+    assert!(
+        lower_fired,
+        "the encoder fires the lower neuron under a sub-epsilon width, so the oracle must too"
     );
 }
 
