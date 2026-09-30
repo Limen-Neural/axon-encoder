@@ -331,13 +331,15 @@ impl RateEncoder {
     /// happens on the first call for a given channel count.
     ///
     /// Width-change policy: the accumulators only ever grow to the widest slice
-    /// seen. When a later call is narrower, the omitted trailing channels are
-    /// treated as absent for that tick and their pending backlog and phase are
-    /// cleared, so a frozen debt cannot resurface on a subsequent wider call.
-    /// This matches the zero-gain silence semantics in the loop. An empty slice
-    /// is the narrowest such call: every live channel is omitted, so the whole
-    /// live width is cleared. See the [`encode_step`](Encoder::encode_step) docs
-    /// for the caller-facing contract.
+    /// seen. When a later *non-empty* call is narrower, the omitted trailing
+    /// channels are treated as absent for that tick and their pending backlog
+    /// and phase are cleared, so a frozen debt cannot resurface on a subsequent
+    /// wider call. This matches the zero-gain silence semantics in the loop. An
+    /// empty slice is *not* a width shrink: it means a tick elapsed with nothing
+    /// sampled (time advanced), so it preserves every channel's backlog and lets
+    /// it keep draining on later ticks, exactly like the direct path. See the
+    /// [`encode_step`](Encoder::encode_step) docs for the caller-facing
+    /// contract.
     ///
     /// Only the channels active on the previous step (`self.live_width`) are
     /// cleared on a shrink, not the entire retained tail, so a narrow tick after
@@ -348,13 +350,14 @@ impl RateEncoder {
         rate_scale: f32,
         sink: &mut S,
     ) {
-        // An empty slice omits every channel: apply the width-shrink policy to
-        // the whole live width and return. Doing this *before* the early return
-        // is what stops a capped backlog from a prior wider step surviving an
-        // empty tick and resurrecting on a later, wider call (LIM-1333).
+        // An empty slice means a tick elapsed with no new sample: time
+        // advanced but nothing was sampled. It is not a width shrink to fewer
+        // active channels, so it must not clear any live backlog. Return
+        // without touching state; the existing capped backlog drains on later
+        // ticks exactly as the direct path does. (This is the established v0.6
+        // streaming contract, exercised by
+        // `empty_input_preserves_rate_encoder_backlog_through_the_wrapper`.)
         if input.is_empty() {
-            self.clear_channel_state(0..self.live_width);
-            self.live_width = 0;
             return;
         }
 
@@ -485,9 +488,11 @@ impl Encoder for RateEncoder {
     /// therefore cannot resurrect and burst on a subsequent wider call. If you
     /// instead want an unsampled channel's debt to persist across a narrower
     /// tick, keep the slice at full width and pass its previous value (or the
-    /// range minimum) rather than dropping the channel. An empty slice is the
-    /// narrowest case: it omits every channel, so all live backlog and phase are
-    /// cleared and the step emits nothing. This policy applies identically to
+    /// range minimum) rather than dropping the channel. An *empty* slice is a
+    /// different case: it means a tick elapsed with nothing sampled (time
+    /// advanced), not a shrink to fewer active channels. It preserves every
+    /// channel's backlog and phase and emits nothing new, so the existing capped
+    /// backlog keeps draining on later ticks. This policy applies identically to
     /// [`encode_step`](Encoder::encode_step) and
     /// [`encode_step_into`](Encoder::encode_step_into), which share the same core.
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
@@ -798,45 +803,48 @@ mod tests {
     }
 
     #[test]
-    fn test_rate_encoder_step_empty_input_clears_pending() {
-        // FINDING 1 (LIM-1333): an empty slice is the narrowest possible step,
-        // so it omits every channel and must apply the width-shrink policy (3),
-        // clearing all live backlog before it can resurrect on a later wider
-        // call. The early `input.is_empty()` return previously skipped the
-        // clearing loop, freezing the debt.
+    fn test_rate_encoder_step_empty_input_preserves_and_drains_backlog() {
+        // An empty slice means a tick elapsed with no new sample (time advanced,
+        // nothing sampled). It is NOT a width shrink to fewer active channels,
+        // so it must preserve the capped per-channel backlog and let it keep
+        // draining on subsequent ticks, exactly as the direct path does. This is
+        // the established v0.6 streaming contract also asserted through the
+        // wrapper by `empty_input_preserves_rate_encoder_backlog_through_the_wrapper`.
         let mut encoder = RateEncoder::try_new(0.0, 1e6, (0.0, 1.0), 1.0).unwrap();
         let cap = RateEncoder::MAX_SPIKES_PER_CHANNEL_PER_STEP;
 
         // Build a real capped backlog on two channels.
         let burst = encoder.encode_step(&[1.0, 1.0]);
         assert_eq!(burst.spikes.len(), 2 * cap);
-        assert!(encoder.pending_spikes[0] > 0);
-        assert!(encoder.pending_spikes[1] > 0);
+        let pending0_before = encoder.pending_spikes[0];
+        let pending1_before = encoder.pending_spikes[1];
+        assert!(pending0_before > 0);
+        assert!(pending1_before > 0);
 
-        // An empty step omits every channel: no spikes, and both channels'
-        // backlog and phase must be cleared, not frozen.
+        // An empty step emits nothing new and must not touch the backlog: it
+        // neither drains nor clears here (no channel is iterated), so the
+        // pending counts are preserved exactly for later draining.
         let empty = encoder.encode_step(&[]);
         assert!(empty.spikes.is_empty(), "an empty step must emit nothing");
         assert_eq!(
-            encoder.pending_spikes[0], 0,
-            "empty step must clear channel 0 backlog"
+            encoder.pending_spikes[0], pending0_before,
+            "empty step must preserve channel 0 backlog"
         );
         assert_eq!(
-            encoder.pending_spikes[1], 0,
-            "empty step must clear channel 1 backlog"
+            encoder.pending_spikes[1], pending1_before,
+            "empty step must preserve channel 1 backlog"
         );
-        assert_eq!(encoder.phases[0], 0.0);
-        assert_eq!(encoder.phases[1], 0.0);
 
-        // A later two-channel step with both channels silent must not resurrect
-        // any dropped backlog.
+        // A later two-channel silent step keeps draining the preserved backlog
+        // on both channels, one cap per channel per step.
         let resumed = encoder.encode_step(&[0.0, 0.0]);
-        assert!(
-            resumed.spikes.is_empty(),
-            "cleared backlog must not burst after an empty step"
+        assert_eq!(
+            resumed.spikes.len(),
+            2 * cap,
+            "preserved backlog must keep draining after an empty step"
         );
-        assert_eq!(encoder.pending_spikes[0], 0);
-        assert_eq!(encoder.pending_spikes[1], 0);
+        assert_eq!(encoder.pending_spikes[0], pending0_before - cap as u64);
+        assert_eq!(encoder.pending_spikes[1], pending1_before - cap as u64);
     }
 
     #[test]
