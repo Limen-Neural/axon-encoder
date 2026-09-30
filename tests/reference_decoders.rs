@@ -324,6 +324,22 @@ fn rate_batch_is_bernoulli_capped_while_streaming_recovers_hz() {
         batch_hz <= 110.0,
         "batch count-rate {batch_hz} Hz must stay near the ~100 Hz Bernoulli ceiling"
     );
+    // Lower bound: with probability = 1 - exp(-rate*dt) and rate*dt = 50 the
+    // per-call spike probability is indistinguishable from 1.0, so essentially
+    // every call must emit its one spike. Without this bound `batch_hz <= 110`
+    // is trivially satisfied even by a batch path that emits nothing, so a
+    // batch-silencing regression would pass silently. The chance of even a
+    // single miss across 2000 calls is ~2000 * exp(-50) ~= 4e-19, so requiring
+    // that every call spiked is safe from flaking.
+    assert_eq!(
+        batch_count, calls,
+        "at rate*dt = 50 every batch call is near-certain to emit exactly one spike"
+    );
+    assert!(
+        batch_hz >= 90.0,
+        "batch count-rate {batch_hz} Hz must sit near the ~100 Hz ceiling from below, \
+         not collapse toward zero"
+    );
 
     // Empirical streaming decode over the same elapsed time recovers ~5 kHz.
     encoder.reset();
@@ -407,6 +423,86 @@ fn population_preferred_grid_covers_both_endpoints() {
 }
 
 #[test]
+fn population_peak_firer_pins_the_encoder_to_the_endpoint_grid() {
+    // Regression guard that OBSERVES THE PRODUCTION ENCODER, not just the copied
+    // helper: drive `PopulationEncoder::encode` thousands of times and assert
+    // that the empirically most-active neuron matches the neuron the current
+    // `i / (n - 1)` grid predicts. This is what ties the oracle to real output
+    // so a grid change breaks the test.
+    //
+    // Setup: N = 10 over (0, 100), width 10, probing at x = 800 / 9, which is
+    // exactly neuron 8's preferred value on the CURRENT grid. Two things follow:
+    //
+    //   * On the current `i / (n - 1)` grid, preferred[8] == x, so neuron 8
+    //     fires with probability exp(0) = 1.0 on EVERY call (a deterministic
+    //     anchor), while its nearest competitors (neurons 7 and 9) fire at only
+    //     ~0.54. Neuron 8 is therefore the unambiguous highest-frequency firer.
+    //   * On the OLD `i / n` grid the same neurons would sit at 80 and 90, so
+    //     the closest neuron to x = 88.9 would be neuron 9 (pref 90), not neuron
+    //     8. The predicted peak differs between the two grids, so reverting the
+    //     encoder to `i / n` moves the observed peak and fails this test.
+    let n = 10usize;
+    let range = (0.0f32, 100.0f32);
+    let width = 10.0f32;
+    let probe = 800.0f32 / 9.0; // == population_preferred(8, ...) on the current grid.
+    let mut encoder = PopulationEncoder::try_new(n, range, width).expect("valid population");
+
+    // The neuron whose preferred value is closest to the probe under the
+    // current grid. Computed from the oracle helper, not hardcoded.
+    let predicted_peak = (0..n)
+        .min_by(|&a, &b| {
+            let da = (population_preferred(a, n, range) - probe as f64).abs();
+            let db = (population_preferred(b, n, range) - probe as f64).abs();
+            da.partial_cmp(&db).unwrap()
+        })
+        .unwrap();
+    assert_eq!(
+        predicted_peak, 8,
+        "current grid predicts neuron 8 as the peak"
+    );
+
+    // Empirical per-neuron firing counts over many independent encode calls.
+    let iterations = 8_000u64;
+    let mut counts = vec![0u64; n];
+    for _ in 0..iterations {
+        for spike in encoder.encode(&[probe]).spikes {
+            counts[spike.channel as usize] += 1;
+        }
+    }
+
+    // Neuron 8 fires with probability 1.0 on the current grid, so it must be
+    // present on every call.
+    assert_eq!(
+        counts[predicted_peak], iterations,
+        "neuron {predicted_peak} sits exactly on the probe and must fire every call"
+    );
+
+    // The empirically most-active neuron must be the one the current grid
+    // predicts. On the old i/n grid the peak would land elsewhere (neuron 9),
+    // so this assertion actually distinguishes the two grids.
+    let observed_peak = (0..n).max_by_key(|&i| counts[i]).unwrap();
+    assert_eq!(
+        observed_peak, predicted_peak,
+        "observed peak neuron {observed_peak} must match the i/(n-1) grid prediction {predicted_peak}; \
+         counts = {counts:?}"
+    );
+
+    // The peak must be a strict, comfortable margin above its nearest rival so
+    // sampling noise cannot flip the winner: neuron 8 fires ~2x as often as the
+    // ~0.54-probability neurons 7 and 9.
+    let runner_up = (0..n)
+        .filter(|&i| i != observed_peak)
+        .map(|i| counts[i])
+        .max()
+        .unwrap();
+    assert!(
+        counts[observed_peak] > runner_up + iterations / 4,
+        "peak neuron {observed_peak} ({}) must dominate its runner-up ({runner_up}) by a wide margin",
+        counts[observed_peak]
+    );
+}
+
+#[test]
 fn population_center_of_mass_is_biased_inward_at_the_maximum() {
     // Durable invariant (replaces the stale 0.951/0.875 numbers): for N > 1 the
     // center-of-mass decode at x = range max is STRICTLY LESS THAN max, because
@@ -455,8 +551,22 @@ fn population_fires_at_tick_zero_and_channels_map_to_neurons() {
     let mut encoder = PopulationEncoder::try_new(n, range, width).expect("valid population");
 
     // Single input channel: all spikes are at tick zero and channels are in
-    // 0..n mapping directly to neuron indices.
-    let out = encoder.encode(&[0.5]);
+    // 0..n mapping directly to neuron indices. Probe exactly at neuron 4's
+    // preferred value (4 / 7 on the current grid) so that neuron fires with
+    // probability exp(0) = 1.0 and the output is guaranteed non-empty. A bare
+    // `encode(&[0.5])` could emit zero spikes (~1 in 2400 runs) because every
+    // neuron independently misses on one unseeded-RNG call; anchoring on a
+    // deterministic neuron removes that flake without weakening the tick-zero
+    // or channel-mapping checks below.
+    let deterministic_neuron = 4usize;
+    let probe = (deterministic_neuron as f32) / ((n - 1) as f32); // == preferred[4].
+    let out = encoder.encode(&[probe]);
+    assert!(
+        out.spikes
+            .iter()
+            .any(|s| s.channel as usize == deterministic_neuron),
+        "the neuron sitting on the probe (prob 1.0) must always fire"
+    );
     assert!(!out.spikes.is_empty());
     assert!(
         out.spikes.iter().all(|s| s.timestamp == TickOffset::ZERO),
