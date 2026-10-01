@@ -217,8 +217,19 @@ fn write_outputs(out_dir: &Path, stim: &[Vec<f32>], case: &Case) {
         &NpyArray::I64(&case.events.neuron_id),
     );
     write_npy(&out_dir.join("amp.npy"), &NpyArray::F32(&case.events.amp));
-    let stim_flat: Vec<f32> = stim.iter().flatten().copied().collect();
-    write_npy2d(&out_dir.join("stimulus.npy"), &stim_flat, CALLS, CHANNELS);
+    // Window models advance several ticks per call, so repeat each call's row
+    // to keep stimulus rows tick-aligned with spike timestamps.
+    let ticks_per_call = (case.n_steps as usize / stim.len().max(1)).max(1);
+    let stim_flat: Vec<f32> = stim
+        .iter()
+        .flat_map(|row| row.iter().copied().cycle().take(row.len() * ticks_per_call))
+        .collect();
+    write_npy2d(
+        &out_dir.join("stimulus.npy"),
+        &stim_flat,
+        CALLS * ticks_per_call,
+        CHANNELS,
+    );
 }
 
 fn write_meta(out_dir: &Path, name: &str, case: &Case) {
