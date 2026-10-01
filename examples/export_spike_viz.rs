@@ -166,20 +166,17 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
     }
 }
 
-/// One seeded train per channel: `num_steps` bins of Bernoulli draws at
-/// the channel's rate. Draw order is channel-major, front to back.
+/// One seeded Bernoulli draw per (channel, step): the channel's rate at
+/// step `t` follows the same time-varying stimulus every encoder consumes.
+/// Draw order is channel-major, front to back (documented for reproducibility).
 fn poisson_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
     let enc = PoissonEncoder::new(CALLS);
     let mut events = Events::new();
-    for (ch, &mid) in stim[CALLS / 2].iter().enumerate() {
-        let rate_hz = 50.0 + 300.0 * mid;
-        for (bin, fired) in enc
-            .encode_rate_hz_with_rng(rate_hz, DT_SECONDS as f32, rng)
-            .iter()
-            .enumerate()
-        {
-            if *fired != 0 {
-                events.t.push(bin as i64);
+    for ch in 0..CHANNELS {
+        for (step, row) in stim.iter().enumerate() {
+            let rate_hz = 50.0 + 300.0 * row[ch];
+            if enc.encode_rate_hz_step_with_rng(rate_hz, DT_SECONDS as f32, rng) != 0 {
+                events.t.push(step as i64);
                 events.neuron_id.push(ch as i64);
                 events.amp.push(1.0);
             }
@@ -189,7 +186,7 @@ fn poisson_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
         events,
         n_neurons: CHANNELS,
         n_steps: CALLS as u64,
-        config: serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus_mid"}),
+        config: serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus[t][ch]"}),
     }
 }
 
