@@ -142,10 +142,11 @@ impl PopulationEncoder {
     ///
     /// Every public encoding path on this encoder routes through here, so the
     /// returning and sink-based APIs cannot drift apart.
-    fn encode_with_sensitivity_scale_into<S: SpikeSink + ?Sized>(
+    fn encode_with_sensitivity_scale_into<S: SpikeSink + ?Sized, R: rand::Rng + ?Sized>(
         &mut self,
         input: &[f32],
         sensitivity_scale: f32,
+        rng: &mut R,
         sink: &mut S,
     ) {
         let spike_channels = input
@@ -166,14 +167,13 @@ impl PopulationEncoder {
         // so small positive gains never produce near-universal firing.
         let rate_gain = sensitivity_scale.min(1.0);
 
-        let mut rng = rand::rng();
         for (input_channel, &value) in input.iter().enumerate() {
             let channel_base = input_channel * self.num_neurons;
             for i in 0..self.num_neurons {
                 let channel = u16::try_from(channel_base + i)
                     .expect("population channel count was validated above");
                 let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
-                if crate::rng::gen_unit_f32_with_rng(&mut rng) < rate {
+                if crate::rng::gen_unit_f32_with_rng(rng) < rate {
                     sink.push(SpikeEvent::at_step_start(channel, true));
                 }
             }
@@ -186,8 +186,44 @@ impl PopulationEncoder {
         sensitivity_scale: f32,
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        self.encode_with_sensitivity_scale_into(input, sensitivity_scale, &mut output.spikes);
+        let mut rng = rand::rng();
+        self.encode_with_sensitivity_scale_into(
+            input,
+            sensitivity_scale,
+            &mut rng,
+            &mut output.spikes,
+        );
         output
+    }
+
+    /// [`Encoder::encode`] with a caller-supplied RNG.
+    ///
+    /// Pass a seeded generator (for example `StdRng::seed_from_u64`) when the
+    /// spike selection must be reproducible; the draw order is one sample per
+    /// tuned neuron, input channel by input channel.
+    ///
+    /// [`Encoder::encode`]: crate::Encoder::encode
+    pub fn encode_with_rng<R: rand::Rng + ?Sized>(
+        &mut self,
+        input: &[f32],
+        rng: &mut R,
+    ) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        self.encode_with_sensitivity_scale_into(input, 1.0, rng, &mut output.spikes);
+        output
+    }
+
+    /// [`Encoder::encode_step`] with a caller-supplied RNG. Identical to
+    /// [`encode_with_rng`](Self::encode_with_rng): batch and streaming share
+    /// one path for this encoder.
+    ///
+    /// [`Encoder::encode_step`]: crate::Encoder::encode_step
+    pub fn encode_step_with_rng<R: rand::Rng + ?Sized>(
+        &mut self,
+        input: &[f32],
+        rng: &mut R,
+    ) -> EncodedOutput {
+        self.encode_with_rng(input, rng)
     }
 }
 
@@ -220,7 +256,8 @@ impl Encoder for PopulationEncoder {
 
     fn encode_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
         crate::sink::through_chunks(sink, |sink| {
-            self.encode_with_sensitivity_scale_into(input, 1.0, sink)
+            let mut rng = rand::rng();
+            self.encode_with_sensitivity_scale_into(input, 1.0, &mut rng, sink)
         });
     }
 
@@ -257,7 +294,8 @@ impl ModulatedEncoder for PopulationEncoder {
     ) {
         let sensitivity_scale = gains.sanitize().sensitivity_scale;
         crate::sink::through_chunks(sink, |sink| {
-            self.encode_with_sensitivity_scale_into(input, sensitivity_scale, sink)
+            let mut rng = rand::rng();
+            self.encode_with_sensitivity_scale_into(input, sensitivity_scale, &mut rng, sink)
         });
     }
 
@@ -313,6 +351,30 @@ impl ModulatedEncoder for PopulationEncoder {
 mod tests {
     use super::*;
     use crate::ModulatedEncoder;
+
+    #[test]
+    fn seeded_encode_with_rng_is_reproducible() {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        let input = [0.5, -0.25];
+        let mut enc_a = PopulationEncoder::new(4, (0.0, 1.0), 0.2);
+        let mut enc_b = PopulationEncoder::new(4, (0.0, 1.0), 0.2);
+        let mut a = StdRng::seed_from_u64(0xA11CE);
+        let mut b = StdRng::seed_from_u64(0xA11CE);
+        assert_eq!(
+            enc_a.encode_step_with_rng(&input, &mut a),
+            enc_b.encode_step_with_rng(&input, &mut b)
+        );
+
+        // A different seed may diverge but stays internally consistent.
+        let mut c = StdRng::seed_from_u64(0xC0FFEE);
+        let mut d = StdRng::seed_from_u64(0xC0FFEE);
+        assert_eq!(
+            enc_a.encode_with_rng(&input, &mut c),
+            enc_b.encode_with_rng(&input, &mut d)
+        );
+    }
 
     #[test]
     fn test_population_encoder() {
