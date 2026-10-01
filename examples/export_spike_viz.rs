@@ -78,7 +78,7 @@ impl Events {
         for spike in &out.spikes {
             self.t.push(cursor.absolute(spike.timestamp) as i64);
             self.neuron_id.push(i64::from(spike.channel));
-            self.amp.push(if spike.polarity { 1.0 } else { 0.0 });
+            self.amp.push(if spike.polarity { 1.0 } else { -1.0 });
         }
     }
 }
