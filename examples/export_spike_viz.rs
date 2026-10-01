@@ -38,6 +38,9 @@ const CHANNELS: usize = 8;
 const DT_SECONDS: f64 = 0.001;
 /// Single seed for all stochastic paths.
 const SEED: u64 = 0x5EED_0001;
+/// Environment variable carrying the exporting commit's SHA (set by the
+/// generation script).
+const GIT_SHA_ENV: &str = "AXON_ENCODER_GIT_SHA";
 
 /// Shared stimulus: `stimulus[call][channel]`, a deterministic mixed
 /// sine/ramp so every encoder consumes the same signal.
@@ -96,6 +99,149 @@ fn drive(encoder: &mut dyn Encoder, stimulus: &[Vec<f32>]) -> (Events, u64) {
     (events, n_steps)
 }
 
+struct Case {
+    events: Events,
+    n_neurons: usize,
+    n_steps: u64,
+    config: serde_json::Value,
+}
+
+/// Encodes `name` over the shared stimulus and returns the case to export.
+fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
+    match name {
+        // Deterministic: the streaming path accumulates expected spikes in f64
+        // phase state — no RNG involved.
+        "rate" => {
+            let mut enc = RateEncoder::try_new(50.0, 400.0, (0.0, 1.0), DT_SECONDS as f32)
+                .expect("rate config");
+            let (events, n_steps) = drive(&mut enc, stim);
+            Case {
+                events,
+                n_neurons: CHANNELS,
+                n_steps,
+                config: serde_json::json!({"base_rate_hz": 50.0, "max_rate_hz": 400.0, "range": [0.0, 1.0]}),
+            }
+        }
+        // One seeded train per channel: `num_steps` bins of Bernoulli draws at
+        // the channel's rate. Draw order is channel-major, front to back.
+        "poisson" => {
+            let enc = PoissonEncoder::new(CALLS);
+            let mut events = Events::new();
+            for (ch, &mid) in stim[CALLS / 2].iter().enumerate() {
+                let rate_hz = 50.0 + 300.0 * mid;
+                for (bin, fired) in enc
+                    .encode_rate_hz_with_rng(rate_hz, DT_SECONDS as f32, rng)
+                    .iter()
+                    .enumerate()
+                {
+                    if *fired != 0 {
+                        events.t.push(bin as i64);
+                        events.neuron_id.push(ch as i64);
+                        events.amp.push(1.0);
+                    }
+                }
+            }
+            Case {
+                events,
+                n_neurons: CHANNELS,
+                n_steps: CALLS as u64,
+                config: serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus_mid"}),
+            }
+        }
+        // Deterministic; window model — absolute ticks advance by span per call.
+        "latency" => {
+            let mut enc = LatencyEncoder::new(10, (0.0, 1.0));
+            let (events, n_steps) = drive(&mut enc, stim);
+            Case {
+                events,
+                n_neurons: CHANNELS,
+                n_steps,
+                config: serde_json::json!({"max_latency": 10, "range": [0.0, 1.0]}),
+            }
+        }
+        // Seeded RNG through the public surface; output channels fan out to
+        // inputs × tuned neurons.
+        "population" => {
+            const NEURONS_PER_INPUT: usize = 4;
+            let mut enc = PopulationEncoder::new(NEURONS_PER_INPUT, (0.0, 1.0), 0.15);
+            let model = enc.time_model();
+            let mut cursor = TimeCursor::new(model);
+            let mut events = Events::new();
+            for step in stim {
+                events.extend(&enc.encode_step_with_rng(step, rng), cursor);
+                cursor.advance();
+            }
+            Case {
+                events,
+                n_neurons: CHANNELS * NEURONS_PER_INPUT,
+                n_steps: cursor.origin().max(model.span_ticks()),
+                config: serde_json::json!({"num_neurons": NEURONS_PER_INPUT, "input_range": [0.0, 1.0], "tuning_width": 0.15}),
+            }
+        }
+        // Deterministic threshold crossings over a rolling window.
+        "temporal" => {
+            let mut enc = TemporalEncoder::new(8, vec![(0.05, 1), (0.15, 2), (0.30, 3)], CHANNELS);
+            let (events, n_steps) = drive(&mut enc, stim);
+            Case {
+                events,
+                n_neurons: CHANNELS,
+                n_steps,
+                config: serde_json::json!({"history_depth": 8, "change_thresholds": [[0.05, 1], [0.15, 2], [0.30, 3]]}),
+            }
+        }
+        // Deterministic deviation predictions over a rolling window.
+        "predictive" => {
+            let mut enc =
+                PredictiveEncoder::new(8, vec![(0.05, 1), (0.15, 2), (0.30, 3)], CHANNELS)
+                    .expect("predictive config");
+            let (events, n_steps) = drive(&mut enc, stim);
+            Case {
+                events,
+                n_neurons: CHANNELS,
+                n_steps,
+                config: serde_json::json!({"history_depth": 8, "deviation_thresholds": [[0.05, 1], [0.15, 2], [0.30, 3]]}),
+            }
+        }
+        other => {
+            eprintln!("unknown encoder {other:?}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn write_outputs(out_dir: &Path, stim: &[Vec<f32>], case: &Case) {
+    write_npy(&out_dir.join("t.npy"), &NpyArray::I64(&case.events.t));
+    write_npy(
+        &out_dir.join("neuron_id.npy"),
+        &NpyArray::I64(&case.events.neuron_id),
+    );
+    write_npy(&out_dir.join("amp.npy"), &NpyArray::F32(&case.events.amp));
+    let stim_flat: Vec<f32> = stim.iter().flatten().copied().collect();
+    write_npy2d(&out_dir.join("stimulus.npy"), &stim_flat, CALLS, CHANNELS);
+}
+
+fn write_meta(out_dir: &Path, name: &str, case: &Case) {
+    let meta = serde_json::json!({
+        "schema_version": "1.0",
+        "encoder": name,
+        "dt_seconds": DT_SECONDS,
+        "seed": SEED,
+        "n_neurons": case.n_neurons,
+        "n_steps": case.n_steps,
+        "axon_encoder_git_sha": env::var(GIT_SHA_ENV).ok(),
+        "axon_encoder_version": env!("CARGO_PKG_VERSION"),
+        "synthetic": false,
+        "encoder_config": case.config,
+        "stimulus_notes": "Shared deterministic sine/ramp stimulus, 8 input channels.",
+        "notes": "Generated by axon-encoder `export_spike_viz` example; dt_seconds is the export sampling convention when the encoder reports no Timebase.",
+    });
+    fs::write(
+        out_dir.join("meta.json"),
+        serde_json::to_string_pretty(&meta).expect("meta serialization"),
+    )
+    .expect("write meta.json");
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
@@ -109,142 +255,16 @@ fn main() {
 
     let stim = stimulus();
     let mut rng = StdRng::seed_from_u64(SEED);
+    let case = generate(name, &stim, &mut rng);
 
-    // Every branch returns (events, n_neurons, n_steps, encoder_config).
-    let (events, n_neurons, n_steps, config) = match name {
-        // Deterministic: the streaming path accumulates expected spikes in f64
-        // phase state — no RNG involved.
-        "rate" => {
-            let mut enc = RateEncoder::try_new(50.0, 400.0, (0.0, 1.0), DT_SECONDS as f32)
-                .expect("rate config");
-            let (events, n_steps) = drive(&mut enc, &stim);
-            (
-                events,
-                CHANNELS,
-                n_steps,
-                serde_json::json!({"base_rate_hz": 50.0, "max_rate_hz": 400.0, "range": [0.0, 1.0]}),
-            )
-        }
-        // One seeded train per channel: `num_steps` bins of Bernoulli draws at
-        // the channel's rate. Draw order is channel-major, front to back.
-        "poisson" => {
-            let enc = PoissonEncoder::new(CALLS);
-            let mut events = Events::new();
-            for ch in 0..CHANNELS {
-                let rate_hz = 50.0 + 300.0 * stim[CALLS / 2][ch];
-                for (bin, fired) in enc
-                    .encode_rate_hz_with_rng(rate_hz, DT_SECONDS as f32, &mut rng)
-                    .iter()
-                    .enumerate()
-                {
-                    if *fired != 0 {
-                        events.t.push(bin as i64);
-                        events.neuron_id.push(ch as i64);
-                        events.amp.push(1.0);
-                    }
-                }
-            }
-            (
-                events,
-                CHANNELS,
-                CALLS as u64,
-                serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus_mid"}),
-            )
-        }
-        // Deterministic; window model — absolute ticks advance by span per call.
-        "latency" => {
-            let mut enc = LatencyEncoder::new(10, (0.0, 1.0));
-            let (events, n_steps) = drive(&mut enc, &stim);
-            (
-                events,
-                CHANNELS,
-                n_steps,
-                serde_json::json!({"max_latency": 10, "range": [0.0, 1.0]}),
-            )
-        }
-        // Seeded RNG through the public surface; output channels fan out to
-        // inputs × tuned neurons.
-        "population" => {
-            const NEURONS_PER_INPUT: usize = 4;
-            let mut enc = PopulationEncoder::new(NEURONS_PER_INPUT, (0.0, 1.0), 0.15);
-            let model = enc.time_model();
-            let mut cursor = TimeCursor::new(model);
-            let mut events = Events::new();
-            for step in &stim {
-                events.extend(&enc.encode_step_with_rng(step, &mut rng), cursor);
-                cursor.advance();
-            }
-            (
-                events,
-                CHANNELS * NEURONS_PER_INPUT,
-                cursor.origin().max(model.span_ticks()),
-                serde_json::json!({"num_neurons": NEURONS_PER_INPUT, "input_range": [0.0, 1.0], "tuning_width": 0.15}),
-            )
-        }
-        // Deterministic threshold crossings over a rolling window.
-        "temporal" => {
-            let mut enc = TemporalEncoder::new(8, vec![(0.05, 1), (0.15, 2), (0.30, 3)], CHANNELS);
-            let (events, n_steps) = drive(&mut enc, &stim);
-            (
-                events,
-                CHANNELS,
-                n_steps,
-                serde_json::json!({"history_depth": 8, "change_thresholds": [[0.05, 1], [0.15, 2], [0.30, 3]]}),
-            )
-        }
-        // Deterministic deviation predictions over a rolling window.
-        "predictive" => {
-            let mut enc =
-                PredictiveEncoder::new(8, vec![(0.05, 1), (0.15, 2), (0.30, 3)], CHANNELS)
-                    .expect("predictive config");
-            let (events, n_steps) = drive(&mut enc, &stim);
-            (
-                events,
-                CHANNELS,
-                n_steps,
-                serde_json::json!({"history_depth": 8, "deviation_thresholds": [[0.05, 1], [0.15, 2], [0.30, 3]]}),
-            )
-        }
-        other => {
-            eprintln!("unknown encoder {other:?}");
-            std::process::exit(2);
-        }
-    };
-
-    write_npy(&out_dir.join("t.npy"), &NpyArray::I64(&events.t));
-    write_npy(
-        &out_dir.join("neuron_id.npy"),
-        &NpyArray::I64(&events.neuron_id),
-    );
-    write_npy(&out_dir.join("amp.npy"), &NpyArray::F32(&events.amp));
-
-    let stim_flat: Vec<f32> = stim.iter().flatten().copied().collect();
-    write_npy2d(&out_dir.join("stimulus.npy"), &stim_flat, CALLS, CHANNELS);
-
-    let git_sha = env::var("AXON_ENCODER_GIT_SHA").ok();
-    let meta = serde_json::json!({
-        "schema_version": "1.0",
-        "encoder": name,
-        "dt_seconds": DT_SECONDS,
-        "seed": SEED,
-        "n_neurons": n_neurons,
-        "n_steps": n_steps,
-        "axon_encoder_git_sha": git_sha,
-        "axon_encoder_version": env!("CARGO_PKG_VERSION"),
-        "synthetic": false,
-        "encoder_config": config,
-        "stimulus_notes": "Shared deterministic sine/ramp stimulus, 8 input channels.",
-        "notes": "Generated by axon-encoder `export_spike_viz` example; dt_seconds is the export sampling convention when the encoder reports no Timebase.",
-    });
-    fs::write(
-        out_dir.join("meta.json"),
-        serde_json::to_string_pretty(&meta).expect("meta serialization"),
-    )
-    .expect("write meta.json");
+    write_outputs(out_dir, &stim, &case);
+    write_meta(out_dir, name, &case);
 
     println!(
-        "{name}: {} events, N={n_neurons}, T={n_steps} -> {}",
-        events.t.len(),
+        "{name}: {} events, N={}, T={} -> {}",
+        case.events.t.len(),
+        case.n_neurons,
+        case.n_steps,
         out_dir.display()
     );
 }
