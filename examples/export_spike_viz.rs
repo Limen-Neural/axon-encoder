@@ -252,14 +252,14 @@ fn main() {
     }
     let name = args[1].as_str();
     let out_dir = Path::new(&args[2]);
-    fs::create_dir_all(out_dir).expect("create output directory");
+    fs::create_dir_all(out_dir).expect("create output directory"); // skipcq: RS-E1015
 
     let stim = stimulus();
     let mut rng = StdRng::seed_from_u64(SEED);
     let case = generate(name, &stim, &mut rng);
 
-    write_outputs(out_dir, &stim, &case);
-    write_meta(out_dir, name, &case);
+    write_outputs(out_dir, &stim, &case); // skipcq: RS-E1015
+    write_meta(out_dir, name, &case); // skipcq: RS-E1015
 
     println!(
         "{name}: {} events, N={}, T={} -> {}",
