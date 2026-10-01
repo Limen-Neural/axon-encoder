@@ -122,32 +122,7 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
                 config: serde_json::json!({"base_rate_hz": 50.0, "max_rate_hz": 400.0, "range": [0.0, 1.0]}),
             }
         }
-        // One seeded train per channel: `num_steps` bins of Bernoulli draws at
-        // the channel's rate. Draw order is channel-major, front to back.
-        "poisson" => {
-            let enc = PoissonEncoder::new(CALLS);
-            let mut events = Events::new();
-            for (ch, &mid) in stim[CALLS / 2].iter().enumerate() {
-                let rate_hz = 50.0 + 300.0 * mid;
-                for (bin, fired) in enc
-                    .encode_rate_hz_with_rng(rate_hz, DT_SECONDS as f32, rng)
-                    .iter()
-                    .enumerate()
-                {
-                    if *fired != 0 {
-                        events.t.push(bin as i64);
-                        events.neuron_id.push(ch as i64);
-                        events.amp.push(1.0);
-                    }
-                }
-            }
-            Case {
-                events,
-                n_neurons: CHANNELS,
-                n_steps: CALLS as u64,
-                config: serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus_mid"}),
-            }
-        }
+        "poisson" => poisson_case(stim, rng),
         // Deterministic; window model — absolute ticks advance by span per call.
         "latency" => {
             let mut enc = LatencyEncoder::new(10, (0.0, 1.0));
@@ -159,25 +134,7 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
                 config: serde_json::json!({"max_latency": 10, "range": [0.0, 1.0]}),
             }
         }
-        // Seeded RNG through the public surface; output channels fan out to
-        // inputs × tuned neurons.
-        "population" => {
-            const NEURONS_PER_INPUT: usize = 4;
-            let mut enc = PopulationEncoder::new(NEURONS_PER_INPUT, (0.0, 1.0), 0.15);
-            let model = enc.time_model();
-            let mut cursor = TimeCursor::new(model);
-            let mut events = Events::new();
-            for step in stim {
-                events.extend(&enc.encode_step_with_rng(step, rng), cursor);
-                cursor.advance();
-            }
-            Case {
-                events,
-                n_neurons: CHANNELS * NEURONS_PER_INPUT,
-                n_steps: cursor.origin().max(model.span_ticks()),
-                config: serde_json::json!({"num_neurons": NEURONS_PER_INPUT, "input_range": [0.0, 1.0], "tuning_width": 0.15}),
-            }
-        }
+        "population" => population_case(stim, rng),
         // Deterministic threshold crossings over a rolling window.
         "temporal" => {
             let mut enc = TemporalEncoder::new(8, vec![(0.05, 1), (0.15, 2), (0.30, 3)], CHANNELS);
@@ -206,6 +163,53 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
             eprintln!("unknown encoder {other:?}");
             std::process::exit(2);
         }
+    }
+}
+
+/// One seeded train per channel: `num_steps` bins of Bernoulli draws at
+/// the channel's rate. Draw order is channel-major, front to back.
+fn poisson_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
+    let enc = PoissonEncoder::new(CALLS);
+    let mut events = Events::new();
+    for (ch, &mid) in stim[CALLS / 2].iter().enumerate() {
+        let rate_hz = 50.0 + 300.0 * mid;
+        for (bin, fired) in enc
+            .encode_rate_hz_with_rng(rate_hz, DT_SECONDS as f32, rng)
+            .iter()
+            .enumerate()
+        {
+            if *fired != 0 {
+                events.t.push(bin as i64);
+                events.neuron_id.push(ch as i64);
+                events.amp.push(1.0);
+            }
+        }
+    }
+    Case {
+        events,
+        n_neurons: CHANNELS,
+        n_steps: CALLS as u64,
+        config: serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus_mid"}),
+    }
+}
+
+/// Seeded RNG through the public surface; output channels fan out to
+/// inputs × tuned neurons.
+fn population_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
+    const NEURONS_PER_INPUT: usize = 4;
+    let mut enc = PopulationEncoder::new(NEURONS_PER_INPUT, (0.0, 1.0), 0.15);
+    let model = enc.time_model();
+    let mut cursor = TimeCursor::new(model);
+    let mut events = Events::new();
+    for step in stim {
+        events.extend(&enc.encode_step_with_rng(step, rng), cursor);
+        cursor.advance();
+    }
+    Case {
+        events,
+        n_neurons: CHANNELS * NEURONS_PER_INPUT,
+        n_steps: cursor.origin().max(model.span_ticks()),
+        config: serde_json::json!({"num_neurons": NEURONS_PER_INPUT, "input_range": [0.0, 1.0], "tuning_width": 0.15}),
     }
 }
 
