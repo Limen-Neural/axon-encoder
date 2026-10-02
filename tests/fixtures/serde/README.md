@@ -23,7 +23,7 @@ does not bump the crate version or introduce a schema marker.
 
 Source layouts: `src/encoders/rate.rs`, `src/encoder.rs`, `src/types.rs`,
 `src/time.rs`, `src/modulators.rs`, `src/poisson.rs`, and each concrete encoder
-under `src/encoders/`. The simulated v0.3 reader uses the exact five rate fields
+under `src/encoders/`. The simulated v0.3 reader uses the exact four rate fields
 from that tag (`accumulators: Vec<f32>`); it is not an old crate dependency.
 
 ## Reader/writer matrix

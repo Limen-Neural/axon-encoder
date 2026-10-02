@@ -24,7 +24,7 @@ To bump MSRV:
 
 1. Set the new version in Cargo.toml, rust-toolchain.toml, ci.yml, and the
    `FROM rust:` tag in `.devcontainer/Dockerfile`; update coverage.yml and the
-   devcontainer display name too.
+   devcontainer display name and README.md's Rust requirement too.
 2. Run the mandatory commands below on that toolchain
    (`rustup run <ver> cargo test --locked`, etc.).
 3. Confirm GitHub Actions matrix (Linux / macOS / Windows) is green.
@@ -159,7 +159,7 @@ zero spikes; their counts do not describe active output.
 
 ### Repeatable local regression comparison
 
-Use **Rust 1.98.1**, the **same host**, the same lockfile/dependencies where
+Use **Rust 1.99.0**, the **same host**, the same lockfile/dependencies where
 possible, and Criterion defaults on both commits. Keep load and power settings
 stable. Record any dependency differences. Use one checkout and retain its
 `target/criterion` directory across switches; do not run `cargo clean` between
@@ -171,13 +171,13 @@ branch changes before switching:
 ```bash
 # On the chosen comparison commit (record its full SHA; "main" is a label):
 git switch --detach <comparison-commit>
-cargo +1.98.1 bench --bench encoders -- --save-baseline main
-cargo +1.98.1 bench --bench allocations > /tmp/allocations-main.csv
+cargo +1.99.0 bench --bench encoders -- --save-baseline main
+cargo +1.99.0 bench --bench allocations > /tmp/allocations-main.csv
 
 # On the branch commit, on the same host and using the saved baseline directory:
 git switch <branch>
-cargo +1.98.1 bench --bench encoders -- --baseline main
-cargo +1.98.1 bench --bench allocations > /tmp/allocations-branch.csv
+cargo +1.99.0 bench --bench encoders -- --baseline main
+cargo +1.99.0 bench --bench allocations > /tmp/allocations-branch.csv
 diff -u /tmp/allocations-main.csv /tmp/allocations-branch.csv
 ```
 
