@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Orb resume for axon-encoder.
+#
+# This repository has no services, databases, or remote credentials to
+# reconnect, so resume only performs a fast health check of the toolchain that
+# .agents/setup installed. Must stay well under the 10-second resume window.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+export PATH="$HOME/.cargo/bin:$PATH"
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "axon-encoder: cargo is not on PATH; run .agents/setup" >&2
+  exit 1
+fi
+
+RUST_TOOLCHAIN="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+if [ -z "$RUST_TOOLCHAIN" ]; then
+  echo "axon-encoder: could not read toolchain channel from rust-toolchain.toml" >&2
+  exit 1
+fi
+
+if ! rustup toolchain list 2>/dev/null | grep -q "^${RUST_TOOLCHAIN}"; then
+  echo "axon-encoder: Rust ${RUST_TOOLCHAIN} is missing; run .agents/setup" >&2
+  exit 1
+fi
+
+echo "axon-encoder: Rust ${RUST_TOOLCHAIN} ready"

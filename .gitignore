@@ -13,6 +13,9 @@
 .cline/
 .codacy/
 
+# Amp orb runtime state (portal URLs are per-orb)
+.amp/portals/*
+
 
 # Compiled output
 /target/
