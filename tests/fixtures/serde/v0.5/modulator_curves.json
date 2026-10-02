@@ -1,0 +1,1 @@
+{"threshold":{"input_range":[-1.0,3.0],"output_range":[0.5,2.5]},"sensitivity":null,"firing_rate":{"input_range":[0.0,2.0],"output_range":[1.0,3.0]},"latency":null}

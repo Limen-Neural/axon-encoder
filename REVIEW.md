@@ -12,14 +12,19 @@ cannot land “green CI” while deleting product surface.
 
 `Cargo.toml` `rust-version`, `rust-toolchain.toml` `channel`, and the
 `toolchain:` string in `.github/workflows/ci.yml` must stay **identical**
-(currently **1.98.1**). The contributor-only `.devcontainer/Dockerfile`
+(currently **1.99.0**). The contributor-only `.devcontainer/Dockerfile`
 `FROM rust:<ver>` tag must match too. CI fails if these pins drift
 (issue #67 / LIM-1014, #61 / LIM-972).
+
+The coverage workflow uses the same pin. `.agents/setup` and `.agents/resume`
+read `rust-toolchain.toml` directly, so fresh and resumed orbs use Rust 1.99.0
+without a separate version constant.
 
 To bump MSRV:
 
 1. Set the new version in Cargo.toml, rust-toolchain.toml, ci.yml, and the
-   `FROM rust:` tag in `.devcontainer/Dockerfile`.
+   `FROM rust:` tag in `.devcontainer/Dockerfile`; update coverage.yml and the
+   devcontainer display name too.
 2. Run the mandatory commands below on that toolchain
    (`rustup run <ver> cargo test --locked`, etc.).
 3. Confirm GitHub Actions matrix (Linux / macOS / Windows) is green.
