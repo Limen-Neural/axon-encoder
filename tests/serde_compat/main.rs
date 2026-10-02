@@ -43,6 +43,11 @@ fn assert_golden<T: DeserializeOwned + Serialize + PartialEq + Debug>(file: &str
 
 fn assert_unknown_fields<T: DeserializeOwned + Serialize>(file: &str, golden: &str) {
     let pair = "HEAD extended writer -> HEAD reader";
+    assert_ne!(
+        read_fixture::<serde_json::Value>(file, pair),
+        read_fixture::<serde_json::Value>(golden, pair),
+        "{file} ({pair}): extended fixture must add unknown fields beyond {golden}"
+    );
     let restored: T = read_fixture(file, pair);
     assert_json(
         &restored,
