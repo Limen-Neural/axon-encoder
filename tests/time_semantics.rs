@@ -440,3 +440,50 @@ fn violates(model: TimeModel, spikes: &[SpikeEvent]) -> bool {
     std::panic::set_hook(previous_hook);
     result.is_err()
 }
+
+/// Export-path regression: spikes from later `encode_step` calls must land on
+/// their absolute ticks via [`TimeCursor::absolute`]. A naive
+/// `offset.ticks()` export collapses every streaming spike onto `t = 0`
+/// because `TickOffset` is call-relative.
+#[test]
+fn encode_step_calls_export_absolute_ticks_via_time_cursor() {
+    // Instant model: every spike sits at offset 0, so absolute ticks are the
+    // call index. 2 kHz over 1 ms emits exactly 2 spikes per step.
+    let mut rate = RateEncoder::try_new(2000.0, 2000.0, (0.0, 1.0), 0.001).unwrap();
+    let mut cursor = TimeCursor::new(rate.time_model());
+    let mut ticks = Vec::new();
+    for _ in 0..4 {
+        let out = rate.encode_step(&[1.0]);
+        ticks.extend(out.spikes.iter().map(|s| cursor.absolute(s.timestamp)));
+        cursor.advance();
+    }
+    assert_eq!(ticks, vec![0, 0, 1, 1, 2, 2, 3, 3]);
+    assert!(
+        ticks.iter().any(|&t| t > 0),
+        "later-call spikes collapsed onto tick 0"
+    );
+
+    // Window model: each call is one presentation; absolute ticks advance by
+    // span_ticks per call even though offsets repeat inside each window.
+    let mut latency = LatencyEncoder::new(3, (0.0, 1.0));
+    let span = latency.time_model().span_ticks();
+    let mut cursor = TimeCursor::new(latency.time_model());
+    let mut ticks = Vec::new();
+    for _ in 0..3 {
+        let out = latency.encode_step(&[0.9]);
+        ticks.extend(out.spikes.iter().map(|s| cursor.absolute(s.timestamp)));
+        cursor.advance();
+    }
+    assert_eq!(ticks.len(), 3);
+    for (call, &t) in ticks.iter().enumerate() {
+        assert!(
+            t >= call as u64 * span,
+            "call {call} spike exported at {t}, before window start {}",
+            call as u64 * span
+        );
+    }
+    assert!(
+        *ticks.last().unwrap() >= 2 * span,
+        "third-call spike did not advance past two windows"
+    );
+}

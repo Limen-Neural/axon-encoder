@@ -90,9 +90,31 @@ impl PoissonEncoder {
         self.encode(probability_from_rate_hz(rate_hz, dt_seconds))
     }
 
+    /// [`encode_rate_hz`](Self::encode_rate_hz) with a caller-supplied RNG for
+    /// reproducible spike trains.
+    pub fn encode_rate_hz_with_rng<R: rand::Rng + ?Sized>(
+        &self,
+        rate_hz: f32,
+        dt_seconds: f32,
+        rng: &mut R,
+    ) -> Vec<u8> {
+        self.encode_with_rng(probability_from_rate_hz(rate_hz, dt_seconds), rng)
+    }
+
     /// Encodes a single rate-based step using an explicit time step in seconds.
     pub fn encode_rate_hz_step(&self, rate_hz: f32, dt_seconds: f32) -> u8 {
         self.encode_step(probability_from_rate_hz(rate_hz, dt_seconds))
+    }
+
+    /// [`encode_rate_hz_step`](Self::encode_rate_hz_step) with a caller-supplied
+    /// RNG for reproducible spike decisions.
+    pub fn encode_rate_hz_step_with_rng<R: rand::Rng + ?Sized>(
+        &self,
+        rate_hz: f32,
+        dt_seconds: f32,
+        rng: &mut R,
+    ) -> u8 {
+        self.encode_step_with_rng(probability_from_rate_hz(rate_hz, dt_seconds), rng)
     }
 
     /// Encodes a single probability value into a spike train.
@@ -100,11 +122,20 @@ impl PoissonEncoder {
     /// Each of the `num_steps` represents an independent time step where
     /// a spike occurs with the given probability.
     pub fn encode(&self, input: f32) -> Vec<u8> {
-        let probability = input.clamp(0.0, 1.0);
         let mut rng = rand::rng();
+        self.encode_with_rng(input, &mut rng)
+    }
+
+    /// [`encode`](Self::encode) with a caller-supplied RNG.
+    ///
+    /// Pass a seeded generator (for example `StdRng::seed_from_u64`) when the
+    /// train must be reproducible; the draw order is one sample per step,
+    /// front to back.
+    pub fn encode_with_rng<R: rand::Rng + ?Sized>(&self, input: f32, rng: &mut R) -> Vec<u8> {
+        let probability = input.clamp(0.0, 1.0);
         (0..self.num_steps)
             .map(|_| {
-                if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
+                if crate::rng::gen_unit_f32_with_rng(rng) < probability {
                     1
                 } else {
                     0
@@ -117,9 +148,14 @@ impl PoissonEncoder {
     ///
     /// Useful for streaming mode where you want one spike decision at a time.
     pub fn encode_step(&self, input: f32) -> u8 {
-        let probability = input.clamp(0.0, 1.0);
         let mut rng = rand::rng();
-        if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
+        self.encode_step_with_rng(input, &mut rng)
+    }
+
+    /// [`encode_step`](Self::encode_step) with a caller-supplied RNG.
+    pub fn encode_step_with_rng<R: rand::Rng + ?Sized>(&self, input: f32, rng: &mut R) -> u8 {
+        let probability = input.clamp(0.0, 1.0);
+        if crate::rng::gen_unit_f32_with_rng(rng) < probability {
             1
         } else {
             0
@@ -281,5 +317,40 @@ mod tests {
             ones += enc.encode_rate_hz_step(1_000.0, 1.0) as usize;
         }
         assert_eq!(ones, 50);
+    }
+
+    #[test]
+    fn seeded_rng_variants_are_reproducible() {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        let enc = PoissonEncoder::new(200);
+        let mut a = StdRng::seed_from_u64(42);
+        let mut b = StdRng::seed_from_u64(42);
+        assert_eq!(
+            enc.encode_with_rng(0.5, &mut a),
+            enc.encode_with_rng(0.5, &mut b)
+        );
+
+        let mut a = StdRng::seed_from_u64(7);
+        let mut b = StdRng::seed_from_u64(7);
+        assert_eq!(
+            enc.encode_rate_hz_with_rng(50.0, 0.001, &mut a),
+            enc.encode_rate_hz_with_rng(50.0, 0.001, &mut b)
+        );
+
+        let step = PoissonEncoder::new(1);
+        let mut a = StdRng::seed_from_u64(9);
+        let mut b = StdRng::seed_from_u64(9);
+        for _ in 0..64 {
+            assert_eq!(
+                step.encode_step_with_rng(0.5, &mut a),
+                step.encode_step_with_rng(0.5, &mut b)
+            );
+            assert_eq!(
+                step.encode_rate_hz_step_with_rng(50.0, 0.001, &mut a),
+                step.encode_rate_hz_step_with_rng(50.0, 0.001, &mut b)
+            );
+        }
     }
 }
