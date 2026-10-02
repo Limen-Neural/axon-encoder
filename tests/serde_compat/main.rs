@@ -41,6 +41,16 @@ fn assert_golden<T: DeserializeOwned + Serialize + PartialEq + Debug>(file: &str
     assert_json(&expected, file, "HEAD writer -> v0.5 golden");
 }
 
+fn assert_unknown_fields<T: DeserializeOwned + Serialize>(file: &str, golden: &str) {
+    let pair = "HEAD extended writer -> HEAD reader";
+    let restored: T = read_fixture(file, pair);
+    assert_json(
+        &restored,
+        golden,
+        &format!("{pair}/writer via {file} (unknown field discarded)"),
+    );
+}
+
 fn assert_rejected<T: DeserializeOwned + Debug>(file: &str, pair: &str, reason: &str) {
     let result = serde_json::from_str::<T>(&fixture_text(file, pair));
     let error = result.expect_err(&format!("{file} ({pair}): expected rejection"));

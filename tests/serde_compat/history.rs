@@ -5,7 +5,7 @@ use axon_encoder::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{assert_json, assert_rejected, fixture_text, read_fixture};
+use super::{assert_json, assert_rejected, assert_unknown_fields, fixture_text, read_fixture};
 
 // Exact persisted field layout from v0.3.0:src/encoders/rate.rs. Serde's
 // derived reader ignores unknown fields, including dt_seconds/pending_spikes.
@@ -125,28 +125,12 @@ fn serde_compat_head_timebase_zero_is_rejected() {
 
 #[test]
 fn serde_compat_unknown_spike_fields_are_accepted() {
-    let file = "head/spike_event_extra.json";
-    let pair = "HEAD extended writer -> HEAD reader";
-    let spike: SpikeEvent = read_fixture(file, pair);
-    assert_eq!(spike, SpikeEvent::new(12, 42u64, false), "{file} ({pair})");
-    assert_json(
-        &spike,
-        "v0.5/spike_event.json",
-        "HEAD extended writer -> HEAD reader/writer (unknown field discarded)",
-    );
+    assert_unknown_fields::<SpikeEvent>("head/spike_event_extra.json", "v0.5/spike_event.json");
 }
 
 #[test]
 fn serde_compat_unknown_poisson_fields_are_accepted() {
-    let file = "head/poisson_extra.json";
-    let pair = "HEAD extended writer -> HEAD reader";
-    let encoder: PoissonEncoder = read_fixture(file, pair);
-    assert_eq!(encoder.num_steps, 17, "{file} ({pair})");
-    assert_json(
-        &encoder,
-        "v0.5/poisson.json",
-        "HEAD extended writer -> HEAD reader/writer (unknown field discarded)",
-    );
+    assert_unknown_fields::<PoissonEncoder>("head/poisson_extra.json", "v0.5/poisson.json");
 }
 
 #[test]
