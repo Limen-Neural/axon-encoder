@@ -37,8 +37,8 @@ fn embedding_rate_encoder_produces_standardized_output() {
 fn seeded_public_apis_replay_all_stochastic_encoders() {
     let inputs = [[0.2, 0.8, 0.5], [1.0, 0.0, 0.4], [0.6, 0.3, 0.9]];
 
-    let mut rate_a = RateEncoder::try_new(2.0, 80.0, (0.0, 1.0), 0.01).unwrap();
-    let mut rate_b = rate_a.clone();
+    let rate_a = RateEncoder::try_new(2.0, 80.0, (0.0, 1.0), 0.01).unwrap();
+    let rate_b = rate_a.clone();
     let mut rate_rng_a = StdRng::seed_from_u64(0x12_1390);
     let mut rate_rng_b = StdRng::seed_from_u64(0x12_1390);
     for input in inputs {

@@ -229,7 +229,7 @@ impl RateEncoder {
     /// Every public batch encoding path routes through here, so the returning
     /// and sink-based APIs cannot drift apart.
     fn encode_with_rate_scale_into<S: SpikeSink + ?Sized, R: rand::Rng + ?Sized>(
-        &mut self,
+        &self,
         input: &[f32],
         rate_scale: f32,
         rng: &mut R,
@@ -280,7 +280,7 @@ impl RateEncoder {
     /// [`Encoder::encode`]: crate::Encoder::encode
     /// [`Encoder::encode_step`]: crate::Encoder::encode_step
     pub fn encode_with_rng<R: rand::Rng + ?Sized>(
-        &mut self,
+        &self,
         input: &[f32],
         rng: &mut R,
     ) -> EncodedOutput {
@@ -661,10 +661,10 @@ mod tests {
     #[test]
     fn test_rate_encoder_empty_input() {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 100.0));
-        let input: [f32; 0] = [];
-        let output = encoder.encode(&input);
+        let input: &[f32] = &[];
+        let output = encoder.encode(input);
         assert_eq!(output.spikes.len(), 0);
-        let output_step = encoder.encode_step(&input);
+        let output_step = encoder.encode_step(input);
         assert_eq!(output_step.spikes.len(), 0);
     }
 
