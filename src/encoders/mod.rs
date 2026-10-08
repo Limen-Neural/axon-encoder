@@ -1,3 +1,4 @@
+pub mod baseline_hold;
 pub mod delta;
 pub mod derivative;
 pub mod latency;
@@ -10,6 +11,7 @@ pub mod temporal;
 #[cfg(test)]
 pub(crate) mod property_support;
 
+pub use baseline_hold::BaselineHoldTernaryEncoder;
 pub use delta::{DeltaEncoder, encode_deltas_to_spikes};
 pub use derivative::DerivativeEncoder;
 pub use latency::LatencyEncoder;
