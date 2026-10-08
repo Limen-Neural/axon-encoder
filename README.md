@@ -426,6 +426,8 @@ should normalize before calling `encode`, using the former formula
   - **`TemporalEncoder`** — *patterns* over time
   - **`PopulationEncoder`** — value distributed across a *population* of units
   - **`DeltaEncoder`** — spike when the signal moves by a threshold
+  - **`BaselineHoldTernaryEncoder`** — signed baseline-hold ternary events
+    (Corinth telemetry semantics; baseline updates only on crossings)
   - **`LatencyEncoder`** — stronger input → earlier spike in a window
   - **`PoissonEncoder`** — Poisson-process style sampling
   - **`EmbeddingRateEncoder`** — general-purpose integrate-and-fire over a

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `BaselineHoldTernaryEncoder`: per-channel baseline-hold ternary encoding with
+  inclusive signed threshold crossings and baseline updates only on events
+  (Corinth `TelemetryEncoder` semantics from
+  [corinth-canal#158](https://github.com/rmems/corinth-canal/issues/158)).
+  Exposes `encode_ternary` for dense `{-1, 0, +1}` output plus an `Encoder`
+  adapter that maps sign to spike polarity at tick zero.
+
 ## [0.6.0] - 2026-10-01
 
 ### Added
