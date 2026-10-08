@@ -1,4 +1,9 @@
-use axon_encoder::prelude::{EmbeddingEncoderConfig, EmbeddingRateEncoder, EncodedOutput, Encoder};
+use axon_encoder::prelude::{
+    EmbeddingEncoderConfig, EmbeddingRateEncoder, EncodedOutput, Encoder, PoissonEncoder,
+    PopulationEncoder, RateEncoder,
+};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 #[test]
 fn encoded_output_defaults_are_stable() {
@@ -26,6 +31,43 @@ fn embedding_rate_encoder_produces_standardized_output() {
 
     assert!(!output.spikes.is_empty());
     assert!(output.embeddings.is_none());
+}
+
+#[test]
+fn seeded_public_apis_replay_all_stochastic_encoders() {
+    let inputs = [[0.2, 0.8, 0.5], [1.0, 0.0, 0.4], [0.6, 0.3, 0.9]];
+
+    let mut rate_a = RateEncoder::try_new(2.0, 80.0, (0.0, 1.0), 0.01).unwrap();
+    let mut rate_b = rate_a.clone();
+    let mut rate_rng_a = StdRng::seed_from_u64(0x12_1390);
+    let mut rate_rng_b = StdRng::seed_from_u64(0x12_1390);
+    for input in inputs {
+        assert_eq!(
+            rate_a.encode_with_rng(&input, &mut rate_rng_a),
+            rate_b.encode_with_rng(&input, &mut rate_rng_b)
+        );
+    }
+
+    let mut population_a = PopulationEncoder::new(5, (0.0, 1.0), 0.2);
+    let mut population_b = population_a.clone();
+    let mut population_rng_a = StdRng::seed_from_u64(0x12_1390);
+    let mut population_rng_b = StdRng::seed_from_u64(0x12_1390);
+    for input in inputs {
+        assert_eq!(
+            population_a.encode_step_with_rng(&input, &mut population_rng_a),
+            population_b.encode_step_with_rng(&input, &mut population_rng_b)
+        );
+    }
+
+    let poisson = PoissonEncoder::new(32);
+    let mut poisson_rng_a = StdRng::seed_from_u64(0x12_1390);
+    let mut poisson_rng_b = StdRng::seed_from_u64(0x12_1390);
+    for probability in [0.2, 0.8, 0.5] {
+        assert_eq!(
+            poisson.encode_with_rng(probability, &mut poisson_rng_a),
+            poisson.encode_with_rng(probability, &mut poisson_rng_b)
+        );
+    }
 }
 
 #[test]
