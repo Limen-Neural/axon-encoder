@@ -229,7 +229,7 @@ Per encoder:
 | `RateEncoder` | 1 | 1 | `dt_seconds` |
 | `LatencyEncoder` | `max_latency + 1` | `max_latency + 1` | none |
 | `PhaseEncoder` | 1 | `cycle_steps` | none |
-| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `TemporalEncoder`, `PredictiveEncoder`, `EmbeddingRateEncoder` | 1 | 1 | none |
+| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `BaselineHoldTernaryEncoder`, `TemporalEncoder`, `PredictiveEncoder`, `EmbeddingRateEncoder` | 1 | 1 | none |
 
 **Batch versus streaming.** Both modes follow the same rule, once per call —
 `encode` is not a longer window than `encode_step`. `PhaseEncoder` advances its
