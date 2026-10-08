@@ -49,9 +49,9 @@ use crate::prelude::*;
 /// deterministic [`encode_step`](Encoder::encode_step) path exactly, including
 /// fractional phase and any queued `pending_spikes` backlog. Batch
 /// [`encode`](Encoder::encode) draws from a thread-local generator this crate
-/// constructs internally; serde does not capture that generator, and `encode`
-/// does not take caller-owned RNG state, so the batch path is not
-/// replay-stable from a checkpoint.
+/// constructs internally; serde does not capture that generator. Use
+/// [`encode_with_rng`](Self::encode_with_rng) and checkpoint the caller-owned
+/// generator separately when the stochastic batch path must be replayed.
 ///
 /// # Examples
 ///
@@ -228,10 +228,11 @@ impl RateEncoder {
     ///
     /// Every public batch encoding path routes through here, so the returning
     /// and sink-based APIs cannot drift apart.
-    fn encode_with_rate_scale_into<S: SpikeSink + ?Sized>(
-        &mut self,
+    fn encode_with_rate_scale_into<S: SpikeSink + ?Sized, R: rand::Rng + ?Sized>(
+        &self,
         input: &[f32],
         rate_scale: f32,
+        rng: &mut R,
         sink: &mut S,
     ) {
         if input.is_empty() {
@@ -243,7 +244,6 @@ impl RateEncoder {
             return;
         }
 
-        let mut rng = rand::rng();
         for (i, &value) in input.iter().enumerate() {
             let Ok(channel) = u16::try_from(i) else {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
@@ -252,7 +252,7 @@ impl RateEncoder {
             let rate = self.effective_rate_hz(value, rate_scale);
             let probability = crate::poisson::probability_from_rate_hz(rate, self.dt_seconds);
 
-            if crate::rng::gen_unit_f32_with_rng(&mut rng) < probability {
+            if crate::rng::gen_unit_f32_with_rng(rng) < probability {
                 sink.push(SpikeEvent::at_step_start(channel, true));
             }
         }
@@ -260,7 +260,32 @@ impl RateEncoder {
 
     fn encode_with_rate_scale(&mut self, input: &[f32], rate_scale: f32) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        self.encode_with_rate_scale_into(input, rate_scale, &mut output.spikes);
+        let mut rng = rand::rng();
+        self.encode_with_rate_scale_into(input, rate_scale, &mut rng, &mut output.spikes);
+        output
+    }
+
+    /// [`Encoder::encode`] with a caller-supplied RNG.
+    ///
+    /// Pass a seeded generator (for example `StdRng::seed_from_u64`) to replay
+    /// the stochastic batch path. With the same crate versions, encoder
+    /// configuration, seed, and input-call sequence, this method produces the
+    /// same spike sequence. The default [`Encoder::encode`] remains
+    /// nondeterministic. [`Encoder::encode_step`] needs no RNG because its
+    /// accumulator-driven streaming path is already deterministic.
+    ///
+    /// The exact seeded stream is not a cross-version compatibility guarantee:
+    /// RNG implementations and draw order may change in a future release.
+    ///
+    /// [`Encoder::encode`]: crate::Encoder::encode
+    /// [`Encoder::encode_step`]: crate::Encoder::encode_step
+    pub fn encode_with_rng<R: rand::Rng + ?Sized>(
+        &self,
+        input: &[f32],
+        rng: &mut R,
+    ) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        self.encode_with_rate_scale_into(input, 1.0, rng, &mut output.spikes);
         output
     }
 
@@ -501,7 +526,8 @@ impl Encoder for RateEncoder {
 
     fn encode_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
         crate::sink::through_chunks(sink, |sink| {
-            self.encode_with_rate_scale_into(input, 1.0, sink)
+            let mut rng = rand::rng();
+            self.encode_with_rate_scale_into(input, 1.0, &mut rng, sink)
         });
     }
 
@@ -555,7 +581,8 @@ impl ModulatedEncoder for RateEncoder {
     ) {
         let rate_scale = gains.sanitize().firing_rate_scale;
         crate::sink::through_chunks(sink, |sink| {
-            self.encode_with_rate_scale_into(input, rate_scale, sink)
+            let mut rng = rand::rng();
+            self.encode_with_rate_scale_into(input, rate_scale, &mut rng, sink)
         });
     }
 
@@ -634,10 +661,10 @@ mod tests {
     #[test]
     fn test_rate_encoder_empty_input() {
         let mut encoder = RateEncoder::new(0.0, 10.0, (0.0, 100.0));
-        let input: [f32; 0] = [];
-        let output = encoder.encode(&input);
+        let input: &[f32] = &[];
+        let output = encoder.encode(input);
         assert_eq!(output.spikes.len(), 0);
-        let output_step = encoder.encode_step(&input);
+        let output_step = encoder.encode_step(input);
         assert_eq!(output_step.spikes.len(), 0);
     }
 

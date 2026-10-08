@@ -46,17 +46,28 @@
 //! from `serde_json` after that sample: JSON has no NaN/Inf (`serde_json`
 //! writes `null`), and deserialize rejects that payload.
 //!
-//! Stochastic paths stay excluded: batch [`RateEncoder::encode`], and both
-//! batch and streaming [`PopulationEncoder`] / [`PoissonEncoder`]. Those
-//! methods construct a thread-local generator internally; serde does not
-//! capture it, and they do not accept caller-owned RNG state. Replay of those
-//! paths is out of scope until RNG injection exists.
+//! ## Reproducible stochastic encoding
+//!
+//! [`RateEncoder::encode_with_rng`],
+//! [`PopulationEncoder::encode_with_rng`], and
+//! [`PoissonEncoder::encode_with_rng`] let callers own the random stream. With
+//! the same crate versions, seeded RNG, encoder configuration, and input-call
+//! sequence, each method reproduces the same spike sequence. Their default
+//! counterparts continue to construct a thread-local generator and remain
+//! nondeterministic. `PopulationEncoder` and `PoissonEncoder` also expose
+//! `encode_step_with_rng`; `RateEncoder::encode_step` needs no RNG because its
+//! accumulator-driven streaming path is deterministic.
+//!
+//! Serde checkpoints do not include caller-owned RNG state, so checkpoint that
+//! generator separately when replay must cross a process boundary. Exact
+//! seeded streams are not guaranteed across crate or RNG-version upgrades:
+//! implementations and draw order may change in a future release.
 //!
 //! [`encode_step`]: Encoder::encode_step
-//! [`RateEncoder::encode`]: encoders::RateEncoder
+//! [`RateEncoder::encode_with_rng`]: encoders::RateEncoder::encode_with_rng
 //! [`DerivativeEncoder`]: encoders::DerivativeEncoder
-//! [`PopulationEncoder`]: encoders::PopulationEncoder
-//! [`PoissonEncoder`]: poisson::PoissonEncoder
+//! [`PopulationEncoder::encode_with_rng`]: encoders::PopulationEncoder::encode_with_rng
+//! [`PoissonEncoder::encode_with_rng`]: poisson::PoissonEncoder::encode_with_rng
 //!
 //! ## Reusing storage
 //!
