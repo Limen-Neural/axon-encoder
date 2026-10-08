@@ -1,0 +1,4 @@
+{
+  "name": "axon-encoder",
+  "install": "bash .cursor/install.sh"
+}

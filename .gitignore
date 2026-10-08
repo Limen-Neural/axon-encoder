@@ -5,7 +5,10 @@
 .devin/cache/
 .mimocode/auth.json
 .mimocode/plans/
-.cursor/
+.cursor/*
+# Cursor Cloud Agent environment: committed on purpose.
+!.cursor/environment.json
+!.cursor/install.sh
 .cursorignore
 .worktrees/
 .swarm/
