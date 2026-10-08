@@ -19,6 +19,7 @@ categories = ["science", "algorithms", "simulation"]
 # Drop agent/CI/dev-only paths. Hidden git-tracked files still pack unless
 # listed here (e.g. .gitignore).
 exclude = [
+    "/.agents/",
     "/.codacy.yml",
     "/.codecov.yml",
     "/.deepsource.toml",
