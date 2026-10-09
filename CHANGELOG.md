@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `serde` feature: `Serialize`/`Deserialize` for `TimeModel` and `TimeCursor`,
+  so an encoder checkpoint can now persist the caller's clock (absolute
+  `origin`, `step_ticks`/`span_ticks` tick geometry, optional `Timebase`) as
+  named-field JSON and resume the same timeline after restore.
+
+### Changed
+
+- `serde` feature: `Timebase` now serializes as `{"tick_nanos": N}` instead of
+  a bare `u64`, disambiguating it from a `TickOffset` tick count. The v0.5
+  bare-integer payload still deserializes; zero and other invalid values are
+  rejected in both forms.
+
 ## [0.6.0] - 2026-10-01
 
 ### Added
