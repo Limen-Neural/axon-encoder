@@ -37,7 +37,7 @@ Run the fmt and clippy gates before committing; CI fails on either. The full loc
 
 ## Invariants and non-goals
 
-- Ground truth for spike-viz (`/home/claude/spike-viz`). Do not change the export file names, `meta.json` fields, or `schema_version`
+- Ground truth for spike-viz (the `spike-viz` sibling repository). Do not change the export file names, `meta.json` fields, or `schema_version`
   without a matching change on the spike-viz side (`docs/axon-encoder-export.md` there).
 - Seeded paths must stay bit-for-bit reproducible: stochastic encoders go through `*_with_rng`, and the export uses one seeded `StdRng`.
   Thread-local RNG paths are not replay-stable; `encode_step` on deterministic encoders resumes exactly from a serde checkpoint.
