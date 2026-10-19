@@ -73,9 +73,7 @@ fn encoders() -> Vec<(&'static str, Box<dyn Encoder>)> {
     ));
     all.push((
         "BaselineHoldTernaryEncoder",
-        Box::new(
-            BaselineHoldTernaryEncoder::try_new(vec![0.1; 8]).expect("valid baseline hold"),
-        ),
+        Box::new(BaselineHoldTernaryEncoder::try_new(vec![0.1; 8]).expect("valid baseline hold")),
     ));
     all
 }
