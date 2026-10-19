@@ -26,6 +26,7 @@ exclude = [
     "/.devcontainer/",
     "/.github/",
     "/.gitignore",
+    "/CLAUDE.md",
     "/REVIEW.md",
     "/docs/",
     "/rust-toolchain.toml",
