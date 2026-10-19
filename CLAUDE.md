@@ -40,7 +40,7 @@ Run the fmt and clippy gates before committing; CI fails on either. The full loc
 - Ground truth for spike-viz (the `spike-viz` sibling repository). Do not change the export file names, `meta.json` fields, or `schema_version`
   without a matching change on the spike-viz side (`docs/axon-encoder-export.md` there).
 - Seeded paths must stay bit-for-bit reproducible: stochastic encoders go through `*_with_rng`, and the export uses one seeded `StdRng`.
-  Thread-local RNG paths are not replay-stable; `encode_step` on deterministic encoders resumes exactly from a serde checkpoint.
+  Thread-local RNG paths are not replay-stable; `encode_step` on deterministic encoders resumes exactly from a finite JSON serde checkpoint (`DerivativeEncoder` rejects non-finite `last_values` on restore).
 - `axon-encoder` and `neuromod` must not depend on each other; adapters sit downstream (`docs/architecture-siblings.md`).
 - Keep the `ModulatedEncoder` impls and `encode_*_with_modulators_into` sink paths, `PhaseEncoder`, and `src/modulators.rs` intact (`REVIEW.md` "Do not merge if").
 - `EncodedOutput` carries `SpikeEvent`s and an optional embedding only; no `EncoderConfig` or `EncodingMetadata` placeholders.
@@ -49,7 +49,7 @@ Run the fmt and clippy gates before committing; CI fails on either. The full loc
 
 ## Gotchas
 
-- `Cargo.toml` `rust-version`, `rust-toolchain.toml`, the `toolchain:` pins in `ci.yml` and `coverage.yml`, and the `.devcontainer/Dockerfile` tag must stay identical.
+- `Cargo.toml` `rust-version`, `rust-toolchain.toml`, the `toolchain:` pins in `ci.yml` and `coverage.yml`, and the Rust version in the `.devcontainer/Dockerfile` `FROM rust:<version>-slim-bookworm` tag must stay identical.
 - `cargo test --test serde_tests` without `--features serde` runs zero tests.
 - `Cargo.toml` `exclude` lists `REVIEW.md` and `.agents/` but not `CLAUDE.md`, so a published package would include it; left unchanged here.
 - `.claude/` is not gitignored; do not commit local agent state there.
