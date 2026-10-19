@@ -319,3 +319,114 @@ fn test_rate_encoder_serde_rejects_invalid_dt_seconds() {
     let result: Result<RateEncoder, _> = serde_json::from_value(value);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_serde_timebase_named_field() {
+    // Named-field wire form: the object, not a bare integer, carries the unit.
+    // If this ever serialized as seconds (or an unlabelled u64), this fixture
+    // fails loudly.
+    let timebase = Timebase::MILLISECOND;
+    let serialized = serde_json::to_string(&timebase).unwrap();
+    assert_eq!(serialized, r#"{"tick_nanos":1000000}"#);
+    let deserialized: Timebase = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(timebase, deserialized);
+}
+
+#[test]
+fn test_serde_timebase_rejects_zero_tick_nanos() {
+    let res: Result<Timebase, _> = serde_json::from_str(r#"{"tick_nanos":0}"#);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_serde_time_model_round_trip() {
+    let models = [
+        TimeModel::INSTANT,
+        TimeModel::window(11),
+        TimeModel::overlapping(1, 8),
+        TimeModel::window(11).with_timebase(Timebase::MILLISECOND),
+    ];
+    for model in models {
+        let serialized = serde_json::to_string(&model).unwrap();
+        let deserialized: TimeModel = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(model, deserialized);
+    }
+
+    // Named-field JSON keeps the wire self-describing.
+    let serialized =
+        serde_json::to_string(&TimeModel::window(11).with_timebase(Timebase::MILLISECOND)).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+    assert!(value.get("step_ticks").is_some());
+    assert!(value.get("span_ticks").is_some());
+    assert_eq!(value["timebase"]["tick_nanos"], 1_000_000);
+
+    // Dimensionless models keep timebase as an explicit null.
+    let value: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&TimeModel::INSTANT).unwrap()).unwrap();
+    assert_eq!(value["timebase"], serde_json::Value::Null);
+}
+
+#[test]
+fn test_serde_time_model_rejects_invalid_wire_values() {
+    // Zero tick counts are unbuildable in Rust and must not load.
+    let res: Result<TimeModel, _> =
+        serde_json::from_str(r#"{"step_ticks":0,"span_ticks":1,"timebase":null}"#);
+    assert!(res.is_err());
+    let res: Result<TimeModel, _> =
+        serde_json::from_str(r#"{"step_ticks":1,"span_ticks":0,"timebase":null}"#);
+    assert!(res.is_err());
+
+    // A gap — stride wider than the window — is unbuildable in Rust and must
+    // not load from the wire either.
+    let res: Result<TimeModel, _> =
+        serde_json::from_str(r#"{"step_ticks":2,"span_ticks":1,"timebase":null}"#);
+    assert!(res.is_err());
+
+    // A zero tick duration nested inside a model is rejected too.
+    let res: Result<TimeModel, _> =
+        serde_json::from_str(r#"{"step_ticks":1,"span_ticks":1,"timebase":{"tick_nanos":0}}"#);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_serde_time_cursor_round_trip() {
+    // Checkpoint pairing an encoder restore with the caller's clock: origin,
+    // step, span, and the optional timebase must all survive the round trip.
+    let cursor = TimeCursor::starting_at(
+        TimeModel::window(11).with_timebase(Timebase::MILLISECOND),
+        42,
+    );
+    let serialized = serde_json::to_string(&cursor).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(value["origin"], 42);
+    assert_eq!(value["model"]["step_ticks"], 11);
+    assert_eq!(value["model"]["span_ticks"], 11);
+    assert_eq!(value["model"]["timebase"]["tick_nanos"], 1_000_000);
+
+    let deserialized: TimeCursor = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(cursor, deserialized);
+
+    // Horizon-adjacent origins round-trip exactly.
+    let at_horizon = TimeCursor::starting_at(TimeModel::INSTANT, u64::MAX);
+    let serialized = serde_json::to_string(&at_horizon).unwrap();
+    let deserialized: TimeCursor = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(at_horizon, deserialized);
+}
+
+#[test]
+fn test_serde_time_cursor_continues_absolute_time() {
+    // The restored cursor must resume the same absolute timeline: after
+    // deserialize + advance, origin matches the live cursor's next call.
+    let model = TimeModel::window(8).with_timebase(Timebase::MILLISECOND);
+    let mut live = TimeCursor::new(model);
+    live.advance_by(3);
+    let serialized = serde_json::to_string(&live).unwrap();
+    let mut restored: TimeCursor = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(restored.origin(), 24);
+    restored.advance();
+    assert_eq!(restored.absolute(TickOffset::new(5)), 37);
+    assert_eq!(
+        restored.absolute_nanos(TickOffset::new(5)),
+        Some(37_000_000)
+    );
+}

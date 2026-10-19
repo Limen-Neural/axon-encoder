@@ -27,12 +27,19 @@ golden!(
     "tick_offset",
     TickOffset::new(9_007_199_254_740_993)
 );
-golden!(
-    serde_compat_timebase,
-    Timebase,
-    "timebase",
-    Timebase::MILLISECOND
-);
+#[test]
+fn serde_compat_timebase() {
+    // v0.5 wrote a bare u64 of nanoseconds; the reader still loads that form.
+    let restored: Timebase = read_fixture("v0.5/timebase.json", "v0.5 writer -> HEAD reader");
+    assert_eq!(restored, Timebase::MILLISECOND);
+    // HEAD writes the named-field object, locked by the head/ payload so a
+    // drift back to a bare integer (or a unit change) fails loudly.
+    assert_json(
+        &Timebase::MILLISECOND,
+        "head/timebase_named.json",
+        "HEAD writer -> head golden",
+    );
+}
 golden!(
     serde_compat_encoded_output,
     EncodedOutput,
