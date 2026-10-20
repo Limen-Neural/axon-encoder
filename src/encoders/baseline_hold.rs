@@ -41,6 +41,13 @@ pub struct BaselineHoldTernaryEncoder {
     seeded: Vec<bool>,
 }
 
+/// Sample observed on one configured channel.
+#[derive(Clone, Copy)]
+struct ChannelSample {
+    index: usize,
+    value: f32,
+}
+
 #[cfg(feature = "serde")]
 #[derive(serde::Deserialize)]
 struct BaselineHoldTernaryEncoderRepr {
@@ -119,7 +126,8 @@ impl BaselineHoldTernaryEncoder {
     /// no-op and returns an empty vector. A channel that has never been seeded
     /// copies the sample into its baseline and emits `0`.
     pub fn encode_ternary(&mut self, input: &[f32]) -> Vec<i8> {
-        self.encode_ternary_values(Self::active_values(input, self.thresholds.len()))
+        let values = self.active_values(input);
+        self.encode_ternary_values(values)
     }
 
     fn encode_ternary_values(&mut self, values: &[f32]) -> Vec<i8> {
@@ -128,16 +136,18 @@ impl BaselineHoldTernaryEncoder {
         }
         let mut out = vec![0i8; values.len()];
         for (index, &value) in values.iter().enumerate() {
+            let sample = ChannelSample { index, value };
             out[index] = if self.seeded[index] {
-                self.classify_and_snap(index, value)
+                self.classify_and_snap(sample)
             } else {
-                self.seed_channel(index, value)
+                self.seed_channel(sample)
             };
         }
         out
     }
 
-    fn active_values(input: &[f32], channel_count: usize) -> &[f32] {
+    fn active_values<'a>(&self, input: &'a [f32]) -> &'a [f32] {
+        let channel_count = self.thresholds.len();
         if channel_count == 0 {
             &[]
         } else {
@@ -145,21 +155,23 @@ impl BaselineHoldTernaryEncoder {
         }
     }
 
-    fn seed_channel(&mut self, index: usize, value: f32) -> i8 {
-        self.baselines[index] = value;
-        self.seeded[index] = true;
+    fn seed_channel(&mut self, sample: ChannelSample) -> i8 {
+        self.baselines[sample.index] = sample.value;
+        self.seeded[sample.index] = true;
         0
     }
 
-    fn classify_and_snap(&mut self, index: usize, value: f32) -> i8 {
-        let event = Self::classify_crossing(value - self.baselines[index], self.thresholds[index]);
+    fn classify_and_snap(&mut self, sample: ChannelSample) -> i8 {
+        let event = self.crossing_event(sample);
         if event != 0 {
-            self.baselines[index] = value;
+            self.baselines[sample.index] = sample.value;
         }
         event
     }
 
-    fn classify_crossing(delta: f32, threshold: f32) -> i8 {
+    fn crossing_event(&self, sample: ChannelSample) -> i8 {
+        let delta = sample.value - self.baselines[sample.index];
+        let threshold = self.thresholds[sample.index];
         if delta >= threshold {
             1
         } else if delta <= -threshold {
@@ -170,7 +182,7 @@ impl BaselineHoldTernaryEncoder {
     }
 
     fn encode_step_into_sink<S: SpikeSink + ?Sized>(&mut self, input: &[f32], sink: &mut S) {
-        let values = Self::active_values(input, self.thresholds.len());
+        let values = self.active_values(input);
         sink.reserve(values.len());
         let ternary = self.encode_ternary_values(values);
         for (i, &t) in ternary.iter().enumerate() {
@@ -183,14 +195,6 @@ impl BaselineHoldTernaryEncoder {
             ));
         }
     }
-
-    fn clamp_to_channels<'a>(&self, input: &'a [f32]) -> &'a [f32] {
-        if input.len() > self.thresholds.len() {
-            &input[..self.thresholds.len()]
-        } else {
-            input
-        }
-    }
 }
 
 impl Encoder for BaselineHoldTernaryEncoder {
@@ -199,7 +203,7 @@ impl Encoder for BaselineHoldTernaryEncoder {
     }
 
     fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
-        let safe_input = self.clamp_to_channels(input);
+        let safe_input = self.active_values(input);
         let mut output = EncodedOutput::new();
         self.encode_step_into_sink(safe_input, &mut output.spikes);
         output
@@ -210,7 +214,7 @@ impl Encoder for BaselineHoldTernaryEncoder {
     }
 
     fn encode_step_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
-        let safe_input = self.clamp_to_channels(input);
+        let safe_input = self.active_values(input);
         crate::sink::through_chunks(sink, |sink| self.encode_step_into_sink(safe_input, sink));
     }
 
@@ -240,8 +244,10 @@ mod tests {
         let snap = [60.0, 260.0, 77.0, 153.0];
 
         assert_eq!(encoder.encode_ternary(&snap), vec![0, 0, 0, 0]);
-        assert!(encoder.is_initialized());
-        assert_eq!(encoder.seeded, vec![true, true, true, true]);
+        assert_eq!(
+            (encoder.is_initialized(), encoder.seeded.clone()),
+            (true, vec![true; 4])
+        );
         assert_eq!(encoder.baselines(), &[60.0, 260.0, 77.0, 153.0]);
     }
 
@@ -249,22 +255,43 @@ mod tests {
     fn short_first_frame_seeds_only_observed_channels() {
         let mut encoder = BaselineHoldTernaryEncoder::new(vec![1.0; 4]);
 
-        assert_eq!(encoder.encode_ternary(&[10.0, 20.0]), vec![0, 0]);
-        assert_eq!(encoder.baselines(), &[10.0, 20.0, 0.0, 0.0]);
-        assert_eq!(encoder.seeded, vec![true, true, false, false]);
-        assert!(!encoder.is_initialized());
+        assert_eq!(
+            (
+                encoder.encode_ternary(&[10.0, 20.0]),
+                encoder.baselines().to_vec(),
+                encoder.seeded.clone(),
+                encoder.is_initialized(),
+            ),
+            (
+                vec![0, 0],
+                vec![10.0, 20.0, 0.0, 0.0],
+                vec![true, true, false, false],
+                false,
+            )
+        );
 
         // Channels 0 and 1 follow crossing rules. Channels 2 and 3 would cross
         // a zero baseline, but they have never been seeded, so they emit 0
         // and adopt the sample.
-        let second = encoder.encode_ternary(&[12.0, 18.0, 50.0, -40.0]);
-        assert_eq!(second, vec![1, -1, 0, 0]);
-        assert_eq!(encoder.baselines(), &[12.0, 18.0, 50.0, -40.0]);
-        assert_eq!(encoder.seeded, vec![true; 4]);
-
-        let third = encoder.encode_ternary(&[12.0, 18.0, 51.0, -40.5]);
-        assert_eq!(third, vec![0, 0, 1, 0]);
-        assert_eq!(encoder.baselines(), &[12.0, 18.0, 51.0, -40.0]);
+        assert_eq!(
+            (
+                encoder.encode_ternary(&[12.0, 18.0, 50.0, -40.0]),
+                encoder.baselines().to_vec(),
+                encoder.seeded.clone(),
+            ),
+            (
+                vec![1, -1, 0, 0],
+                vec![12.0, 18.0, 50.0, -40.0],
+                vec![true; 4],
+            )
+        );
+        assert_eq!(
+            (
+                encoder.encode_ternary(&[12.0, 18.0, 51.0, -40.5]),
+                encoder.baselines().to_vec(),
+            ),
+            (vec![0, 0, 1, 0], vec![12.0, 18.0, 51.0, -40.0])
+        );
     }
 
     #[test]
@@ -332,9 +359,14 @@ mod tests {
         let mut encoder = corinth_encoder();
         encoder.encode_ternary(&[60.0, 260.0, 77.0, 153.0]);
         let out = encoder.encode(&[60.0, 254.5, 77.0, 153.0]);
-        assert_eq!(out.spikes.len(), 1);
-        assert_eq!(out.spikes[0].channel, 1);
-        assert!(!out.spikes[0].polarity);
+        let spike = out
+            .spikes
+            .first()
+            .expect("negative crossing emits one spike");
+        assert_eq!(
+            (out.spikes.len(), spike.channel, spike.polarity),
+            (1, 1, false)
+        );
     }
 
     #[test]
@@ -343,9 +375,14 @@ mod tests {
         encoder.encode_ternary(&[60.0, 260.0]);
         assert_eq!(encoder.seeded, vec![true, true, false, false]);
         encoder.reset();
-        assert!(!encoder.is_initialized());
-        assert_eq!(encoder.seeded, vec![false; 4]);
-        assert_eq!(encoder.baselines(), &[0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            (
+                encoder.is_initialized(),
+                encoder.seeded.clone(),
+                encoder.baselines().to_vec(),
+            ),
+            (false, vec![false; 4], vec![0.0; 4])
+        );
         assert_eq!(
             encoder.encode_ternary(&[60.0, 260.0, 77.0, 153.0]),
             vec![0, 0, 0, 0]
@@ -369,60 +406,50 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn serde_rejects_mismatched_state_lengths() {
-        let value = serde_json::json!({
-            "baselines": [1.0, 2.0],
-            "thresholds": [1.0],
-            "seeded": [true],
-        });
-        let res: Result<BaselineHoldTernaryEncoder, _> = serde_json::from_value(value);
-        assert!(res.is_err());
+    fn serde_rejects_invalid_state() {
+        let too_many_channels = (u16::MAX as usize) + 2;
+        let payloads = [
+            serde_json::json!({
+                "baselines": [1.0, 2.0],
+                "thresholds": [1.0],
+                "seeded": [true],
+            }),
+            serde_json::json!({
+                "baselines": [1.0, 2.0],
+                "thresholds": [1.0, 1.0],
+                "seeded": [true],
+            }),
+            serde_json::json!({
+                "baselines": [0.0],
+                "thresholds": [-1.0],
+                "seeded": [false],
+            }),
+            serde_json::json!({
+                "baselines": vec![0.0; too_many_channels],
+                "thresholds": vec![1.0; too_many_channels],
+                "seeded": vec![false; too_many_channels],
+            }),
+        ];
+        for payload in payloads {
+            let decoded: Result<BaselineHoldTernaryEncoder, _> = serde_json::from_value(payload);
+            assert!(decoded.is_err());
+        }
 
-        let seeded_mismatch = serde_json::json!({
-            "baselines": [1.0, 2.0],
-            "thresholds": [1.0, 1.0],
-            "seeded": [true],
-        });
-        let res: Result<BaselineHoldTernaryEncoder, _> = serde_json::from_value(seeded_mismatch);
-        assert!(res.is_err());
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_rejects_non_finite_baselines() {
-        let nan = BaselineHoldTernaryEncoderRepr {
-            baselines: vec![1.0, f32::NAN],
-            thresholds: vec![1.0, 1.0],
-            seeded: vec![true, false],
-        };
-        assert!(BaselineHoldTernaryEncoder::try_from(nan).is_err());
-
-        let infinite = BaselineHoldTernaryEncoderRepr {
-            baselines: vec![f32::INFINITY],
-            thresholds: vec![1.0],
-            seeded: vec![true],
-        };
-        assert!(BaselineHoldTernaryEncoder::try_from(infinite).is_err());
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_rejects_invalid_thresholds() {
-        let negative = serde_json::json!({
-            "baselines": [0.0],
-            "thresholds": [-1.0],
-            "seeded": [false],
-        });
-        let res: Result<BaselineHoldTernaryEncoder, _> = serde_json::from_value(negative);
-        assert!(res.is_err());
-
-        let too_many = serde_json::json!({
-            "baselines": vec![0.0; u16::MAX as usize + 2],
-            "thresholds": vec![1.0; u16::MAX as usize + 2],
-            "seeded": vec![false; u16::MAX as usize + 2],
-        });
-        let res: Result<BaselineHoldTernaryEncoder, _> = serde_json::from_value(too_many);
-        assert!(res.is_err());
+        let non_finite = [
+            BaselineHoldTernaryEncoderRepr {
+                baselines: vec![1.0, f32::NAN],
+                thresholds: vec![1.0, 1.0],
+                seeded: vec![true, false],
+            },
+            BaselineHoldTernaryEncoderRepr {
+                baselines: vec![f32::INFINITY],
+                thresholds: vec![1.0],
+                seeded: vec![true],
+            },
+        ];
+        for repr in non_finite {
+            assert!(BaselineHoldTernaryEncoder::try_from(repr).is_err());
+        }
     }
 
     #[cfg(feature = "serde")]
@@ -445,30 +472,41 @@ mod tests {
         let json = serde_json::to_string(&encoder).expect("serialize");
         let mut restored: BaselineHoldTernaryEncoder =
             serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(restored, encoder);
-        assert_eq!(restored.seeded, vec![true, true, false, false]);
+        assert_eq!(
+            (restored.clone(), restored.seeded.clone()),
+            (encoder.clone(), vec![true, true, false, false])
+        );
 
         let frame = [12.0, 18.0, 50.0, -40.0];
         assert_eq!(
             encoder.encode_ternary(&frame),
             restored.encode_ternary(&frame)
         );
-        assert_eq!(encoder.baselines(), restored.baselines());
         assert_eq!(encoder, restored);
     }
 
     #[test]
     fn empty_input_and_zero_channels_are_no_ops() {
         let mut zero = BaselineHoldTernaryEncoder::new(vec![]);
-        assert!(zero.encode_ternary(&[1.0]).is_empty());
-        assert!(zero.seeded.is_empty());
-        assert!(!zero.is_initialized());
+        assert_eq!(
+            (
+                zero.encode_ternary(&[1.0]),
+                zero.seeded.clone(),
+                zero.is_initialized(),
+            ),
+            (Vec::<i8>::new(), Vec::<bool>::new(), false)
+        );
 
         let mut encoder = BaselineHoldTernaryEncoder::new(vec![1.0]);
-        assert!(encoder.encode_ternary(&[]).is_empty());
-        assert_eq!(encoder.seeded, vec![false]);
-        assert!(!encoder.is_initialized());
-        assert_eq!(encoder.baselines(), &[0.0]);
+        assert_eq!(encoder.encode_ternary(&[]), Vec::<i8>::new());
+        assert_eq!(
+            (
+                encoder.seeded.clone(),
+                encoder.is_initialized(),
+                encoder.baselines().to_vec(),
+            ),
+            (vec![false], false, vec![0.0])
+        );
     }
 
     #[test]
@@ -476,8 +514,13 @@ mod tests {
         let mut encoder = BaselineHoldTernaryEncoder::new(vec![1.0, 1.0]);
         encoder.encode_step(&[10.0, 20.0, 99.0]);
         let out = encoder.encode_step(&[12.0, 20.0, 99.0]);
-        assert_eq!(out.spikes.len(), 1);
-        assert_eq!(out.spikes[0].channel, 0);
-        assert_eq!(encoder.baselines(), &[12.0, 20.0]);
+        let spike = out
+            .spikes
+            .first()
+            .expect("positive crossing emits one spike");
+        assert_eq!(
+            (out.spikes.len(), spike.channel, encoder.baselines()),
+            (1, 0, &[12.0, 20.0][..])
+        );
     }
 }
