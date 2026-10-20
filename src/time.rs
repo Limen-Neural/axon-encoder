@@ -199,11 +199,55 @@ impl fmt::Display for TickOffset {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Serde
+///
+/// With the `serde` feature a `Timebase` serializes as a named-field object,
+/// `{"tick_nanos": 1000000}`, so the wire value cannot be mistaken for a
+/// bare [`TickOffset`] count or a duration in some other unit. The v0.5 bare
+/// `u64` nanosecond form (`1000000`) still loads for checkpoint compatibility.
+/// Deserializing a zero tick duration fails with a validation error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(try_from = "u64", into = "u64"))]
 pub struct Timebase {
     tick_nanos: NonZeroU64,
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Timebase {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(serde::Serialize)]
+        struct Repr {
+            tick_nanos: u64,
+        }
+        let repr = Repr {
+            tick_nanos: self.tick_nanos(),
+        };
+        serde::Serialize::serialize(&repr, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Timebase {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // v0.5 wrote a bare u64 of nanoseconds; HEAD writes the named-field
+        // object. Both load, and both reject a zero tick duration.
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Named { tick_nanos: u64 },
+            Legacy(u64),
+        }
+        let tick_nanos = match <Repr as serde::Deserialize>::deserialize(deserializer)? {
+            Repr::Named { tick_nanos } | Repr::Legacy(tick_nanos) => tick_nanos,
+        };
+        Self::try_from_nanos(tick_nanos).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Timebase {
@@ -355,7 +399,16 @@ impl fmt::Display for Timebase {
 /// `true`.
 ///
 /// [`PhaseEncoder`]: crate::encoders::PhaseEncoder
+///
+/// # Serde
+///
+/// With the `serde` feature a `TimeModel` serializes as a named-field object:
+/// `{"step_ticks": 1, "span_ticks": 11, "timebase": {"tick_nanos": 1000000}}`
+/// (`timebase` is `null` when the encoder runs on dimensionless ticks). On
+/// load, zero `step_ticks`/`span_ticks` and `step_ticks > span_ticks` — a gap
+/// no constructor can produce — are rejected as validation errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TimeModel {
     step_ticks: NonZeroU64,
     span_ticks: NonZeroU64,
@@ -477,6 +530,40 @@ impl Default for TimeModel {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for TimeModel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Repr {
+            step_ticks: u64,
+            span_ticks: u64,
+            #[serde(default)]
+            timebase: Option<Timebase>,
+        }
+        let repr = <Repr as serde::Deserialize>::deserialize(deserializer)?;
+        let step = NonZeroU64::new(repr.step_ticks)
+            .ok_or_else(|| serde::de::Error::custom("step_ticks must be a non-zero tick count"))?;
+        let span = NonZeroU64::new(repr.span_ticks)
+            .ok_or_else(|| serde::de::Error::custom("span_ticks must be a non-zero tick count"))?;
+        // The public constructors clamp or reject a stride wider than the
+        // window, so a gap is unbuildable in Rust and must be unbuildable from
+        // the wire too.
+        if step.get() > span.get() {
+            return Err(serde::de::Error::custom(
+                "step_ticks must not exceed span_ticks",
+            ));
+        }
+        Ok(Self {
+            step_ticks: step,
+            span_ticks: span,
+            timebase: repr.timebase,
+        })
+    }
+}
+
 /// Caller-owned absolute clock for a stream of encoder calls.
 ///
 /// This crate never holds absolute time. A `TimeCursor` is the small piece of
@@ -523,7 +610,17 @@ impl Default for TimeModel {
 /// [`checked_advance_by`](Self::checked_advance_by), and fail closed when those
 /// return `None`. Mutating checked advances leave the origin unchanged on
 /// overflow.
+///
+/// # Serde
+///
+/// With the `serde` feature a `TimeCursor` serializes as
+/// `{"model": <TimeModel>, "origin": <ticks>}` — the absolute tick of the next
+/// call's start plus the tick geometry and optional [`Timebase`], which paired
+/// with an encoder checkpoint restores the caller's clock. Spike `timestamp`
+/// values on the wire remain **call-relative** [`TickOffset`] counts; the
+/// cursor is what converts them to absolute ticks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TimeCursor {
     model: TimeModel,
     origin: u64,

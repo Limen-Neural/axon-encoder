@@ -40,12 +40,14 @@ reader/writer, not a promise that future incompatible versions must load.
 | `v0.4/latency_max.json` | HEAD | Reject `u64::MAX` with `WindowTooLarge` (accepted by v0.4 validation). |
 | `v0.4/encoded_output.json` | HEAD | Loads; removed empty `metadata` placeholder is discarded. |
 | `head/timebase_zero.json` | HEAD | Reject zero tick duration. |
+| `head/timebase_named.json` | HEAD | HEAD writer emits `{"tick_nanos":1000000}`; `v0.5/timebase.json`'s bare `1000000` still loads. |
+| `v0.5/timebase.json` | HEAD | Loads as legacy bare-u64 nanoseconds; HEAD writer output is locked by `head/timebase_named.json`, not this fixture. |
 | `head/spike_event_extra.json`, `head/poisson_extra.json` | HEAD | Unknown fields accepted and discarded, not rejected. |
 | `head/encoding_gains_empty.json` | HEAD | `{}` defaults to identity. |
 | `head/encoding_gains_unsanitized.json` | HEAD | Negative threshold becomes 0, sensitivity caps at 10,000, missing rate becomes 1, explicit zero latency stays zero. |
 | `head/neuromodulators_empty.json` | HEAD | Reject missing required fields; Rust `Default` does not imply serde defaults. |
 | `head/rate_first_step.json` | HEAD | First `encode_step(&[0.25])` at dt 0.125 writes phase `[0.3125]` and **`pending_spikes: [0]`**, not an omitted field. |
-| Every `v0.5/*.json` | HEAD | Load into independently constructed values; HEAD serialization matches golden JSON. |
+| Every `v0.5/*.json` | HEAD | Load into independently constructed values; HEAD serialization matches golden JSON (`timebase.json` excepted — see its row). |
 
 The v0.5 inventory is `SpikeEvent`, `EncodedOutput`, `TickOffset`, `Timebase`,
 `EmbeddingEncoderConfig`, `EmbeddingRateEncoder`, `RateEncoder`, `DeltaEncoder`,

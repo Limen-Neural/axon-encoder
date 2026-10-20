@@ -16,6 +16,10 @@
   axon-encoder plus neuromod is still blocked by the `NeuroModulators` /
   `PoissonEncoder` name collision
   ([corinth-canal#143](https://github.com/rmems/corinth-canal/issues/143)).
+- `serde` feature: `Serialize`/`Deserialize` for `TimeModel` and `TimeCursor`,
+  so an encoder checkpoint can now persist the caller's clock (absolute
+  `origin`, `step_ticks`/`span_ticks` tick geometry, optional `Timebase`) as
+  named-field JSON and resume the same timeline after restore.
 
 ### Fixed
 
@@ -23,6 +27,13 @@
   first frame seeds only the channels it contains; unobserved channels stay
   unseeded instead of comparing later samples against `0.0`. `reset` clears
   every channel. Serde round-trips a per-channel `seeded` flag.
+
+### Changed
+
+- `serde` feature: `Timebase` now serializes as `{"tick_nanos": N}` instead of
+  a bare `u64`, disambiguating it from a `TickOffset` tick count. The v0.5
+  bare-integer payload still deserializes; zero and other invalid values are
+  rejected in both forms.
 
 ## [0.6.0] - 2026-10-01
 
