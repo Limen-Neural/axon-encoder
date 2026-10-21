@@ -10,6 +10,7 @@ of a stream, and call `encode_step` once per incoming frame.
 | --- | --- | --- |
 | Intensity represented as rate | `RateEncoder` | `encode_step` integrates rate deterministically. Batch `encode` is stochastic. |
 | Change from a baseline | `DeltaEncoder` | Keeps prior values; retain it across frames. |
+| Baseline hold (signed, inclusive) | `BaselineHoldTernaryEncoder` | Baseline moves only on threshold crossings; first sample seeds and emits zero. |
 | Change velocity | `DerivativeEncoder` | Keeps prior values; use finite input when checkpointing to JSON. |
 | Earlier event for stronger input | `LatencyEncoder` | Stateless; one call can span `max_latency + 1` ticks. |
 | Periodic phase code | `PhaseEncoder` | Calls overlap its cycle window; use its reported time model. |

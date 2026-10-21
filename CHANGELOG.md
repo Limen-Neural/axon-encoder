@@ -4,10 +4,29 @@
 
 ### Added
 
+- `BaselineHoldTernaryEncoder`: per-channel baseline-hold ternary encoding with
+  inclusive signed threshold crossings and baseline updates only on events
+  (Corinth `TelemetryEncoder` semantics from
+  [corinth-canal#158](https://github.com/rmems/corinth-canal/issues/158)).
+  Each channel seeds independently on its first observed sample. Exposes
+  `encode_ternary` for dense `{-1, 0, +1}` output plus an `Encoder` adapter
+  that maps sign to spike polarity at tick zero. A Corinth
+  `TelemetryFunnel::reset` must not call this encoder's `reset` (Corinth keeps
+  the telemetry baseline across GIF reset). Joint Corinth adoption of
+  axon-encoder plus neuromod is still blocked by the `NeuroModulators` /
+  `PoissonEncoder` name collision
+  ([corinth-canal#143](https://github.com/rmems/corinth-canal/issues/143)).
 - `serde` feature: `Serialize`/`Deserialize` for `TimeModel` and `TimeCursor`,
   so an encoder checkpoint can now persist the caller's clock (absolute
   `origin`, `step_ticks`/`span_ticks` tick geometry, optional `Timebase`) as
   named-field JSON and resume the same timeline after restore.
+
+### Fixed
+
+- `BaselineHoldTernaryEncoder` no longer uses one `initialized` flag. A short
+  first frame seeds only the channels it contains; unobserved channels stay
+  unseeded instead of comparing later samples against `0.0`. `reset` clears
+  every channel. Serde round-trips a per-channel `seeded` flag.
 
 ### Changed
 

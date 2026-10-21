@@ -92,6 +92,17 @@ fn derivative_encoder_sink_path_matches_returning_path() {
 }
 
 #[test]
+fn baseline_hold_encoder_sink_path_matches_returning_path() {
+    let steps: &[&[f32]] = &[&[0.0, 0.0], &[2.0, 0.0], &[2.0, -2.0]];
+    assert_paths_agree(
+        "BaselineHoldTernaryEncoder",
+        BaselineHoldTernaryEncoder::new(vec![1.0, 1.0]),
+        BaselineHoldTernaryEncoder::new(vec![1.0, 1.0]),
+        steps,
+    );
+}
+
+#[test]
 fn latency_encoder_sink_path_matches_returning_path() {
     let steps: &[&[f32]] = &[&[1.0, 0.0, 0.5], &[f32::NAN, 2.0, -1.0]];
     assert_paths_agree(
@@ -433,6 +444,10 @@ fn one_spike_per_channel_encoders_reserve_only_processed_channels() {
     assert_eq!(reserved_by(&mut derivative, &short), 2);
     assert_eq!(reserved_by(&mut derivative, &long), 3);
 
+    let mut baseline_hold = BaselineHoldTernaryEncoder::new(vec![0.1; 3]);
+    assert_eq!(reserved_by(&mut baseline_hold, &short), 2);
+    assert_eq!(reserved_by(&mut baseline_hold, &long), 3);
+
     let mut embedding = EmbeddingRateEncoder::new(3, EmbeddingEncoderConfig { v_th: 0.5 });
     assert_eq!(reserved_by(&mut embedding, &short), 2);
     assert_eq!(reserved_by(&mut embedding, &long), 3);
@@ -635,6 +650,12 @@ fn batch_sink_path_matches_encode_for_deterministic_encoders() {
         "DerivativeEncoder",
         DerivativeEncoder::new(vec![0.5, 0.5]),
         DerivativeEncoder::new(vec![0.5, 0.5]),
+        two_channel,
+    );
+    assert_batch_paths_agree(
+        "BaselineHoldTernaryEncoder",
+        BaselineHoldTernaryEncoder::new(vec![1.0, 1.0]),
+        BaselineHoldTernaryEncoder::new(vec![1.0, 1.0]),
         two_channel,
     );
     assert_batch_paths_agree(
