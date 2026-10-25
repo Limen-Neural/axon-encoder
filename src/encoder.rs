@@ -148,6 +148,24 @@ impl EmbeddingRateEncoder {
         })
     }
 
+    /// Number of channels this encoder tracks.
+    ///
+    /// Equal to the `num_channels` passed to [`try_new`](Self::try_new) and to
+    /// the length of the persistent membrane vector.
+    ///
+    /// ```rust
+    /// use axon_encoder::prelude::*;
+    ///
+    /// # fn main() -> Result<(), EncoderError> {
+    /// let encoder = EmbeddingRateEncoder::try_new(4, EmbeddingEncoderConfig { v_th: 0.5 })?;
+    /// assert_eq!(encoder.num_channels(), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn num_channels(&self) -> usize {
+        self.membrane_potentials.len()
+    }
+
     /// Spike-emitting core: writes straight into `sink`, allocating nothing.
     ///
     /// Every public encoding path on this encoder routes through here, so the

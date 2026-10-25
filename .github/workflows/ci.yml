@@ -143,6 +143,13 @@ jobs:
       - name: Run tests (serde feature)
         run: cargo test --features serde --locked
 
+      # The `nir` feature is also covered by --all-features below; this row
+      # names it explicitly so a failure is attributable to the feature.
+      # It pulls only the pure-Rust `nir-rs` graph model: no HDF5, no native
+      # libraries, so it runs on every matrix OS.
+      - name: Run tests (nir feature)
+        run: cargo test --features nir --locked
+
       - name: Run tests (all features)
         run: cargo test --all-features --locked
 
