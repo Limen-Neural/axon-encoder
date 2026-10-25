@@ -183,9 +183,9 @@ impl RateEncoder {
     /// different interval than `dt_seconds` specifies.
     fn physical_dt(dt_seconds: f32) -> f64 {
         let widened = f64::from(dt_seconds);
-        let Ok(decimal) = dt_seconds.to_string().parse::<f64>() else {
-            return widened;
-        };
+        // `Display` for a finite f32 always yields a parseable decimal; the
+        // fallback only exists so this can never panic.
+        let decimal = dt_seconds.to_string().parse::<f64>().unwrap_or(widened);
         if (decimal - widened).abs() <= widened * f64::from(f32::EPSILON) {
             decimal
         } else {
@@ -1310,6 +1310,18 @@ mod tests {
                 encoder.dt
             );
         }
+    }
+
+    /// `batch_probability` edge branches: non-positive / non-finite rates are
+    /// silent, and a huge `rate * dt` saturates at exactly 1.0.
+    #[test]
+    fn test_rate_encoder_batch_probability_edges() {
+        let encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), 1.0).unwrap();
+        assert_eq!(encoder.batch_probability(0.0), 0.0);
+        assert_eq!(encoder.batch_probability(-1.0), 0.0);
+        assert_eq!(encoder.batch_probability(f32::NAN), 0.0);
+        assert_eq!(encoder.batch_probability(1e9), 1.0);
+        assert_eq!(encoder.batch_probability(f32::MAX), 1.0);
     }
 
     /// The decimal correction is guarded: it applies to ordinary durations
