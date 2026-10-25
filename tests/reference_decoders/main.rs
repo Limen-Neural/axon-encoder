@@ -41,6 +41,9 @@
 //! Each encoder family lives in its own submodule so that every module carries a
 //! single responsibility (one encoder family's oracle plus its tests).
 
+#[path = "../common/oracles.rs"]
+mod oracles;
+
 mod latency;
 mod phase;
 mod population;

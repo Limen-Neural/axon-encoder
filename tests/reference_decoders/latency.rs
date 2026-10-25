@@ -2,36 +2,8 @@
 
 use axon_encoder::prelude::*;
 
-/// Reference inverse of [`LatencyEncoder`].
-///
-/// Forward (from `src/encoders/latency.rs`):
-/// `offset = round((1 - normalized) * max_latency).min(max_latency)` where
-/// `normalized = (clamp(value, min, max) - min) / (max - min)`.
-///
-/// Inverting the linear map (ignoring the integer rounding) gives
-/// `x = min + (1 - ts / max_latency) * (max - min)`.
-///
-/// # Degenerate `max_latency == 0`
-///
-/// `LatencyEncoder::try_new(0, range)` is a documented-valid configuration: the
-/// presentation window is `max_latency + 1 == 1` tick wide and *every* input
-/// collapses onto tick `0` (see `latency_zero_max_latency_is_non_invertible`).
-/// That map is non-invertible — the whole range maps to a single tick, so no
-/// spike timestamp can recover which value produced it. Rather than silently
-/// computing `1 - 0/0 = NaN`, the oracle documents this collision explicitly by
-/// returning the range midpoint, the minimum-squared-error point estimate when
-/// every value in `[min, max]` collapses to the same tick.
-fn latency_decode(ts: u64, max_latency: u64, range: (f32, f32)) -> f64 {
-    let (min, max) = (range.0 as f64, range.1 as f64);
-    if max_latency == 0 {
-        // Non-invertible collision: the entire range maps to tick 0. Report the
-        // range midpoint as the defined (documented) degenerate answer instead
-        // of a silent NaN from the 0/0 division below.
-        return min + 0.5 * (max - min);
-    }
-    let fraction = 1.0 - (ts as f64 / max_latency as f64);
-    min + fraction * (max - min)
-}
+/// Reference inverse of [`LatencyEncoder`]; defined once in `tests/common/oracles.rs`.
+use super::oracles::latency_decode;
 
 #[test]
 fn latency_linear_inverse_is_exact_on_the_grid() {

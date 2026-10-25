@@ -259,8 +259,10 @@ is locked by [`tests/decode_consistency.rs`](tests/decode_consistency.rs),
 with the per-encoder inverse formulas and their collision points in
 [`tests/reference_decoders/`](tests/reference_decoders/). In short:
 
-- `LatencyEncoder`: `x̂ = min + (1 - t/L)·span` — strong input is **early**.
-  Emission is channel-major, so sort by `timestamp` before any
+- `LatencyEncoder`: `x̂ = min + (1 - t/L)·span` with `L = max_latency > 0`
+  (the span is `L + 1` ticks, the denominator is `L`) — strong input is
+  **early**. `max_latency = 0` is valid but non-invertible: every value lands
+  on tick 0. Emission is channel-major, so sort by `timestamp` before any
   "first spike wins" logic.
 - `PhaseEncoder`: `x̂ = min + ((b + 0.5)/C)·span` — strong input is **late**;
   the polarity is opposite to Latency, so one decoder does not fit both.
@@ -268,9 +270,14 @@ with the per-encoder inverse formulas and their collision points in
   `TimeCursor` before comparing times across calls, and expect the absolute
   chronology to differ from emission order.
 - `RateEncoder::encode_step`: `λ̂ = count / elapsed`, within one spike over the
-  window. (Batch `encode` is Bernoulli; see "Rate encoder time semantics".)
-- `PopulationEncoder`: center of mass over pooled counts; endpoints are biased
-  inward.
+  window while `λΔt ≤ 1024` and no backlog is draining; above the per-step cap
+  the emitted count lags the true rate. (Batch `encode` is Bernoulli; see
+  "Rate encoder time semantics".)
+- `PopulationEncoder`: center of mass over pooled counts. Endpoints are biased
+  inward when neighbouring neurons still respond (tuning width wide enough that
+  their contribution survives the sum); for very narrow widths the neighbours
+  underflow and the CoM collapses onto the endpoint exactly (see
+  `tests/reference_decoders/population.rs`).
 
 ## Buffered streaming
 

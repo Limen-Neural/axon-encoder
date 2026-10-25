@@ -18,42 +18,38 @@
 //!    to absolute time through a [`TimeCursor`] can reorder spikes across
 //!    calls. The absolute chronology is not the emission order.
 //!
-//! The crate ships no `Decoder` trait; the inverses below are test oracles,
-//! shared in spirit with `tests/reference_decoders/` and kept deliberately
-//! small. README "Decoder contract" points here.
+//! The crate ships no `Decoder` trait. The inverse formulas come from
+//! `tests/common/oracles.rs`, the single definition also used by
+//! `tests/reference_decoders/`; the count-weighted center of mass below is
+//! this suite's own, since the reference suite weights by analytic tuning
+//! response rather than observed spike counts. README "Decoder contract"
+//! points here.
 
 use axon_encoder::prelude::*;
 
 /// Probe grid shared by every round-trip test: both range endpoints, the
-/// midpoint, and interior points that do not sit on any quantization boundary
-/// of the configurations used below.
-const PROBES: [f32; 7] = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0];
+/// midpoint, interior tenths, and one off-grid value (`0.37`) that no
+/// configuration below quantizes exactly, so a rounding regression cannot hide
+/// behind a grid that happens to divide evenly.
+const PROBES: [f32; 8] = [0.0, 0.1, 0.3, 0.37, 0.5, 0.7, 0.9, 1.0];
 const RANGE: (f32, f32) = (0.0, 1.0);
 
 // --- oracles -----------------------------------------------------------------
 
-/// Latency inverse: `x̂ = min + (1 - t / L) * span`.
+mod common;
+use common::oracles::population_preferred;
+use common::oracles::{latency_decode as latency_decode_in, phase_decode as phase_decode_in};
+
 fn latency_decode(offset: u64, max_latency: u64) -> f64 {
-    let (min, max) = (f64::from(RANGE.0), f64::from(RANGE.1));
-    min + (1.0 - offset as f64 / max_latency as f64) * (max - min)
+    latency_decode_in(offset, max_latency, RANGE)
 }
 
-/// Phase inverse: bin center, `x̂ = min + ((b + 0.5) / C) * span`.
 fn phase_decode(bin: u64, cycle_steps: u64) -> f64 {
-    let (min, max) = (f64::from(RANGE.0), f64::from(RANGE.1));
-    min + ((bin as f64 + 0.5) / cycle_steps as f64) * (max - min)
+    phase_decode_in(bin, cycle_steps, RANGE)
 }
 
-/// Population preferred value of neuron `i` (endpoint-covering grid, f32 order
-/// as in the encoder).
 fn preferred(i: usize, n: usize) -> f64 {
-    if i == 0 {
-        f64::from(RANGE.0)
-    } else if i == n - 1 {
-        f64::from(RANGE.1)
-    } else {
-        f64::from(RANGE.0 + (i as f32 / (n - 1) as f32) * (RANGE.1 - RANGE.0))
-    }
+    population_preferred(i, n, RANGE)
 }
 
 /// Population center of mass over pooled spike counts.
@@ -83,16 +79,18 @@ fn correlation(xs: &[f64], ys: &[f64]) -> f64 {
     r
 }
 
-/// Shared round-trip check: every probe decodes back to within `tolerance`.
+/// One round-trip check over [`PROBES`]: encode the grid once with `encoder`,
+/// decode every offset with `decode`, and require each probe back within
+/// `tolerance`.
 fn assert_round_trip(
     label: &str,
-    probes: &[f32],
-    spikes: &[SpikeEvent],
-    decode: impl Fn(u64) -> f64,
+    encoder: &mut dyn Encoder,
+    decode: &dyn Fn(u64) -> f64,
     tolerance: f64,
 ) {
-    assert_eq!(spikes.len(), probes.len(), "{label}: one spike per probe");
-    for (spike, &x) in spikes.iter().zip(probes) {
+    let spikes = encoder.encode(&PROBES).spikes;
+    assert_eq!(spikes.len(), PROBES.len(), "{label}: one spike per probe");
+    for (spike, &x) in spikes.iter().zip(PROBES.iter()) {
         let decoded = decode(spike.timestamp.ticks());
         assert!(
             (decoded - f64::from(x)).abs() <= tolerance + 1e-9,
@@ -106,16 +104,8 @@ fn assert_round_trip(
 
 #[test]
 fn latency_round_trips_the_probe_grid_within_half_a_tick() {
-    let max_latency = 10u64;
-    let mut encoder = LatencyEncoder::try_new(max_latency, RANGE).expect("valid latency");
-    let out = encoder.encode(&PROBES);
-    assert_round_trip(
-        "latency",
-        &PROBES,
-        &out.spikes,
-        |t| latency_decode(t, max_latency),
-        0.5 / max_latency as f64,
-    );
+    let mut encoder = LatencyEncoder::try_new(10, RANGE).expect("valid latency");
+    assert_round_trip("latency", &mut encoder, &|t| latency_decode(t, 10), 0.05);
 }
 
 /// Values that quantize to a tick exactly decode back to themselves.
@@ -172,16 +162,8 @@ fn latency_decoder_must_sort_by_timestamp_not_emission_order() {
 
 #[test]
 fn phase_round_trips_the_probe_grid_within_half_a_bin() {
-    let cycle_steps = 16u64;
-    let mut encoder = PhaseEncoder::try_new(cycle_steps, RANGE).expect("valid phase");
-    let out = encoder.encode(&PROBES);
-    assert_round_trip(
-        "phase",
-        &PROBES,
-        &out.spikes,
-        |b| phase_decode(b, cycle_steps),
-        0.5 / cycle_steps as f64,
-    );
+    let mut encoder = PhaseEncoder::try_new(16, RANGE).expect("valid phase");
+    assert_round_trip("phase", &mut encoder, &|b| phase_decode(b, 16), 0.5 / 16.0);
 }
 
 /// Phase and Latency have opposite polarity: the offset grows with the input

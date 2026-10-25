@@ -27,16 +27,7 @@ impl PopulationOracle {
     /// f64 would diverge from the encoder for large-magnitude ranges, where the
     /// f32 rounding shifts a preferred value by several units.
     fn preferred(&self, i: usize) -> f64 {
-        let (min, max) = self.range;
-        if self.n == 1 || i == 0 {
-            min as f64
-        } else if i == self.n - 1 {
-            max as f64
-        } else {
-            let span = max - min;
-            let preferred = min + (i as f32 / (self.n - 1) as f32) * span;
-            preferred as f64
-        }
+        super::oracles::population_preferred(i, self.n, self.range)
     }
 
     /// The effective tuning width the encoder's unmodulated (identity,
