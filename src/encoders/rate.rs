@@ -1468,7 +1468,8 @@ mod tests {
         let p_hat = spikes as f64 / trials as f64;
         let elapsed = f64::from(dt) * trials as f64;
         let naive_hz = spikes as f64 / elapsed;
-        let bernoulli_hz = (1.0 - (-0.5f64).exp()) / f64::from(dt); // ≈ 39.35 Hz
+        let lambda_dt = f64::from(rate_hz) * f64::from(dt);
+        let bernoulli_hz = (1.0 - (-lambda_dt).exp()) / f64::from(dt); // ≈ 39.35 Hz at λΔt = 0.5
         let inverted_hz = -(1.0 - p_hat).ln() / f64::from(dt);
 
         assert!(
