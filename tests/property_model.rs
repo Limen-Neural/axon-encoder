@@ -6,8 +6,19 @@
 //! (property, encoder). A trial is therefore reproducible given the fixed
 //! seed, the crate and `rand` versions, and the sampler's draw order (a trial
 //! depends on the draws of the trials before it in the same stream); the
-//! failure message names the trial index so the run can be replayed. There is
-//! no `proptest` dependency: the sampler
+//! failure message names the trial index so the run can be replayed.
+//!
+//! Replay scope for the stochastic encoders (`Rate`, `Population`): the
+//! *batch* legs go through `encode_with_rng` with the trial's `StdRng`
+//! (`Traits::seeded_batch`) and replay from the seed. The step and sink legs
+//! (`encode_step`, `encode_into`, `encode_step_into`) have no caller-RNG entry
+//! point for every encoder — `RateEncoder` has only `encode_with_rng`, and
+//! `PopulationEncoder`'s sink paths draw from the thread-local generator — so
+//! on those legs the *input* replays from the seed but the spike draw does
+//! not; a failure there is reproduced from the input summary in the failure
+//! label, not bit-for-bit. (`RateEncoder::encode_step` is deterministic and
+//! needs no RNG.) No library API was added for this. There is no `proptest`
+//! dependency: the sampler
 //! is the same table-plus-uniform approach as `src/encoders/property_support.rs`
 //! (which is crate-internal, `#![cfg(test)]`, so integration tests cannot
 //! import it). Every failure message carries the trial index, the encoder
@@ -22,8 +33,10 @@
 //!    count per step equals `rate·dt` to within one spike over the run.
 //! 3. Fixed-width encoders never emit `channel >= cap` for over-long input,
 //!    and shorter slices never panic.
-//! 4. `LatencyEncoder` / `PhaseEncoder` offsets stay inside the span under
-//!    `EncodingGains`, including `latency_scale > 1`.
+//! 4. Every gain-aware encoder keeps its offsets inside the span under
+//!    `EncodingGains`, including `latency_scale > 1`; the issue's named
+//!    targets are `LatencyEncoder` and `PhaseEncoder`, the only two whose
+//!    offsets are non-zero.
 //! 5. `encode_into` / `encode_step_into` match the returning APIs on
 //!    deterministic encoders for lengths around 0/1/63/64/65/128/2048.
 //! 6. After `reset()` a deterministic encoder matches a fresh instance.
