@@ -15,7 +15,7 @@ use crate::prelude::*;
 /// **Batch (`encode`): Bernoulli per channel per call.**
 /// ```text
 /// rate_hz = base_rate + normalized * (max_rate - base_rate)
-/// p       = 1 - exp(-rate_hz * dt_seconds)        // probability_from_rate_hz
+/// p       = 1 - exp(-rate_hz * dt)                // batch_probability, f64 dt
 /// spike if random() < p                            // at most ONE spike per channel per call
 /// ```
 /// The expected spike count per call is `p = 1 - exp(-λΔt)`, **not** `λΔt`, and
