@@ -37,7 +37,9 @@
   deserialize (labels dropped); new checkpoints write plain floats. The encoder
   is now documented as a dual-window change detector rather than a temporal
   code, `history_depth` beyond `TemporalEncoder::WINDOW` (6) is documented and
-  tested as buffer-only, and `TemporalEncoder::WINDOW` is public.
+  tested as buffer-only, and `TemporalEncoder::WINDOW` is public. An empty
+  `change_thresholds` is now rejected (`CountMustBePositive`) in `try_new` and
+  on deserialize instead of producing an encoder that never fires.
   `PredictiveEncoder` keeps its `(f32, u16)` pairs for now.
 - `serde` feature: `Timebase` now serializes as `{"tick_nanos": N}` instead of
   a bare `u64`, disambiguating it from a `TickOffset` tick count. The v0.5

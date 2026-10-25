@@ -63,8 +63,9 @@ use std::collections::VecDeque;
 /// # Parameters
 ///
 /// - `history_depth`: finite samples retained per channel (`>= 6`, buffer-only)
-/// - `change_thresholds`: finite non-negative change magnitudes; the channel
-///   fires when the change exceeds the smallest of them
+/// - `change_thresholds`: at least one finite non-negative change magnitude;
+///   the channel fires when the change exceeds the smallest of them. An empty
+///   list is rejected rather than accepted as a silent encoder
 /// - `num_channels`: number of input channels
 ///
 /// # Migration (0.7)
@@ -72,7 +73,7 @@ use std::collections::VecDeque;
 /// Before 0.7 `change_thresholds` was `Vec<(f32, u16)>`, documented as
 /// `(threshold, spike_value)`. The `u16` was never read: it did not set
 /// polarity, channel, or anything else. It is removed; pass `vec![0.5]` where
-/// you passed `vec![0.5]`. Checkpoints written with the pair form still
+/// you passed `vec![(0.5, 1)]`. Checkpoints written with the pair form still
 /// deserialize (the labels are dropped); new checkpoints write plain floats.
 /// `PredictiveEncoder` keeps its pair form for now.
 ///
@@ -130,6 +131,11 @@ impl TemporalEncoder {
         if history_depth < Self::WINDOW {
             return Err(EncoderError::HistoryDepthTooSmall {
                 minimum: Self::WINDOW,
+            });
+        }
+        if change_thresholds.is_empty() {
+            return Err(EncoderError::CountMustBePositive {
+                parameter: "change_thresholds",
             });
         }
         for &threshold in &change_thresholds {
@@ -378,6 +384,13 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
             .map_err(serde::de::Error::custom)?;
 
         // Match try_new: reject non-finite / negative thresholds on load.
+        if change_thresholds.is_empty() {
+            return Err(serde::de::Error::custom(
+                EncoderError::CountMustBePositive {
+                    parameter: "change_thresholds",
+                },
+            ));
+        }
         for &threshold in &change_thresholds {
             crate::error::validate_non_negative_finite("change_threshold", threshold)
                 .map_err(serde::de::Error::custom)?;
@@ -598,7 +611,7 @@ mod tests {
         let json = r#"{
             "history": [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
             "history_depth": 6,
-            "change_thresholds": []
+            "change_thresholds": [0.5]
         }"#;
         let res: Result<TemporalEncoder, _> = serde_json::from_str(json);
         assert!(res.is_err());
@@ -749,5 +762,20 @@ mod tests {
             })
         );
         assert!(TemporalEncoder::try_new(6, vec![0.0], 1).is_ok());
+        assert_eq!(
+            TemporalEncoder::try_new(6, vec![], 1).err(),
+            Some(EncoderError::CountMustBePositive {
+                parameter: "change_thresholds"
+            }),
+            "an empty threshold list would be a silent encoder"
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_serde_rejects_empty_thresholds() {
+        let empty = r#"{"history": [[]], "history_depth": 6, "change_thresholds": []}"#;
+        let err = serde_json::from_str::<TemporalEncoder>(empty).expect_err("empty must fail");
+        assert!(err.to_string().contains("change_thresholds"), "{err}");
     }
 }

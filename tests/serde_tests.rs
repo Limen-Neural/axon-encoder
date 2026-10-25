@@ -154,7 +154,7 @@ fn test_serde_validation_failures() {
     let invalid_temp_depth_json = r#"{
         "history": [[0.0]],
         "history_depth": 5,
-        "change_thresholds": []
+        "change_thresholds": [0.5]
     }"#;
     let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
     assert!(res.is_err());
