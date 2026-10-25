@@ -78,103 +78,106 @@ fn population_width(len: usize) -> usize {
     len * CHANNELS
 }
 
-/// Table-driven construction: one small row per encoder.
+/// Behavioural flags for one encoder row.
+#[derive(Clone, Copy)]
+struct Traits {
+    channel_cap: fn(usize) -> usize,
+    deterministic: bool,
+    skips_non_finite: bool,
+}
+
+const STATELESS: Traits = Traits {
+    channel_cap: input_width,
+    deterministic: true,
+    skips_non_finite: true,
+};
+const STOCHASTIC: Traits = Traits {
+    channel_cap: input_width,
+    deterministic: false,
+    skips_non_finite: true,
+};
+const FIXED_WIDTH: Traits = Traits {
+    channel_cap: fixed_width,
+    deterministic: true,
+    skips_non_finite: true,
+};
+
+/// Every public encoder, grouped by family.
 fn subjects() -> Vec<Subject> {
+    let mut all = timing_and_rate_subjects();
+    all.extend(stateful_subjects());
+    all
+}
+
+fn timing_and_rate_subjects() -> Vec<Subject> {
     vec![
-        subject("RateEncoder", rate, Some(rate_m), input_width, false, true),
-        subject(
-            "LatencyEncoder",
-            latency,
-            Some(latency_m),
-            input_width,
-            true,
-            true,
-        ),
+        Subject::new("RateEncoder", rate, Some(rate_m), STOCHASTIC),
+        Subject::new("LatencyEncoder", latency, Some(latency_m), STATELESS),
         // Phase's oscillator advances on every call (finite or not), which is
         // still a pure function of the call history, hence deterministic; it
         // does not *skip* non-finite samples, so it is excluded from recovery.
-        subject(
+        Subject::new(
             "PhaseEncoder",
             phase,
             Some(phase_m),
-            input_width,
-            true,
-            false,
+            Traits {
+                skips_non_finite: false,
+                ..STATELESS
+            },
         ),
-        subject(
+        Subject::new(
             "PopulationEncoder",
             population,
             Some(population_m),
-            population_width,
-            false,
-            true,
-        ),
-        subject(
-            "DeltaEncoder",
-            delta,
-            Some(delta_m),
-            fixed_width,
-            true,
-            true,
-        ),
-        subject(
-            "DerivativeEncoder",
-            derivative,
-            None,
-            fixed_width,
-            true,
-            true,
-        ),
-        subject(
-            "BaselineHoldTernaryEncoder",
-            baseline_hold,
-            None,
-            fixed_width,
-            true,
-            true,
-        ),
-        subject(
-            "TemporalEncoder",
-            temporal,
-            Some(temporal_m),
-            fixed_width,
-            true,
-            true,
-        ),
-        subject(
-            "PredictiveEncoder",
-            predictive,
-            Some(predictive_m),
-            fixed_width,
-            true,
-            true,
-        ),
-        subject(
-            "EmbeddingRateEncoder",
-            embedding,
-            Some(embedding_m),
-            fixed_width,
-            true,
-            true,
+            Traits {
+                channel_cap: population_width,
+                ..STOCHASTIC
+            },
         ),
     ]
 }
 
-fn subject(
-    label: &'static str,
-    build: Factory,
-    modulated: Option<ModulatedFactory>,
-    channel_cap: fn(usize) -> usize,
-    deterministic: bool,
-    skips_non_finite: bool,
-) -> Subject {
-    Subject {
-        label,
-        build,
-        modulated,
-        channel_cap,
-        deterministic,
-        skips_non_finite,
+fn stateful_subjects() -> Vec<Subject> {
+    vec![
+        Subject::new("DeltaEncoder", delta, Some(delta_m), FIXED_WIDTH),
+        Subject::new("DerivativeEncoder", derivative, None, FIXED_WIDTH),
+        Subject::new(
+            "BaselineHoldTernaryEncoder",
+            baseline_hold,
+            None,
+            FIXED_WIDTH,
+        ),
+        Subject::new("TemporalEncoder", temporal, Some(temporal_m), FIXED_WIDTH),
+        Subject::new(
+            "PredictiveEncoder",
+            predictive,
+            Some(predictive_m),
+            FIXED_WIDTH,
+        ),
+        Subject::new(
+            "EmbeddingRateEncoder",
+            embedding,
+            Some(embedding_m),
+            FIXED_WIDTH,
+        ),
+    ]
+}
+
+impl Subject {
+    fn new(
+        label: &'static str,
+        build: Factory,
+        modulated: Option<ModulatedFactory>,
+        traits: Traits,
+    ) -> Self {
+        Subject {
+            label,
+            build,
+            modulated,
+            channel_cap: traits.channel_cap,
+            deterministic: traits.deterministic,
+            skips_non_finite: traits.skips_non_finite,
+        }
     }
 }
 
@@ -510,45 +513,42 @@ fn sink_paths_match_returning_paths_on_deterministic_encoders() {
     for subject in subjects().into_iter().filter(|s| s.deterministic) {
         let mut rng = rng_for("sink", subject.label);
         for (trial, &len) in LENGTHS.iter().enumerate() {
-            let mut returning = (subject.build)();
-            let mut sinking = (subject.build)();
-            // One warm-up round at the configured width, so stateful encoders
-            // are compared mid-stream rather than cold; then the probe length
-            // on both the batch and the streaming path.
-            for (round, (probe, step)) in [(CHANNELS, false), (len, false), (len, true)]
-                .into_iter()
-                .enumerate()
-            {
-                let input = sample_input(&mut rng, probe, false);
-                let label = format!(
-                    "{} round {round}",
-                    ctx("sink", subject.label, trial, &input)
-                );
-                assert_sink_matches(returning.as_mut(), sinking.as_mut(), &input, step, &label);
-            }
+            assert_sink_parity_trial(&subject, &mut rng, TrialCtx { trial, len });
         }
     }
 }
 
-/// One step on both encoders — returning API on one, sink API on the other —
-/// must yield identical spikes.
-fn assert_sink_matches(
-    returning: &mut dyn Encoder,
-    sinking: &mut dyn Encoder,
-    input: &[f32],
-    step: bool,
-    label: &str,
-) {
-    let expected = if step {
-        returning.encode_step(input).spikes
-    } else {
-        returning.encode(input).spikes
-    };
-    let actual = collect_into(sinking, input, step);
-    assert_eq!(
-        actual, expected,
-        "{label}: sink path diverged (step={step})"
-    );
+/// Which trial of the sink-parity sweep is running and its probe length.
+#[derive(Clone, Copy)]
+struct TrialCtx {
+    trial: usize,
+    len: usize,
+}
+
+/// One warm-up round at the configured width, so stateful encoders are
+/// compared mid-stream rather than cold; then the probe length on both the
+/// batch and the streaming path.
+fn assert_sink_parity_trial(subject: &Subject, rng: &mut StdRng, trial: TrialCtx) {
+    let mut returning = (subject.build)();
+    let mut sinking = (subject.build)();
+    let rounds = [(CHANNELS, false), (trial.len, false), (trial.len, true)];
+    for (round, (probe, step)) in rounds.into_iter().enumerate() {
+        let input = sample_input(rng, probe, false);
+        let label = format!(
+            "{} round {round}",
+            ctx("sink", subject.label, trial.trial, &input)
+        );
+        let expected = if step {
+            returning.encode_step(&input).spikes
+        } else {
+            returning.encode(&input).spikes
+        };
+        let actual = collect_into(sinking.as_mut(), &input, step);
+        assert_eq!(
+            actual, expected,
+            "{label}: sink path diverged (step={step})"
+        );
+    }
 }
 
 // --- 6. reset ------------------------------------------------------------------------
