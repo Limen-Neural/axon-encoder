@@ -131,8 +131,9 @@ impl TemporalEncoder {
     ///   (an encoder with no band would never fire)
     /// - [`EncoderError::NonNegativeFinite`] if any threshold is non-finite or
     ///   negative
-    /// - [`EncoderError::NumChannelsTooLarge`] if `num_channels` exceeds the
-    ///   `u16` channel range
+    /// - [`EncoderError::NumChannelsTooLarge`] if
+    ///   `num_channels > u16::MAX as usize + 1` (spike channel IDs are `u16`,
+    ///   so indices `0..=u16::MAX` are addressable)
     pub fn try_new(
         history_depth: usize,
         change_thresholds: Vec<f32>,
