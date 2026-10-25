@@ -21,10 +21,11 @@ use std::collections::VecDeque;
 /// spike if change > threshold          (one spike per channel per step)
 /// ```
 ///
-/// `change_thresholds` is scanned from the largest configured value down and
-/// the first one the change clears fires; since every band produces the same
-/// spike, this is equivalent to `change > min(change_thresholds)`. Multiple
-/// bands are accepted for configuration compatibility only.
+/// `change_thresholds` is sorted descending by the constructor and scanned
+/// from the largest value down; the first one the change clears fires. Since
+/// every band produces the same spike, this is equivalent to
+/// `change > min(change_thresholds)` whatever order the caller supplied.
+/// Multiple bands are accepted for configuration compatibility only.
 ///
 /// # `history_depth` is buffer-only
 ///
@@ -142,11 +143,20 @@ impl TemporalEncoder {
             crate::error::validate_non_negative_finite("change_threshold", threshold)?;
         }
         crate::error::validate_channel_count(num_channels)?;
+        let mut change_thresholds = change_thresholds;
+        Self::sort_descending(&mut change_thresholds);
         Ok(Self {
             history: vec![VecDeque::with_capacity(history_depth); num_channels],
             history_depth,
             change_thresholds,
         })
+    }
+
+    /// Largest first, so the core scans bands from the largest down and the
+    /// smallest decides; all values are finite (validated), so `total_cmp` is
+    /// a plain sort.
+    fn sort_descending(thresholds: &mut [f32]) {
+        thresholds.sort_by(|a, b| b.total_cmp(a));
     }
 
     /// Spike-emitting core: writes straight into `sink`, allocating nothing.
@@ -175,7 +185,7 @@ impl TemporalEncoder {
                 continue;
             };
 
-            for &threshold in self.change_thresholds.iter().rev() {
+            for &threshold in &self.change_thresholds {
                 if change > (threshold * threshold_scale).max(0.0) {
                     sink.push(SpikeEvent::at_step_start(channel, true));
                     break; // Only fire one spike per channel per step
@@ -399,6 +409,8 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
         validate_restored_history(&helper.history, helper.history_depth)
             .map_err(serde::de::Error::custom)?;
 
+        let mut change_thresholds = change_thresholds;
+        Self::sort_descending(&mut change_thresholds);
         Ok(Self {
             history: helper.history,
             history_depth: helper.history_depth,
@@ -721,6 +733,17 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(drive(vec![0.5, 2.0, 5.0]), drive(vec![0.5]));
+        assert_eq!(
+            drive(vec![5.0, 0.5, 2.0]),
+            drive(vec![0.5]),
+            "order-independent"
+        );
+        let enc = TemporalEncoder::new(6, vec![0.5, 5.0, 2.0], 1);
+        assert_eq!(
+            enc.change_thresholds,
+            vec![5.0, 2.0, 0.5],
+            "stored descending"
+        );
     }
 
     /// Pre-0.7 checkpoints wrote `(threshold, spike_value)` pairs; they still
@@ -734,7 +757,7 @@ mod tests {
         assert_eq!(restored, TemporalEncoder::new(6, vec![0.5, 1.5], 1));
         let written = serde_json::to_string(&restored).expect("serialize");
         assert!(
-            written.contains(r#""change_thresholds":[0.5,1.5]"#),
+            written.contains(r#""change_thresholds":[1.5,0.5]"#),
             "{written}"
         );
     }

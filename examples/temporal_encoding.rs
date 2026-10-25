@@ -5,7 +5,7 @@
 //! before them by more than the configured threshold — useful for detecting
 //! sudden shifts in time-series data. Spikes carry no timing or magnitude
 //! information (all at tick zero, polarity `true`); for timing codes see the
-//! `latency_encoding` and `phase_timebase` examples.
+//! `latency_encoding` and `spike_timebase` examples.
 //!
 //! ```
 //! cargo run --example temporal_encoding
