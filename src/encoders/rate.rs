@@ -30,14 +30,17 @@ use crate::prelude::*;
 /// phase[i] += rate_hz * dt_seconds                  // exact in f64 (see LIM-1300)
 /// emit floor(phase[i]) spikes, keep the fraction    // bursts allowed, ≤ 1024 per step
 /// ```
-/// The expected count per step is exactly `λΔt`, so the naive estimator is the
-/// right one: `λ̂ = n / (N·Δt)`, accurate to within `1 / (N·Δt)` Hz (one spike
-/// of quantisation over the elapsed window). That bound holds while
-/// `λΔt ≤ 1024`: above the per-step cap only 1024 spikes are emitted per step
-/// and the rest accrue as a backlog, so a windowed count under-reads until the
-/// rate drops and the backlog drains. The backlog itself is an exact `u64`
-/// with saturating arithmetic, so the long-run count is lost only if a
-/// sustained extreme rate drives it past `u64::MAX` whole spikes.
+/// For a constant rate with no cap, backlog, or phase reset, the long-run
+/// average spike count per call is `λΔt`; individual calls emit integer counts
+/// that can differ. The estimator `λ̂ = n / (N·Δt)` is accurate to within
+/// `1 / (N·Δt)` Hz (one spike of quantisation over the elapsed window) only when
+/// `λΔt ≤ 1024` and there is no queued-spike backlog or phase reset during the
+/// measurement window. Draining spikes from earlier capped steps does not
+/// satisfy that bound, even when the current `λΔt ≤ 1024`. Above the per-step
+/// cap only 1024 spikes are emitted per step and the rest accrue as a backlog.
+/// A single increment exceeding `u64::MAX` is clamped and loses expected
+/// spikes. The whole-spike backlog uses saturating `u64` arithmetic, which can
+/// also lose counts when accumulated whole spikes exceed `u64::MAX`.
 ///
 /// The step increment is computed in `f64` from the shortest round-tripping
 /// decimal of `dt_seconds` (for normal `dt_seconds`; subnormals keep the exact
@@ -117,7 +120,8 @@ pub struct RateEncoder {
     /// checkpoints that stored a single combined float per channel.
     #[cfg_attr(feature = "serde", serde(rename = "accumulators"))]
     phases: Vec<f64>,
-    /// Exact whole-spike backlog per channel (drainable past f64's `2^53` cliff).
+    /// Whole-spike backlog per channel, exact until `u64` saturation.
+    /// Drainable past f64's `2^53` cliff; counts beyond `u64::MAX` are lost.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -357,16 +361,20 @@ impl RateEncoder {
     /// Cap on spikes emitted per channel per streaming step.
     ///
     /// Bounds allocation when `rate_hz * dt_seconds` is huge. Remaining whole
-    /// spikes stay in the exact `u64` pending queue and drain on later
-    /// `encode_step` calls (no permanent loss of expected spike count, and no
-    /// stall past f64's `2^53` integer cliff where `acc -= 1.0` would no-op).
+    /// spikes stay in the `u64` pending queue and drain on later `encode_step`
+    /// calls. Counts are lost if a single increment is clamped to `u64::MAX`
+    /// or accumulated whole spikes exceed `u64::MAX` and saturate the backlog.
+    /// Draining does not stall past f64's `2^53` integer cliff where
+    /// `acc -= 1.0` would no-op.
     /// Non-finite increments are skipped so the emission loop always terminates.
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
 
     /// Expected spikes for one streaming step (`rate_hz * dt_seconds` in f64).
     ///
-    /// Always finite and non-negative; saturates at `u64::MAX`. Using f64 avoids
-    /// silent drops when the f32 product would overflow to `+inf`.
+    /// Always finite and non-negative. A single increment exceeding `u64::MAX`
+    /// is clamped and loses expected spikes; adding increments to the backlog
+    /// can also lose counts when accumulated whole spikes exceed `u64::MAX`.
+    /// Using f64 avoids silent drops when the f32 product would overflow to `+inf`.
     fn streaming_increment(&self, value: f32, rate_scale: f32) -> f64 {
         let rate_hz = self.effective_rate_hz(value, rate_scale);
         if rate_hz <= 0.0 {

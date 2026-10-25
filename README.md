@@ -393,7 +393,10 @@ different generative models with different decoders:
 | Mode | Model | Mean spikes per call | Decoder for `n` spikes over `N` calls |
 | --- | --- | --- | --- |
 | `encode` (batch) | Bernoulli, `p = 1 - exp(-λΔt)`, at most one spike per channel per call | `1 - exp(-λΔt)` (saturates at 1) | `λ̂ = -ln(1 - n/N) / Δt` (needs `n < N`; at saturation `n = N` the rate is unbounded) — naive `n/(N·Δt)` under-reads (≈0.79 λ at `λΔt = 0.5`) |
-| `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | exactly `λΔt` while `λΔt ≤ 1024`; above the cap the emitted count lags while the backlog drains | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz only when no cap/backlog is active |
+| `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | long-run average `λΔt` for a constant rate with no cap, backlog, or phase reset; individual calls emit integer counts that can differ | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz when `λΔt ≤ 1024` and there is no queued-spike backlog or phase reset during the measurement window |
+
+Draining queued spikes from earlier capped steps does not satisfy the streaming
+estimator bound, even when the current `λΔt ≤ 1024`.
 
 In streaming mode the increment is computed in `f64` from the shortest
 round-tripping decimal of `dt_seconds`, not from the plainly widened `f32`
