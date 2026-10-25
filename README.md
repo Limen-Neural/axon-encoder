@@ -363,9 +363,13 @@ different generative models with different decoders:
 | `encode` (batch) | Bernoulli, `p = 1 - exp(-λΔt)`, at most one spike per channel per call | `1 - exp(-λΔt)` (saturates at 1) | `λ̂ = -ln(1 - n/N) / Δt` — naive `n/(N·Δt)` under-reads (≈0.79 λ at `λΔt = 0.5`) |
 | `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | exactly `λΔt` | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz |
 
-Integer-friendly products fire on time in streaming mode (100 Hz at
-`dt_seconds = 0.01` fires on the first step) because the increment is computed
-from the exact decimal `dt` in `f64`, not the `f32` product `0.99999998`.
+In streaming mode the increment is computed in `f64` from the shortest
+round-tripping decimal of `dt_seconds`, not from the plainly widened `f32`
+(`0.01f32` widens to `0.0099999997…`, which would make `100 Hz × 0.01`
+accumulate `0.99999998` and miss the first step). Decimal `dt` values whose
+product with the rate is an exact `f64` integer (`100 × 0.01`, `10 × 0.1`) fire
+on time; products that are not exactly representable in `f64` (`100 × 0.29 =
+28.999999999999996`) may land one step late.
 
 `RateEncoder::new(base_rate, max_rate, range)` remains for compatibility and
 uses `dt_seconds = 0.1`.

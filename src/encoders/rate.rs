@@ -38,11 +38,15 @@ use crate::prelude::*;
 /// with saturating arithmetic, so the long-run count is lost only if a
 /// sustained extreme rate drives it past `u64::MAX` whole spikes.
 ///
-/// Because the step increment is computed from the shortest round-tripping
-/// decimal of `dt_seconds` in `f64` (for normal `dt_seconds`; subnormals keep
-/// the exact widening), integer-friendly products fire on time:
-/// `100 Hz` at `dt_seconds = 0.01` accumulates exactly `1.0` and fires on the
-/// first step (the raw `f32` product `0.99999998` would have missed it).
+/// The step increment is computed in `f64` from the shortest round-tripping
+/// decimal of `dt_seconds` (for normal `dt_seconds`; subnormals keep the exact
+/// widening). Plainly widening the `f32` would carry its representation bias
+/// into the product: `0.01f32` widens to `0.0099999997…`, so `100 Hz × 0.01`
+/// would accumulate `0.99999998` and miss the first step. With the corrected
+/// `dt`, decimal `dt_seconds` values whose product with the rate is an exact
+/// `f64` integer (`100 × 0.01`, `10 × 0.1`, `250 × 0.004`) fire on time;
+/// products that are not exactly representable in `f64` (`100 × 0.29 =
+/// 28.999999999999996`) can still land one step late.
 ///
 /// # When to Use
 ///
@@ -1432,10 +1436,10 @@ mod tests {
         }
     }
 
-    /// Integer-friendly products must fire on time: 100 Hz at dt = 0.01 is
-    /// exactly λΔt = 1.0 in the f64 step increment, so the first step fires
-    /// with no residual phase (the raw f32 product is 0.99999998, at most 1.0
-    /// for every fixture here, and would not fire on its own).
+    /// Exact-integer products must fire on time. The f32 product `100 * 0.01`
+    /// is already `1.0`, but widening `0.01f32` to f64 gives `0.0099999997…`
+    /// and a product of `0.99999998`, which would miss the first step; the
+    /// corrected `physical_dt` restores an exact `1.0`.
     #[test]
     fn test_rate_encoder_streaming_integer_rate_dt_fires_on_first_step() {
         for (rate_hz, dt) in [
@@ -1444,12 +1448,19 @@ mod tests {
             (1000.0, 0.001),
             (250.0, 0.004),
         ] {
+            let widened_product = f64::from(rate_hz) * f64::from(dt);
+            let corrected_product = f64::from(rate_hz) * RateEncoder::physical_dt(dt);
             let mut encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt).unwrap();
             let fired = encoder.encode_step(&[1.0]).spikes.len();
             assert_eq!(
-                (rate_hz * dt <= 1.0, fired, encoder.phases[0]),
-                (true, 1, 0.0),
-                "{rate_hz} Hz at dt={dt}: (f32 product ≤ 1, fired once, no residual)"
+                (
+                    widened_product != 1.0,
+                    corrected_product,
+                    fired,
+                    encoder.phases[0]
+                ),
+                (true, 1.0, 1, 0.0),
+                "{rate_hz} Hz at dt={dt}: widened product {widened_product} is biased, corrected is exact, fired once, no residual"
             );
         }
     }
