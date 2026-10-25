@@ -268,23 +268,49 @@ impl PredictiveEncoder {
     }
 
     /// Records `value` and eases the channel's prediction toward its recent mean.
+    ///
+    /// Every input is finite here (the skip rule filtered the rest) and the
+    /// mean is computed overflow-safely, so the new EWMA is finite in
+    /// practice. The guard is defensive: if it ever were not, the step is
+    /// treated as a skip (sample dropped, prediction untouched) so live state
+    /// never holds a non-finite value.
     fn advance_channel(&mut self, channel_idx: usize, value: f32) {
         let history = &mut self.history[channel_idx];
-        if history.len() == self.history_depth {
-            history.pop_front();
-        }
+        let evicted = if history.len() == self.history_depth {
+            history.pop_front()
+        } else {
+            None
+        };
         history.push_back(value);
 
         let recent_avg = Self::recent_average(&self.history[channel_idx]);
-        self.thresholds[channel_idx] = 0.9 * self.thresholds[channel_idx] + 0.1 * recent_avg;
+        let next = 0.9 * self.thresholds[channel_idx] + 0.1 * recent_avg;
+        if !next.is_finite() {
+            let history = &mut self.history[channel_idx];
+            history.pop_back();
+            if let Some(evicted) = evicted {
+                history.push_front(evicted);
+            }
+            return;
+        }
+        self.thresholds[channel_idx] = next;
     }
 
     /// Mean of the newest [`Self::WARMUP_SAMPLES`] samples.
     ///
     /// Only called on a channel holding at least that many, so the divisor is
-    /// always the number of values actually summed.
+    /// always the number of values actually summed. The sum is accumulated in
+    /// f64 so a window of `f32::MAX` samples cannot overflow to `+inf` on the
+    /// way to a mean that is itself representable; for ordinary magnitudes the
+    /// result rounds to the same f32 as the direct f32 sum.
     fn recent_average(history: &VecDeque<f32>) -> f32 {
-        history.iter().rev().take(Self::WARMUP_SAMPLES).sum::<f32>() / Self::WARMUP_SAMPLES as f32
+        let sum: f64 = history
+            .iter()
+            .rev()
+            .take(Self::WARMUP_SAMPLES)
+            .map(|&v| f64::from(v))
+            .sum();
+        (sum / Self::WARMUP_SAMPLES as f64) as f32
     }
 
     fn encode_with_threshold_scale(
@@ -469,6 +495,16 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
                     helper.history_depth
                 )));
             }
+            // Mirror DerivativeEncoder/DeltaEncoder: a restored checkpoint must
+            // not re-poison the state the encode-time skip rule keeps finite.
+            if deque.iter().any(|value| !value.is_finite()) {
+                return Err(serde::de::Error::custom(format!(
+                    "history channel {i} must be finite"
+                )));
+            }
+        }
+        if helper.thresholds.iter().any(|value| !value.is_finite()) {
+            return Err(serde::de::Error::custom("thresholds must be finite"));
         }
 
         Ok(Self {
@@ -687,6 +723,33 @@ mod tests {
         }
     }
 
+    /// Finite-but-huge inputs must not overflow the mean/EWMA to `+inf`:
+    /// live state stays finite and the checkpoint still round-trips.
+    #[test]
+    fn test_predictive_encoder_f32_max_inputs_keep_state_finite() {
+        let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid");
+        for _ in 0..8 {
+            let _ = enc.encode_step(&[f32::MAX]);
+        }
+        assert!(
+            enc.thresholds[0].is_finite(),
+            "EWMA overflowed: {}",
+            enc.thresholds[0]
+        );
+        assert!(enc.history[0].iter().all(|v| v.is_finite()));
+        // Opposite extreme: the error is transiently inf but nothing stored is.
+        let out = enc.encode_step(&[f32::MIN]);
+        assert_eq!(out.spikes.len(), 1);
+        assert!(!out.spikes[0].polarity);
+        assert!(enc.thresholds[0].is_finite());
+        #[cfg(feature = "serde")]
+        {
+            let json = serde_json::to_string(&enc).expect("serialize");
+            let restored: PredictiveEncoder = serde_json::from_str(&json).expect("round-trip");
+            assert_eq!(restored, enc);
+        }
+    }
+
     #[test]
     fn test_predictive_encoder_skip_rule_holds_on_every_public_path() {
         let run = |f: &mut dyn FnMut(&mut PredictiveEncoder, &[f32]) -> Vec<SpikeEvent>| {
@@ -848,6 +911,34 @@ mod tests {
         }"#;
         let res: Result<PredictiveEncoder, _> = serde_json::from_str(json);
         assert!(res.is_err());
+    }
+
+    /// A checkpoint carrying NaN/±inf in `history` or the EWMA `thresholds`
+    /// must not restore: it would re-poison the state the encode-time skip
+    /// rule keeps finite. With `serde_json` the non-finite value is written as
+    /// `null`; formats that can carry NaN hit the explicit finiteness check.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_serde_rejects_non_finite_history_and_ewma() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut poisoned_history = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).unwrap();
+            poisoned_history.history[0].push_back(bad);
+            let json = serde_json::to_string(&poisoned_history).expect("serialize");
+            assert!(
+                serde_json::from_str::<PredictiveEncoder>(&json).is_err(),
+                "{bad}: non-finite history must not restore"
+            );
+
+            let mut poisoned_ewma = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).unwrap();
+            poisoned_ewma.thresholds[0] = bad;
+            let json = serde_json::to_string(&poisoned_ewma).expect("serialize");
+            assert!(
+                serde_json::from_str::<PredictiveEncoder>(&json).is_err(),
+                "{bad}: non-finite EWMA threshold must not restore"
+            );
+        }
+        let finite = r#"{"history": [[1e30]], "thresholds": [-1e30], "history_depth": 5, "deviation_thresholds": [[0.5, 1]]}"#;
+        assert!(serde_json::from_str::<PredictiveEncoder>(finite).is_ok());
     }
 
     #[cfg(feature = "serde")]

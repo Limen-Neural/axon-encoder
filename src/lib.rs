@@ -42,7 +42,8 @@
 //! [`encode_step`] paths exactly: the restored encoder emits the same spikes on
 //! the remaining inputs and finishes in the same state. Live state is always
 //! finite because stateful encoders ([`DeltaEncoder`], [`DerivativeEncoder`],
-//! [`TemporalEncoder`], [`PredictiveEncoder`], [`EmbeddingRateEncoder`]) skip a
+//! [`TemporalEncoder`], [`PredictiveEncoder`], [`BaselineHoldTernaryEncoder`],
+//! [`EmbeddingRateEncoder`]) skip a
 //! `NaN`/`±inf` sample at encode time: nothing is stored, no spike fires, and
 //! the next finite sample behaves as if the non-finite step never happened.
 //! JSON has no NaN/Inf (`serde_json` writes `null`), and deserialize rejects a
@@ -68,6 +69,7 @@
 //! [`encode_step`]: Encoder::encode_step
 //! [`RateEncoder::encode_with_rng`]: encoders::RateEncoder::encode_with_rng
 //! [`DeltaEncoder`]: encoders::DeltaEncoder
+//! [`BaselineHoldTernaryEncoder`]: encoders::BaselineHoldTernaryEncoder
 //! [`EmbeddingRateEncoder`]: encoder::EmbeddingRateEncoder
 //! [`DerivativeEncoder`]: encoders::DerivativeEncoder
 //! [`TemporalEncoder`]: encoders::TemporalEncoder

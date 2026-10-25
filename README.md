@@ -52,11 +52,14 @@ spikes and finish in the same state as the original.
 
 That contract covers Delta, Derivative, Temporal, Predictive, Phase,
 `EmbeddingRateEncoder`, and `RateEncoder::encode_step`. Live floats are
-always finite: stateful encoders **skip** a `NaN`/`±inf` sample at encode time
-(nothing stored, no spike, no adaptive state advanced), so the next finite
-sample behaves as if the non-finite step never happened. JSON cannot represent
-NaN/Inf (`serde_json` writes `null`), and deserialize rejects such a payload if
-one is hand-built.
+always finite: stateful encoders (Delta, Derivative, Temporal, Predictive,
+`BaselineHoldTernaryEncoder`, `EmbeddingRateEncoder`) **skip** a `NaN`/`±inf`
+sample at encode time (nothing stored, no spike, no adaptive state advanced),
+so the next finite sample behaves as if the non-finite step never happened;
+Temporal and Predictive also accumulate their window means in `f64` so huge
+finite samples cannot overflow state to `inf`. JSON cannot represent NaN/Inf
+(`serde_json` writes `null`), and deserialize rejects non-finite state in every
+checkpoint, hand-built or otherwise.
 
 It does **not** cover stochastic paths: `RateEncoder::encode` (batch), and
 both batch and streaming `PopulationEncoder` / `PoissonEncoder`. Those methods

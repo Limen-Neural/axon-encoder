@@ -125,19 +125,9 @@ impl TemporalEncoder {
             if !value.is_finite() {
                 continue;
             }
-            let channel_history = &mut self.history[i];
-            if channel_history.len() == self.history_depth {
-                channel_history.pop_front();
-            }
-            channel_history.push_back(value);
-
-            if channel_history.len() < 6 {
+            let Some(change) = self.push_and_measure_change(i, value) else {
                 continue;
-            }
-
-            let recent_avg = channel_history.iter().rev().take(3).sum::<f32>() / 3.0;
-            let older_avg = channel_history.iter().rev().skip(3).take(3).sum::<f32>() / 3.0;
-            let change = (recent_avg - older_avg).abs();
+            };
 
             for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
                 if change > (threshold * threshold_scale).max(0.0) {
@@ -147,6 +137,28 @@ impl TemporalEncoder {
                 }
             }
         }
+    }
+
+    /// Pushes a finite sample into the channel's window and returns the
+    /// dual-window change, or `None` while fewer than six samples are held.
+    fn push_and_measure_change(&mut self, channel_idx: usize, value: f32) -> Option<f32> {
+        let channel_history = &mut self.history[channel_idx];
+        if channel_history.len() == self.history_depth {
+            channel_history.pop_front();
+        }
+        channel_history.push_back(value);
+
+        if channel_history.len() < 6 {
+            return None;
+        }
+
+        // Sum in f64 so a window of `f32::MAX` samples cannot overflow to
+        // `+inf` on the way to a representable mean; ordinary magnitudes round
+        // to the same f32 as the direct f32 sum.
+        let mut newest = channel_history.iter().rev().map(|&v| f64::from(v));
+        let recent_avg = newest.by_ref().take(3).sum::<f64>() / 3.0;
+        let older_avg = newest.take(3).sum::<f64>() / 3.0;
+        Some((recent_avg - older_avg).abs() as f32)
     }
 
     fn encode_with_threshold_scale(
@@ -316,6 +328,13 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
                     helper.history_depth
                 )));
             }
+            // Mirror DerivativeEncoder/DeltaEncoder: a restored checkpoint must
+            // not re-poison the state the encode-time skip rule keeps finite.
+            if deque.iter().any(|value| !value.is_finite()) {
+                return Err(serde::de::Error::custom(format!(
+                    "history channel {i} must be finite"
+                )));
+            }
         }
 
         Ok(Self {
@@ -444,6 +463,27 @@ mod tests {
         }
     }
 
+    /// Finite-but-huge samples: the window means must not overflow, so a
+    /// flat `f32::MAX` signal stays silent and the checkpoint round-trips.
+    #[test]
+    fn test_temporal_encoder_f32_max_inputs_keep_means_finite() {
+        let mut enc = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
+        for step in 0..8 {
+            let out = enc.encode_step(&[f32::MAX]);
+            assert!(
+                out.spikes.is_empty(),
+                "step {step}: flat signal must stay silent"
+            );
+        }
+        assert!(enc.history[0].iter().all(|v| v.is_finite()));
+        #[cfg(feature = "serde")]
+        {
+            let json = serde_json::to_string(&enc).expect("serialize");
+            let restored: TemporalEncoder = serde_json::from_str(&json).expect("round-trip");
+            assert_eq!(restored, enc);
+        }
+    }
+
     #[test]
     fn test_temporal_encoder_skip_rule_holds_on_every_public_path() {
         let run = |f: &mut dyn FnMut(&mut TemporalEncoder, &[f32]) -> Vec<SpikeEvent>| {
@@ -514,6 +554,27 @@ mod tests {
         let res: Result<TemporalEncoder, _> = serde_json::from_str(ok);
         assert!(res.is_ok());
     }
+    /// A checkpoint carrying NaN/±inf in `history` must not restore: it would
+    /// re-poison the state the encode-time skip rule keeps finite. With
+    /// `serde_json` the non-finite value is written as `null`; formats that can
+    /// carry NaN hit the explicit finiteness check in `Deserialize`.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_serde_rejects_non_finite_history() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut live = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
+            live.history[0].extend([0.0, bad]);
+            let json = serde_json::to_string(&live).expect("serialize");
+            assert!(
+                serde_json::from_str::<TemporalEncoder>(&json).is_err(),
+                "{bad}: non-finite history must not restore"
+            );
+        }
+        let finite =
+            r#"{"history": [[1e30, -1e30]], "history_depth": 6, "change_thresholds": [[0.5, 1]]}"#;
+        assert!(serde_json::from_str::<TemporalEncoder>(finite).is_ok());
+    }
+
     #[test]
     fn test_temporal_encoder_try_new_validation() {
         assert_eq!(
