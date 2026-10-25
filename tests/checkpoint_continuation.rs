@@ -190,8 +190,9 @@ const DELTA_OPS: &[Op] = &[
     Op::Step(&[0.6, 0.6]),
 ];
 
-/// Derivative always writes `last_values`. Inf is only in the suffix of a
-/// *finite* checkpoint: JSON cannot round-trip NaN/Inf (see the dedicated test).
+/// Derivative writes finite samples into `last_values`; a non-finite sample
+/// is skipped (LIM-1332), so a checkpoint right after `Inf` is still finite
+/// and restorable (see the dedicated test).
 const DERIVATIVE_OPS: &[Op] = &[
     Op::Step(&[0.0, 0.0]),
     Op::Step(&[0.5, -0.9]),
@@ -312,14 +313,10 @@ fn checkpoint_continuation_matrix() {
         &[
             ContinuationCase::new("before_any_step", 0, false, 1, DERIVATIVE_OPS),
             ContinuationCase::new("after_signed_burst", 2, true, 1, DERIVATIVE_OPS),
-            // split=4 is the last finite prefix; Inf is only in the suffix.
-            ContinuationCase::new(
-                "finite_checkpoint_then_non_finite_suffix",
-                4,
-                true,
-                1,
-                DERIVATIVE_OPS,
-            ),
+            ContinuationCase::new("before_non_finite_step", 4, true, 1, DERIVATIVE_OPS),
+            // split=5 is immediately after the skipped Inf sample: the
+            // checkpoint stays finite and continues exactly.
+            ContinuationCase::new("after_skipped_non_finite_step", 5, true, 1, DERIVATIVE_OPS),
         ],
     );
 
@@ -466,19 +463,27 @@ fn checkpoint_continuation_rate_config_not_construction_defaults() {
     );
 }
 
-/// Documented contract boundary: JSON checkpoints require finite floats.
+/// Encode-time skip rule (LIM-1332): a non-finite sample never reaches
+/// `last_values`, so the live state stays JSON round-trippable. Hand-built
+/// payloads with `null` in `last_values` are still rejected on deserialize.
 #[test]
-fn checkpoint_continuation_derivative_non_finite_state_is_not_json_round_trippable() {
+fn checkpoint_continuation_derivative_skips_non_finite_so_state_stays_json_round_trippable() {
     let mut encoder = DerivativeEncoder::try_new(vec![0.4]).expect("valid DerivativeEncoder");
+    let _ = encoder.encode_step(&[0.2]);
     let _ = encoder.encode_step(&[f32::INFINITY]);
-    // serde_json maps Inf to JSON null; the encoder's f32 state cannot read that back.
-    let json = serde_json::to_string(&encoder).expect("serialize Inf last_values");
+    let json = serde_json::to_string(&encoder).expect("serialize after skipped Inf");
     assert!(
-        json.contains("null"),
-        "expected Inf last_values to become JSON null, got {json}"
+        !json.contains("null"),
+        "skipped Inf must not reach last_values, got {json}"
     );
-    let err = serde_json::from_str::<DerivativeEncoder>(&json)
-        .expect_err("null last_values must not deserialize into a restorable DerivativeEncoder");
+    let restored: DerivativeEncoder = serde_json::from_str(&json).expect("finite state restores");
+    assert_eq!(restored, encoder);
+
+    let err =
+        serde_json::from_str::<DerivativeEncoder>(r#"{"last_values":[null],"thresholds":[0.4]}"#)
+            .expect_err(
+                "null last_values must not deserialize into a restorable DerivativeEncoder",
+            );
     assert!(
         err.to_string().contains("invalid type"),
         "deserialize error should explain the invalid last_values, got: {err}"

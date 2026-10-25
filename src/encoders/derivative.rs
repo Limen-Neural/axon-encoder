@@ -5,6 +5,21 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 ///
+/// # Non-finite input
+///
+/// A `NaN` or `±inf` sample is **skipped**: it is not stored in `last_values`,
+/// it emits no spike, and the channel's state is left exactly as it was. The
+/// next finite sample is compared against the last *finite* sample, so the
+/// encoder behaves as if the non-finite step never happened. This is the
+/// crate-wide rule for stateful encoders (see also [`TemporalEncoder`] and
+/// [`PredictiveEncoder`]); constructor and serde validation of non-finite
+/// configuration is unchanged. Without the skip, `+inf` followed by a finite
+/// value would compute `finite - inf = -inf` and emit a spurious inhibitory
+/// spike, and `NaN` would silence the channel for one step.
+///
+/// [`TemporalEncoder`]: crate::encoders::TemporalEncoder
+/// [`PredictiveEncoder`]: crate::encoders::PredictiveEncoder
+///
 /// # Examples
 ///
 /// ```rust
@@ -95,6 +110,10 @@ impl DerivativeEncoder {
         for (i, &current_val) in current_values.iter().enumerate() {
             if i >= self.thresholds.len() {
                 break;
+            }
+            // Skip rule: a non-finite sample is neither stored nor compared.
+            if !current_val.is_finite() {
+                continue;
             }
 
             let delta = current_val - self.last_values[i];
@@ -279,6 +298,78 @@ mod branch_coverage_tests {
         let output = encoder.encode_step(&[1.0, -2.0]);
         assert!(output.spikes.is_empty());
         assert_eq!(encoder.last_values, vec![1.0, -2.0]);
+    }
+
+    const NON_FINITE: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+
+    /// Collects one step's spikes through the named public path.
+    fn step_via(path: &str, enc: &mut DerivativeEncoder, input: &[f32]) -> Vec<SpikeEvent> {
+        let mut sink = Vec::new();
+        match path {
+            "encode" => sink = enc.encode(input).spikes,
+            "encode_step" => sink = enc.encode_step(input).spikes,
+            "encode_into" => enc.encode_into(input, &mut sink),
+            "encode_step_into" => enc.encode_step_into(input, &mut sink),
+            other => panic!("unknown path {other}"),
+        }
+        sink
+    }
+
+    const PATHS: [&str; 4] = ["encode", "encode_step", "encode_into", "encode_step_into"];
+
+    /// Skip rule: a non-finite sample emits nothing and is never stored, while
+    /// a finite sample in the same slice is handled normally.
+    #[test]
+    fn derivative_encoder_non_finite_sample_is_not_stored() {
+        for bad in NON_FINITE {
+            let mut enc = DerivativeEncoder::new(vec![0.5, 0.5]);
+            let out = enc.encode_step(&[bad, 0.1]);
+            assert!(
+                out.spikes.is_empty(),
+                "{bad}: no fire on the non-finite step"
+            );
+            assert_eq!(enc.last_values, vec![0.0, 0.1], "{bad}: must not be stored");
+        }
+    }
+
+    /// After a non-finite step, a finite jump fires exactly as on a fresh
+    /// encoder: Inf -> finite yields an excitatory spike, not a fake
+    /// inhibitory one.
+    #[test]
+    fn derivative_encoder_recovers_after_non_finite_sample() {
+        for bad in NON_FINITE {
+            let mut live = DerivativeEncoder::new(vec![0.5, 0.5]);
+            let mut fresh = DerivativeEncoder::new(vec![0.5, 0.5]);
+            let _ = live.encode_step(&[bad, 0.1]);
+            let _ = fresh.encode_step(&[0.0, 0.1]);
+
+            let live_out = live.encode_step(&[1.0, 0.1]);
+            let fresh_out = fresh.encode_step(&[1.0, 0.1]);
+            assert_eq!(live_out.spikes, fresh_out.spikes, "{bad}: finite recovery");
+            assert_eq!(
+                live_out.spikes,
+                vec![SpikeEvent::at_step_start(0, true)],
+                "{bad}: must be a single excitatory spike"
+            );
+        }
+    }
+
+    #[test]
+    fn derivative_encoder_skip_rule_holds_on_every_public_path() {
+        for path in PATHS {
+            let mut enc = DerivativeEncoder::new(vec![0.5]);
+            let silent: Vec<_> = NON_FINITE
+                .iter()
+                .flat_map(|&bad| step_via(path, &mut enc, &[bad]))
+                .collect();
+            assert!(silent.is_empty(), "{path}: non-finite steps must be silent");
+            assert_eq!(enc.last_values, vec![0.0], "{path}: must not be stored");
+            assert_eq!(
+                step_via(path, &mut enc, &[1.0]),
+                vec![SpikeEvent::at_step_start(0, true)],
+                "{path}: finite recovery"
+            );
+        }
     }
 
     #[test]

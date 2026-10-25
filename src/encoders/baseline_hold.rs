@@ -4,7 +4,7 @@ use crate::prelude::*;
 ///
 /// Each channel keeps a baseline that moves **only** when a signed threshold
 /// crossing fires. Each channel seeds independently on its first observed
-/// sample: that sample is copied into the baseline and the channel emits zero.
+/// finite sample: that sample is copied into the baseline and the channel emits zero.
 /// A shorter input seeds only the channels it contains; the tail stays unseeded.
 ///
 /// Crossing rules for an already-seeded channel (inclusive boundaries):
@@ -12,6 +12,13 @@ use crate::prelude::*;
 /// - positive event when `current - baseline >= threshold`
 /// - negative event when `current - baseline <= -threshold`
 /// - otherwise zero; baseline unchanged
+///
+/// A `NaN` or `±inf` sample is **skipped**: it does not seed an unseeded
+/// channel, does not snap a seeded baseline, and emits `0` / no spike. The
+/// next finite sample behaves as if the non-finite step never happened. This
+/// is the crate-wide rule for stateful encoders (see [`DeltaEncoder`],
+/// [`DerivativeEncoder`], [`TemporalEncoder`], [`PredictiveEncoder`]); serde
+/// restore still rejects non-finite `baselines`.
 ///
 /// Use [`encode_ternary`](Self::encode_ternary) for dense `{-1, 0, +1}` output.
 /// The [`Encoder`] implementation maps nonzero ternary values to
@@ -30,6 +37,8 @@ use crate::prelude::*;
 ///
 /// [`DeltaEncoder`]: crate::encoders::DeltaEncoder
 /// [`DerivativeEncoder`]: crate::encoders::DerivativeEncoder
+/// [`TemporalEncoder`]: crate::encoders::TemporalEncoder
+/// [`PredictiveEncoder`]: crate::encoders::PredictiveEncoder
 /// [`NeuroModulators`]: crate::modulators::NeuroModulators
 /// [`PoissonEncoder`]: crate::poisson::PoissonEncoder
 #[derive(Clone, Debug, PartialEq)]
@@ -136,6 +145,11 @@ impl BaselineHoldTernaryEncoder {
         }
         let mut out = vec![0i8; values.len()];
         for (index, &value) in values.iter().enumerate() {
+            // Skip rule (crate-wide for stateful encoders): a non-finite
+            // sample neither seeds, snaps, nor fires; the channel is untouched.
+            if !value.is_finite() {
+                continue;
+            }
             let sample = ChannelSample { index, value };
             out[index] = if self.seeded[index] {
                 self.classify_and_snap(sample)
@@ -242,6 +256,50 @@ mod tests {
         let mut encoder = BaselineHoldTernaryEncoder::new(vec![1.0; 4]);
         encoder.encode_ternary(&[10.0, 20.0]);
         encoder
+    }
+
+    const NON_FINITE: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+
+    /// Skip rule: a non-finite first sample does not seed the channel.
+    #[test]
+    fn non_finite_sample_does_not_seed() {
+        for bad in NON_FINITE {
+            let mut encoder = BaselineHoldTernaryEncoder::new(vec![1.0, 1.0]);
+            assert_eq!(encoder.encode_ternary(&[bad, 5.0]), vec![0, 0], "{bad}");
+            assert_eq!(encoder.seeded, vec![false, true], "{bad}: must not seed");
+            assert_eq!(encoder.baselines(), &[0.0, 5.0], "{bad}: must not store");
+        }
+    }
+
+    /// Skip rule: a non-finite sample on a seeded channel neither fires nor
+    /// snaps, and the next finite sample is judged against the old baseline.
+    #[test]
+    fn non_finite_sample_does_not_snap_or_fire() {
+        for bad in NON_FINITE {
+            let mut encoder = BaselineHoldTernaryEncoder::new(vec![1.0]);
+            encoder.encode_ternary(&[10.0]);
+            assert_eq!(encoder.encode_ternary(&[bad]), vec![0], "{bad}: no fire");
+            assert_eq!(encoder.baselines(), &[10.0], "{bad}: baseline untouched");
+            assert_eq!(
+                encoder.encode_ternary(&[11.0]),
+                vec![1],
+                "{bad}: finite recovery"
+            );
+        }
+    }
+
+    #[test]
+    fn non_finite_sample_is_silent_on_spike_paths() {
+        for bad in NON_FINITE {
+            let mut encoder = BaselineHoldTernaryEncoder::new(vec![1.0]);
+            encoder.encode_ternary(&[10.0]);
+            let mut sink = Vec::new();
+            encoder.encode_into(&[bad], &mut sink);
+            encoder.encode_step_into(&[bad], &mut sink);
+            assert!(encoder.encode(&[bad]).spikes.is_empty(), "{bad}");
+            assert!(encoder.encode_step(&[bad]).spikes.is_empty(), "{bad}");
+            assert!(sink.is_empty(), "{bad}: sink paths honour the skip rule");
+        }
     }
 
     #[test]
