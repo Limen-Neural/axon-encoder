@@ -115,7 +115,8 @@ impl TemporalEncoder {
     ///
     /// # Panics
     ///
-    /// Panics if `history_depth < 6` or `num_channels` is unsupported.
+    /// Panics if `history_depth < 6`, `change_thresholds` is empty or holds a
+    /// non-finite/negative value, or `num_channels` is unsupported.
     pub fn new(history_depth: usize, change_thresholds: Vec<f32>, num_channels: usize) -> Self {
         Self::try_new(history_depth, change_thresholds, num_channels)
             .expect("invalid TemporalEncoder configuration")
@@ -123,7 +124,15 @@ impl TemporalEncoder {
 
     /// Creates a new `TemporalEncoder`, returning an [`EncoderError`] for invalid configuration.
     ///
-    /// Each threshold in `change_thresholds` must be finite and non-negative.
+    /// # Errors
+    ///
+    /// - [`EncoderError::HistoryDepthTooSmall`] if `history_depth < 6`
+    /// - [`EncoderError::CountMustBePositive`] if `change_thresholds` is empty
+    ///   (an encoder with no band would never fire)
+    /// - [`EncoderError::NonNegativeFinite`] if any threshold is non-finite or
+    ///   negative
+    /// - [`EncoderError::NumChannelsTooLarge`] if `num_channels` exceeds the
+    ///   `u16` channel range
     pub fn try_new(
         history_depth: usize,
         change_thresholds: Vec<f32>,
