@@ -852,6 +852,8 @@ mod tests {
         let out = enc.encode_step(&[f32::MIN]);
         assert_eq!(out.spikes, vec![SpikeEvent::at_step_start(0, false)]);
         assert_state_finite(&enc, "after f32::MIN");
+        #[cfg(feature = "serde")]
+        assert_json_round_trips(&enc);
     }
 
     #[test]
