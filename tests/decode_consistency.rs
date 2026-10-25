@@ -33,6 +33,10 @@ use axon_encoder::prelude::*;
 /// behind a grid that happens to divide evenly.
 const PROBES: [f32; 8] = [0.0, 0.1, 0.3, 0.37, 0.5, 0.7, 0.9, 1.0];
 const RANGE: (f32, f32) = (0.0, 1.0);
+/// Latency window and Phase cycle used by the round-trip tests; tolerances
+/// derive from these so the config and the bound cannot drift apart.
+const MAX_LATENCY: u64 = 10;
+const CYCLE_STEPS: u64 = 16;
 
 // --- oracles -----------------------------------------------------------------
 
@@ -104,8 +108,13 @@ fn assert_round_trip(
 
 #[test]
 fn latency_round_trips_the_probe_grid_within_half_a_tick() {
-    let mut encoder = LatencyEncoder::try_new(10, RANGE).expect("valid latency");
-    assert_round_trip("latency", &mut encoder, &|t| latency_decode(t, 10), 0.05);
+    let mut encoder = LatencyEncoder::try_new(MAX_LATENCY, RANGE).expect("valid latency");
+    assert_round_trip(
+        "latency",
+        &mut encoder,
+        &|t| latency_decode(t, MAX_LATENCY),
+        0.5 / MAX_LATENCY as f64,
+    );
 }
 
 /// Values that quantize to a tick exactly decode back to themselves.
@@ -162,8 +171,13 @@ fn latency_decoder_must_sort_by_timestamp_not_emission_order() {
 
 #[test]
 fn phase_round_trips_the_probe_grid_within_half_a_bin() {
-    let mut encoder = PhaseEncoder::try_new(16, RANGE).expect("valid phase");
-    assert_round_trip("phase", &mut encoder, &|b| phase_decode(b, 16), 0.5 / 16.0);
+    let mut encoder = PhaseEncoder::try_new(CYCLE_STEPS, RANGE).expect("valid phase");
+    assert_round_trip(
+        "phase",
+        &mut encoder,
+        &|b| phase_decode(b, CYCLE_STEPS),
+        0.5 / CYCLE_STEPS as f64,
+    );
 }
 
 /// Phase and Latency have opposite polarity: the offset grows with the input

@@ -38,8 +38,12 @@
 //! There is intentionally **no public decoder API**: these inverses live in the
 //! test tree until a later 0.5 design explicitly asks for one.
 //!
-//! Each encoder family lives in its own submodule so that every module carries a
-//! single responsibility (one encoder family's oracle plus its tests).
+//! The inverse formulas themselves (`latency_decode`, `phase_decode`, the
+//! population preferred-value grid) are defined once in
+//! `tests/common/oracles.rs` and included here via `#[path]`, so this suite and
+//! `tests/decode_consistency.rs` cannot drift apart. Each encoder family then
+//! lives in its own submodule carrying that family's collision-point and
+//! bound tests (and, for population, its response-weighted center of mass).
 
 #[path = "../common/oracles.rs"]
 mod oracles;

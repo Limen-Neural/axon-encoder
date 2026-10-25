@@ -275,8 +275,9 @@ with the per-encoder inverse formulas and their collision points in
   "Rate encoder time semantics".)
 - `PopulationEncoder`: center of mass over pooled counts. Endpoints are biased
   inward when neighbouring neurons still respond (tuning width wide enough that
-  their contribution survives the sum); for very narrow widths the neighbours
-  underflow and the CoM collapses onto the endpoint exactly (see
+  their contribution survives the sum); for narrow widths the neighbours'
+  contribution is lost to rounding against the endpoint's `1.0` or underflows
+  outright, and the CoM collapses onto the endpoint exactly (see
   `tests/reference_decoders/population.rs`).
 
 ## Buffered streaming
