@@ -186,7 +186,8 @@ impl RateEncoder {
         // `Display` for a finite f32 always yields a parseable decimal; the
         // fallback only exists so this can never panic.
         let decimal = dt_seconds.to_string().parse::<f64>().unwrap_or(widened);
-        if (decimal - widened).abs() <= widened * f64::from(f32::EPSILON) {
+        if dt_seconds.is_normal() && (decimal - widened).abs() <= widened * f64::from(f32::EPSILON)
+        {
             decimal
         } else {
             widened
