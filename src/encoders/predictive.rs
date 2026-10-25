@@ -738,7 +738,8 @@ mod tests {
             "encode" => sink = enc.encode(input).spikes,
             "encode_step" => sink = enc.encode_step(input).spikes,
             "encode_into" => enc.encode_into(input, &mut sink),
-            _ => enc.encode_step_into(input, &mut sink),
+            "encode_step_into" => enc.encode_step_into(input, &mut sink),
+            other => panic!("unknown path {other}"),
         }
         sink
     }
