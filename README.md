@@ -355,9 +355,17 @@ impls keep compiling and inherit `TimeModel::INSTANT`.
 
 `RateEncoder` treats `base_rate` and `max_rate` as firing rates in **hertz**.
 Prefer `RateEncoder::try_new(base_rate_hz, max_rate_hz, range, dt_seconds)` so the
-sampling interval is explicit (finite and strictly positive). Stochastic batch
-encoding uses `p = 1 - exp(-rate_hz * dt_seconds)`; streaming accumulates
-`phase += rate_hz * dt_seconds`.
+sampling interval is explicit (finite and strictly positive). The two modes are
+different generative models with different decoders:
+
+| Mode | Model | Mean spikes per call | Decoder for `n` spikes over `N` calls |
+| --- | --- | --- | --- |
+| `encode` (batch) | Bernoulli, `p = 1 - exp(-λΔt)`, at most one spike per channel per call | `1 - exp(-λΔt)` (saturates at 1) | `λ̂ = -ln(1 - n/N) / Δt` — naive `n/(N·Δt)` under-reads (≈0.79 λ at `λΔt = 0.5`) |
+| `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | exactly `λΔt` | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz |
+
+Integer-friendly products fire on time in streaming mode (100 Hz at
+`dt_seconds = 0.01` fires on the first step) because the increment is computed
+from the exact decimal `dt` in `f64`, not the `f32` product `0.99999998`.
 
 `RateEncoder::new(base_rate, max_rate, range)` remains for compatibility and
 uses `dt_seconds = 0.1`.

@@ -9,19 +9,36 @@ use crate::prelude::*;
 ///
 /// # Mathematical Model
 ///
-/// For batch encoding:
+/// The two modes are **different generative models** and need different
+/// decoders; neither is wrong, but a decoder built for one misreads the other.
+///
+/// **Batch (`encode`): Bernoulli per channel per call.**
 /// ```text
 /// rate_hz = base_rate + normalized * (max_rate - base_rate)
-/// probability = 1 - exp(-rate_hz * dt_seconds)
-/// spike if random() < probability
+/// p       = 1 - exp(-rate_hz * dt_seconds)        // probability_from_rate_hz
+/// spike if random() < p                            // at most ONE spike per channel per call
 /// ```
+/// The expected spike count per call is `p = 1 - exp(-λΔt)`, **not** `λΔt`, and
+/// it saturates at 1. To recover the rate from `n` spikes over `N` calls,
+/// invert the Bernoulli mean: `p̂ = n / N`, `λ̂ = -ln(1 - p̂) / Δt`. The naive
+/// `n / (N·Δt)` under-reads: at `λΔt = 0.5` it estimates `(1 - e^-0.5)/Δt ≈
+/// 0.79 λ`, and the error grows with `λΔt`.
 ///
-/// For streaming (`encode_step`):
+/// **Streaming (`encode_step`): deterministic integrate-and-fire.**
 /// ```text
-/// rate_hz = base_rate + normalized[i] * (max_rate - base_rate)
-/// accumulator[i] += rate_hz * dt_seconds
-/// spike if accumulator[i] >= 1.0 (then accumulator -= 1.0)
+/// phase[i] += rate_hz * dt_seconds                  // exact in f64 (see LIM-1300)
+/// emit floor(phase[i]) spikes, keep the fraction    // bursts allowed, ≤ 1024 per step
 /// ```
+/// The expected count per step is exactly `λΔt`, so the naive estimator is the
+/// right one: `λ̂ = n / (N·Δt)`, accurate to within `1 / (N·Δt)` Hz (one spike
+/// of quantisation over the elapsed window). Whole spikes beyond the per-step
+/// cap of 1024 stay queued and drain on later steps, so the long-run count is
+/// never lost.
+///
+/// Because the step increment is computed from the shortest round-tripping
+/// decimal of `dt_seconds` in `f64`, integer-friendly products fire on time:
+/// `100 Hz` at `dt_seconds = 0.01` accumulates exactly `1.0` and fires on the
+/// first step (the raw `f32` product `0.99999998` would have missed it).
 ///
 /// # When to Use
 ///
@@ -1375,6 +1392,98 @@ mod tests {
                 "rate_hz={rate_hz}, dt={dt_seconds}, observed={observed_hz}"
             );
         }
+    }
+
+    /// Streaming decoder contract (LIM-1283): `count / elapsed` recovers the
+    /// configured rate to within one spike of quantisation, for a spread of
+    /// rates including fractional λΔt and both default and custom dt.
+    #[test]
+    fn test_rate_encoder_streaming_count_over_dt_decodes_to_hz() {
+        let cases = [
+            (5.0f32, 0.2f32, 10usize),
+            (20.0, 0.05, 20),
+            (7.5, 0.1, 40),
+            (3.0, 0.1, 100),   // λΔt = 0.3: fires every 3-4 steps
+            (0.7, 0.25, 400),  // λΔt = 0.175
+            (250.0, 0.01, 50), // λΔt = 2.5: bursts of 2-3 per step
+            (10.0, 0.1, 10_000),
+        ];
+        for (rate_hz, dt_seconds, steps) in cases {
+            let mut encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt_seconds).unwrap();
+            let spikes: usize = (0..steps)
+                .map(|_| encoder.encode_step(&[1.0]).spikes.len())
+                .sum();
+            let elapsed_seconds = f64::from(dt_seconds) * steps as f64;
+            let observed_hz = spikes as f64 / elapsed_seconds;
+            assert!(
+                (observed_hz - f64::from(rate_hz)).abs() <= 1.0 / elapsed_seconds,
+                "rate_hz={rate_hz}, dt={dt_seconds}, steps={steps}, observed={observed_hz}"
+            );
+        }
+    }
+
+    /// Integer-friendly products must fire on time: 100 Hz at dt = 0.01 is
+    /// exactly λΔt = 1.0 in the f64 step increment, so the first step fires
+    /// (the raw f32 product is 0.99999998 and would not).
+    #[test]
+    fn test_rate_encoder_streaming_integer_rate_dt_fires_on_first_step() {
+        for (rate_hz, dt) in [
+            (100.0f32, 0.01f32),
+            (10.0, 0.1),
+            (1000.0, 0.001),
+            (250.0, 0.004),
+        ] {
+            // Fixture sanity: the raw f32 product is at most 1.0 (0.99999998 for
+            // 100 * 0.01), so only the f64 decimal dt can make this fire.
+            assert!(rate_hz * dt <= 1.0, "{rate_hz} * {dt} = {}", rate_hz * dt);
+            let mut encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt).unwrap();
+            assert_eq!(
+                encoder.encode_step(&[1.0]).spikes.len(),
+                1,
+                "{rate_hz} Hz at dt={dt} must fire on the first step"
+            );
+            assert_eq!(
+                encoder.phases[0], 0.0,
+                "no residual phase after an exact hit"
+            );
+        }
+    }
+
+    /// Batch decoder contract (LIM-1283): the batch mean is the Bernoulli
+    /// probability `1 - exp(-λΔt)`, so naive `count / elapsed` under-reads and
+    /// the correct inversion is `-ln(1 - p̂) / Δt`. Seeded so the bound is a
+    /// hard assertion, not a flake.
+    #[test]
+    fn test_rate_encoder_batch_count_over_dt_under_reads_and_log_inversion_recovers() {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        let (rate_hz, dt) = (50.0f32, 0.01f32); // λΔt = 0.5
+        let trials = 40_000usize;
+        let encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt).unwrap();
+        let mut rng = StdRng::seed_from_u64(0x1283);
+        let spikes: usize = (0..trials)
+            .map(|_| encoder.encode_with_rng(&[1.0], &mut rng).spikes.len())
+            .sum();
+        let p_hat = spikes as f64 / trials as f64;
+        let elapsed = f64::from(dt) * trials as f64;
+        let naive_hz = spikes as f64 / elapsed;
+        let bernoulli_hz = (1.0 - (-0.5f64).exp()) / f64::from(dt); // ≈ 39.35 Hz
+        let inverted_hz = -(1.0 - p_hat).ln() / f64::from(dt);
+
+        assert!(
+            (naive_hz - bernoulli_hz).abs() < (naive_hz - f64::from(rate_hz)).abs(),
+            "naive count/dt on batch must sit nearer (1-e^-λΔt)/Δt={bernoulli_hz} than λ={rate_hz}; got {naive_hz}"
+        );
+        assert!(
+            (naive_hz - f64::from(rate_hz)).abs() > 8.0,
+            "naive estimate should under-read by ~10 Hz here, got {naive_hz}"
+        );
+        // Binomial std of p̂ at p≈0.39, N=40k is ≈0.0024; ±4σ in Hz is ≈1.6 Hz.
+        assert!(
+            (inverted_hz - f64::from(rate_hz)).abs() < 2.0,
+            "-ln(1-p̂)/Δt must recover λ={rate_hz}, got {inverted_hz}"
+        );
     }
 
     #[test]
