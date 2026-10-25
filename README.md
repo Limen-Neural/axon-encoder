@@ -252,6 +252,26 @@ step_ticks`), since a call can place a spike anywhere in the ongoing cycle.
 Run `cargo run --example spike_timebase` for a worked integration: two encoders,
 two cursors, one merged nanosecond-timed stream.
 
+### Decoder contract
+
+The crate ships **no decoder**; the contract a downstream decoder must honour
+is locked by [`tests/decode_consistency.rs`](tests/decode_consistency.rs),
+with the per-encoder inverse formulas and their collision points in
+[`tests/reference_decoders/`](tests/reference_decoders/). In short:
+
+- `LatencyEncoder`: `x̂ = min + (1 - t/L)·span` — strong input is **early**.
+  Emission is channel-major, so sort by `timestamp` before any
+  "first spike wins" logic.
+- `PhaseEncoder`: `x̂ = min + ((b + 0.5)/C)·span` — strong input is **late**;
+  the polarity is opposite to Latency, so one decoder does not fit both.
+  Offsets are call-relative inside an overlapping window: convert through a
+  `TimeCursor` before comparing times across calls, and expect the absolute
+  chronology to differ from emission order.
+- `RateEncoder::encode_step`: `λ̂ = count / elapsed`, within one spike over the
+  window. (Batch `encode` is Bernoulli; see "Rate encoder time semantics".)
+- `PopulationEncoder`: center of mass over pooled counts; endpoints are biased
+  inward.
+
 ## Buffered streaming
 
 `encode` and `encode_step` hand every call's spikes straight to the caller.
