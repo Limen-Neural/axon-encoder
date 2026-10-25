@@ -64,6 +64,7 @@ fn population_com(counts: &[u64]) -> f64 {
         weighted += preferred(i, n) * count as f64;
         total += count as f64;
     }
+    assert!(total > 0.0, "population_com: no spikes to decode");
     weighted / total
 }
 
@@ -74,7 +75,31 @@ fn correlation(xs: &[f64], ys: &[f64]) -> f64 {
     let cov: f64 = xs.iter().zip(ys).map(|(x, y)| (x - mx) * (y - my)).sum();
     let vx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum();
     let vy: f64 = ys.iter().map(|y| (y - my).powi(2)).sum();
-    cov / (vx * vy).sqrt()
+    let r = cov / (vx * vy).sqrt();
+    assert!(
+        r.is_finite(),
+        "correlation: degenerate series (vx={vx}, vy={vy})"
+    );
+    r
+}
+
+/// Shared round-trip check: every probe decodes back to within `tolerance`.
+fn assert_round_trip(
+    label: &str,
+    probes: &[f32],
+    spikes: &[SpikeEvent],
+    decode: impl Fn(u64) -> f64,
+    tolerance: f64,
+) {
+    assert_eq!(spikes.len(), probes.len(), "{label}: one spike per probe");
+    for (spike, &x) in spikes.iter().zip(probes) {
+        let decoded = decode(spike.timestamp.ticks());
+        assert!(
+            (decoded - f64::from(x)).abs() <= tolerance + 1e-9,
+            "{label}: x={x}: offset {} decodes to {decoded}, more than {tolerance} off",
+            spike.timestamp
+        );
+    }
 }
 
 // --- Latency -----------------------------------------------------------------
@@ -84,16 +109,13 @@ fn latency_round_trips_the_probe_grid_within_half_a_tick() {
     let max_latency = 10u64;
     let mut encoder = LatencyEncoder::try_new(max_latency, RANGE).expect("valid latency");
     let out = encoder.encode(&PROBES);
-    assert_eq!(out.spikes.len(), PROBES.len());
-    let half_tick = 0.5 / max_latency as f64;
-    for (spike, &x) in out.spikes.iter().zip(PROBES.iter()) {
-        let decoded = latency_decode(spike.timestamp.ticks(), max_latency);
-        assert!(
-            (decoded - f64::from(x)).abs() <= half_tick + 1e-9,
-            "x={x}: offset {} decodes to {decoded}, more than half a tick off",
-            spike.timestamp
-        );
-    }
+    assert_round_trip(
+        "latency",
+        &PROBES,
+        &out.spikes,
+        |t| latency_decode(t, max_latency),
+        0.5 / max_latency as f64,
+    );
 }
 
 /// Values that quantize to a tick exactly decode back to themselves.
@@ -103,6 +125,7 @@ fn latency_is_exact_on_its_own_tick_grid() {
     let mut encoder = LatencyEncoder::try_new(max_latency, RANGE).expect("valid latency");
     let grid: Vec<f32> = (0..=max_latency).map(|t| t as f32 / 10.0).collect();
     let out = encoder.encode(&grid);
+    assert_eq!(out.spikes.len(), grid.len(), "one spike per grid point");
     for (spike, &x) in out.spikes.iter().zip(grid.iter()) {
         let decoded = latency_decode(spike.timestamp.ticks(), max_latency) as f32;
         assert!(
@@ -152,16 +175,13 @@ fn phase_round_trips_the_probe_grid_within_half_a_bin() {
     let cycle_steps = 16u64;
     let mut encoder = PhaseEncoder::try_new(cycle_steps, RANGE).expect("valid phase");
     let out = encoder.encode(&PROBES);
-    assert_eq!(out.spikes.len(), PROBES.len());
-    let half_bin = 0.5 / cycle_steps as f64;
-    for (spike, &x) in out.spikes.iter().zip(PROBES.iter()) {
-        let decoded = phase_decode(spike.timestamp.ticks(), cycle_steps);
-        assert!(
-            (decoded - f64::from(x)).abs() <= half_bin + 1e-9,
-            "x={x}: bin {} decodes to {decoded}, more than half a bin off",
-            spike.timestamp
-        );
-    }
+    assert_round_trip(
+        "phase",
+        &PROBES,
+        &out.spikes,
+        |b| phase_decode(b, cycle_steps),
+        0.5 / cycle_steps as f64,
+    );
 }
 
 /// Phase and Latency have opposite polarity: the offset grows with the input
