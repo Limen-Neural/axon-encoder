@@ -15,7 +15,8 @@ of a stream, and call `encode_step` once per incoming frame.
 | Earlier event for stronger input | `LatencyEncoder` | Stateless; one call can span `max_latency + 1` ticks. |
 | Periodic phase code | `PhaseEncoder` | Calls overlap its cycle window; use its reported time model. |
 | Tuning-curve population code | `PopulationEncoder` | Batch and streaming paths are stochastic. |
-| Temporal pattern or prediction | `TemporalEncoder`, `PredictiveEncoder` | Keep state across frames. |
+| Smoothed change detection (3-vs-3 sample means) | `TemporalEncoder` | Keep state across frames. `history_depth` beyond 6 is buffer-only; not a timing code — use Latency/Phase for those. |
+| Prediction-error anomalies | `PredictiveEncoder` | Keep state across frames. |
 | Thresholded embedding drive | `EmbeddingRateEncoder` | Keeps per-channel membrane potentials. |
 
 `PoissonEncoder` is a standalone spike-train generator rather than an

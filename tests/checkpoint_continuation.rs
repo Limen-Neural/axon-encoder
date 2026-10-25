@@ -322,7 +322,7 @@ fn checkpoint_continuation_matrix() {
 
     run_cases(
         "TemporalEncoder",
-        || TemporalEncoder::try_new(8, vec![(0.5, 1)], 2).expect("valid TemporalEncoder"),
+        || TemporalEncoder::try_new(8, vec![0.5], 2).expect("valid TemporalEncoder"),
         &[
             ContinuationCase::new("immediately_before_warmup", 5, true, 1, TEMPORAL_OPS),
             ContinuationCase::new("immediately_after_warmup_burst", 6, true, 0, TEMPORAL_OPS),

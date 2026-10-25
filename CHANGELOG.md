@@ -30,6 +30,17 @@
 
 ### Changed
 
+- **Breaking:** `TemporalEncoder::new` / `try_new` take `change_thresholds: Vec<f32>`
+  instead of `Vec<(f32, u16)>`. The `u16` "spike value" was never read (it set
+  neither polarity nor channel), so it is removed; pass `vec![0.5]` where you
+  passed `vec![(0.5, 1)]`. Checkpoints written with the pair form still
+  deserialize (labels dropped); new checkpoints write plain floats. The encoder
+  is now documented as a dual-window change detector rather than a temporal
+  code, `history_depth` beyond `TemporalEncoder::WINDOW` (6) is documented and
+  tested as buffer-only, and `TemporalEncoder::WINDOW` is public. An empty
+  `change_thresholds` is now rejected (`CountMustBePositive`) in `try_new` and
+  on deserialize instead of producing an encoder that never fires.
+  `PredictiveEncoder` keeps its `(f32, u16)` pairs for now.
 - `serde` feature: `Timebase` now serializes as `{"tick_nanos": N}` instead of
   a bare `u64`, disambiguating it from a `TickOffset` tick count. The v0.5
   bare-integer payload still deserializes; zero and other invalid values are
