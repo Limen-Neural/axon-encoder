@@ -20,7 +20,8 @@ use crate::prelude::*;
 /// ```
 /// The expected spike count per call is `p = 1 - exp(-λΔt)`, **not** `λΔt`, and
 /// it saturates at 1. To recover the rate from `n` spikes over `N` calls,
-/// invert the Bernoulli mean: `p̂ = n / N`, `λ̂ = -ln(1 - p̂) / Δt`. The naive
+/// invert the Bernoulli mean: `p̂ = n / N`, `λ̂ = -ln(1 - p̂) / Δt` (requires
+/// `n < N`; a saturated window gives no finite estimate). The naive
 /// `n / (N·Δt)` under-reads: at `λΔt = 0.5` it estimates `(1 - e^-0.5)/Δt ≈
 /// 0.79 λ`, and the error grows with `λΔt`.
 ///
@@ -41,8 +42,10 @@ use crate::prelude::*;
 /// The step increment is computed in `f64` from the shortest round-tripping
 /// decimal of `dt_seconds` (for normal `dt_seconds`; subnormals keep the exact
 /// widening). Plainly widening the `f32` would carry its representation bias
-/// into the product: `0.01f32` widens to `0.0099999997…`, so `100 Hz × 0.01`
-/// would accumulate `0.99999998` and miss the first step. With the corrected
+/// into the product: `0.01f32` widens to `0.0099999997…`, so the f64 product
+/// of the widened operands for `100 Hz × 0.01` is `0.99999998` and would miss
+/// the first step (the f32 × f32 product itself rounds to exactly `1.0`). The
+/// inversion `-ln(1 - p̂)/Δt` on the batch side needs `p̂ < 1`. With the corrected
 /// `dt`, decimal `dt_seconds` values whose product with the rate is an exact
 /// `f64` integer (`100 × 0.01`, `10 × 0.1`, `250 × 0.004`) fire on time;
 /// products that are not exactly representable in `f64` (`100 × 0.29 =
