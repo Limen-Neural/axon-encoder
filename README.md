@@ -361,7 +361,7 @@ different generative models with different decoders:
 | Mode | Model | Mean spikes per call | Decoder for `n` spikes over `N` calls |
 | --- | --- | --- | --- |
 | `encode` (batch) | Bernoulli, `p = 1 - exp(-λΔt)`, at most one spike per channel per call | `1 - exp(-λΔt)` (saturates at 1) | `λ̂ = -ln(1 - n/N) / Δt` (needs `n < N`; at saturation `n = N` the rate is unbounded) — naive `n/(N·Δt)` under-reads (≈0.79 λ at `λΔt = 0.5`) |
-| `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | exactly `λΔt` | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz |
+| `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | exactly `λΔt` while `λΔt ≤ 1024`; above the cap the emitted count lags while the backlog drains | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz only when no cap/backlog is active |
 
 In streaming mode the increment is computed in `f64` from the shortest
 round-tripping decimal of `dt_seconds`, not from the plainly widened `f32`
