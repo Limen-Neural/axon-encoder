@@ -280,7 +280,13 @@ impl RateEncoder {
                 break;
             };
             let rate = self.effective_rate_hz(value, rate_scale);
-            let probability = crate::poisson::probability_from_rate_hz(rate, self.dt as f32);
+            // Deliberately the f32 `dt_seconds`: `probability_from_rate_hz` is a
+            // public f32 API shared with `tests/reference_decoders`, and the
+            // ~1.5e-9 relative f32 bias in Δt is far below f32 resolution of
+            // `1 - exp(-λΔt)`, so the corrected f64 `dt` would not change a
+            // single draw. The timebase and streaming increment, where the bias
+            // accumulates across ticks, use `self.dt`.
+            let probability = crate::poisson::probability_from_rate_hz(rate, self.dt_seconds);
 
             if crate::rng::gen_unit_f32_with_rng(rng) < probability {
                 sink.push(SpikeEvent::at_step_start(channel, true));
