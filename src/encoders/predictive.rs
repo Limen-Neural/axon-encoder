@@ -718,123 +718,157 @@ mod tests {
         assert_eq!(encoder.thresholds[0], 10.0);
     }
 
-    /// Skip rule: NaN / ±inf never reach history or the EWMA, emit nothing,
-    /// and a finite jump that fires on a fresh encoder fires on the live one.
+    const NON_FINITE: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+    const PATHS: [&str; 4] = ["encode", "encode_step", "encode_into", "encode_step_into"];
+
+    /// One-channel encoder warmed up on five `1.0` samples (prediction = 1.0).
+    fn warmed(history_depth: usize, channels: usize) -> PredictiveEncoder {
+        let mut enc =
+            PredictiveEncoder::new(history_depth, vec![(0.5, 1)], channels).expect("valid");
+        for _ in 0..5 {
+            let _ = enc.encode_step(&vec![1.0; channels]);
+        }
+        enc
+    }
+
+    /// Collects one step's spikes through the named public path.
+    fn step_via(path: &str, enc: &mut PredictiveEncoder, input: &[f32]) -> Vec<SpikeEvent> {
+        let mut sink = Vec::new();
+        match path {
+            "encode" => sink = enc.encode(input).spikes,
+            "encode_step" => sink = enc.encode_step(input).spikes,
+            "encode_into" => enc.encode_into(input, &mut sink),
+            _ => enc.encode_step_into(input, &mut sink),
+        }
+        sink
+    }
+
+    fn assert_state_finite(enc: &PredictiveEncoder, label: &str) {
+        assert!(
+            enc.thresholds.iter().all(|t| t.is_finite()),
+            "{label}: EWMA must stay finite"
+        );
+        assert!(
+            enc.history.iter().flatten().all(|v| v.is_finite()),
+            "{label}: history must stay finite"
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    fn assert_json_round_trips(enc: &PredictiveEncoder) {
+        let json = serde_json::to_string(enc).expect("serialize");
+        let restored: PredictiveEncoder = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(&restored, enc);
+    }
+
+    /// Skip rule: a non-finite sample during warm-up neither counts toward the
+    /// window nor disturbs the finite channel beside it.
     #[test]
-    fn test_predictive_encoder_skips_non_finite_without_poisoning_ewma() {
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let mut live = PredictiveEncoder::new(5, vec![(0.5, 1)], 2).expect("valid");
-            let mut fresh = PredictiveEncoder::new(5, vec![(0.5, 1)], 2).expect("valid");
+    fn test_predictive_encoder_non_finite_sample_does_not_count_toward_warmup() {
+        for bad in NON_FINITE {
+            let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 2).expect("valid");
+            assert!(enc.encode_step(&[bad, 1.0]).spikes.is_empty(), "{bad}");
+            assert_eq!(enc.history[0].len(), 0, "{bad}: must not be stored");
+            assert_eq!(enc.history[1].len(), 1, "{bad}: finite channel proceeds");
+        }
+    }
 
-            // Non-finite during warm-up does not count as a warm-up sample.
-            assert!(live.encode_step(&[bad, 1.0]).spikes.is_empty());
-            assert_eq!(live.history[0].len(), 0, "{bad}: must not be stored");
-            assert_eq!(live.history[1].len(), 1);
-
-            for _ in 0..5 {
-                assert!(live.encode_step(&[1.0, 1.0]).spikes.is_empty());
-                assert!(fresh.encode_step(&[1.0, 1.0]).spikes.is_empty());
-            }
-            // Non-finite after warm-up: no fire, no EWMA advance, nothing stored.
+    /// Skip rule: after warm-up a non-finite sample leaves the whole encoder
+    /// untouched — no fire, no EWMA advance, nothing stored.
+    #[test]
+    fn test_predictive_encoder_non_finite_sample_leaves_state_untouched() {
+        for bad in NON_FINITE {
+            let mut live = warmed(5, 2);
             let before = live.clone();
-            assert!(live.encode_step(&[bad, bad]).spikes.is_empty());
+            assert!(live.encode_step(&[bad, bad]).spikes.is_empty(), "{bad}");
             assert_eq!(live, before, "{bad}: state must be untouched");
-            assert!(live.thresholds.iter().all(|t| t.is_finite()));
-            assert!(live.history.iter().flatten().all(|v| v.is_finite()));
+            assert_state_finite(&live, "after non-finite");
+        }
+    }
+
+    /// Skip rule: a finite jump after a non-finite step fires exactly as on a
+    /// fresh encoder that never saw it.
+    #[test]
+    fn test_predictive_encoder_recovers_after_non_finite_sample() {
+        for bad in NON_FINITE {
+            let mut live = warmed(5, 2);
+            let mut fresh = warmed(5, 2);
+            let _ = live.encode_step(&[bad, bad]);
 
             let live_out = live.encode_step(&[4.0, 4.0]);
             let fresh_out = fresh.encode_step(&[4.0, 4.0]);
             assert_eq!(live_out.spikes, fresh_out.spikes, "{bad}: finite recovery");
-            assert_eq!(live_out.spikes.len(), 2);
-            assert_eq!(live.thresholds, fresh.thresholds);
+            assert_eq!(live_out.spikes.len(), 2, "{bad}: both channels fire");
+            assert_eq!(live.thresholds, fresh.thresholds, "{bad}: EWMA agrees");
         }
     }
 
-    /// Defensive branch in `advance_channel`: if the EWMA update ever came out
-    /// non-finite, the step is a skip — sample dropped, prediction untouched,
-    /// evicted sample restored. Public paths filter non-finite input before
-    /// this point and f64 means cannot overflow from finite f32 input, so the
-    /// branch is driven directly with a non-finite sample.
+    /// Defensive branch in `advance_channel`: a non-finite EWMA result is a
+    /// skip. With a full window the evicted sample is restored.
     #[test]
-    fn test_predictive_encoder_non_finite_ewma_result_is_a_skip() {
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            // Full window: the push would evict the oldest sample.
-            let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid");
-            for v in [1.0, 2.0, 3.0, 4.0, 5.0] {
-                let _ = enc.encode_step(&[v]);
-            }
+    fn test_predictive_encoder_non_finite_ewma_result_restores_evicted_sample() {
+        for bad in NON_FINITE {
+            let mut enc = warmed(5, 1);
             let before = enc.clone();
             enc.advance_channel(0, bad);
-            assert_eq!(
-                enc, before,
-                "{bad}: evicted sample restored, prediction untouched"
-            );
-
-            // Partially filled window (no eviction) takes the other branch.
-            let mut enc = PredictiveEncoder::new(8, vec![(0.5, 1)], 1).expect("valid");
-            for v in [1.0, 2.0, 3.0, 4.0, 5.0] {
-                let _ = enc.encode_step(&[v]);
-            }
-            let before = enc.clone();
-            enc.advance_channel(0, bad);
-            assert_eq!(enc, before, "{bad}: sample dropped, prediction untouched");
+            assert_eq!(enc, before, "{bad}: evicted sample restored");
         }
     }
 
-    /// Finite-but-huge inputs must not overflow the mean/EWMA to `+inf`:
-    /// live state stays finite and the checkpoint still round-trips.
+    /// Defensive branch in `advance_channel`, no-eviction path: the sample is
+    /// dropped and the prediction left alone.
+    #[test]
+    fn test_predictive_encoder_non_finite_ewma_result_drops_sample() {
+        for bad in NON_FINITE {
+            let mut enc = warmed(8, 1);
+            let before = enc.clone();
+            enc.advance_channel(0, bad);
+            assert_eq!(enc, before, "{bad}: sample dropped");
+        }
+    }
+
+    /// Finite-but-huge inputs must not overflow the mean/EWMA to `+inf`.
     #[test]
     fn test_predictive_encoder_f32_max_inputs_keep_state_finite() {
         let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid");
         for _ in 0..8 {
             let _ = enc.encode_step(&[f32::MAX]);
         }
-        assert!(
-            enc.thresholds[0].is_finite(),
-            "EWMA overflowed: {}",
-            enc.thresholds[0]
-        );
-        assert!(enc.history[0].iter().all(|v| v.is_finite()));
-        // Opposite extreme: the error is transiently inf but nothing stored is.
-        let out = enc.encode_step(&[f32::MIN]);
-        assert_eq!(out.spikes.len(), 1);
-        assert!(!out.spikes[0].polarity);
-        assert!(enc.thresholds[0].is_finite());
+        assert_state_finite(&enc, "after f32::MAX run");
         #[cfg(feature = "serde")]
-        {
-            let json = serde_json::to_string(&enc).expect("serialize");
-            let restored: PredictiveEncoder = serde_json::from_str(&json).expect("round-trip");
-            assert_eq!(restored, enc);
+        assert_json_round_trips(&enc);
+    }
+
+    /// Opposite extreme after a `f32::MAX` run: the prediction error is
+    /// transiently infinite, which fires a negative spike, but nothing
+    /// stored becomes non-finite.
+    #[test]
+    fn test_predictive_encoder_f32_min_after_max_fires_negative_and_stays_finite() {
+        let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid");
+        for _ in 0..8 {
+            let _ = enc.encode_step(&[f32::MAX]);
         }
+        let out = enc.encode_step(&[f32::MIN]);
+        assert_eq!(out.spikes, vec![SpikeEvent::at_step_start(0, false)]);
+        assert_state_finite(&enc, "after f32::MIN");
     }
 
     #[test]
     fn test_predictive_encoder_skip_rule_holds_on_every_public_path() {
-        let run = |f: &mut dyn FnMut(&mut PredictiveEncoder, &[f32]) -> Vec<SpikeEvent>| {
-            let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid");
-            for _ in 0..5 {
-                assert!(f(&mut enc, &[1.0]).is_empty());
-            }
-            assert!(f(&mut enc, &[f32::NAN]).is_empty());
-            assert!(f(&mut enc, &[f32::INFINITY]).is_empty());
-            assert_eq!(enc.thresholds[0], 1.0);
-            assert_eq!(enc.history[0].len(), 5);
-            let spikes = f(&mut enc, &[4.0]);
-            assert_eq!(spikes.len(), 1);
-            assert!(spikes[0].polarity);
-        };
-        run(&mut |e, x| e.encode(x).spikes);
-        run(&mut |e, x| e.encode_step(x).spikes);
-        run(&mut |e, x| {
-            let mut sink = Vec::new();
-            e.encode_into(x, &mut sink);
-            sink
-        });
-        run(&mut |e, x| {
-            let mut sink = Vec::new();
-            e.encode_step_into(x, &mut sink);
-            sink
-        });
+        for path in PATHS {
+            let mut enc = warmed(5, 1);
+            let silent: Vec<_> = NON_FINITE
+                .iter()
+                .flat_map(|&bad| step_via(path, &mut enc, &[bad]))
+                .collect();
+            assert!(silent.is_empty(), "{path}: non-finite steps must be silent");
+            assert_eq!(enc, warmed(5, 1), "{path}: state untouched");
+            assert_eq!(
+                step_via(path, &mut enc, &[4.0]),
+                vec![SpikeEvent::at_step_start(0, true)],
+                "{path}: finite recovery"
+            );
+        }
     }
 
     #[test]
@@ -971,63 +1005,87 @@ mod tests {
         assert!(res.is_err());
     }
 
-    /// A checkpoint carrying NaN/±inf in `history` or the EWMA `thresholds`
-    /// must not restore: it would re-poison the state the encode-time skip
-    /// rule keeps finite. With `serde_json` the non-finite value is written as
-    /// `null`; formats that can carry NaN hit the explicit finiteness check.
+    /// RON payload carrying a non-finite literal in the named field. JSON
+    /// cannot carry those values (`serde_json` writes `null`, rejected as a
+    /// type error before our check), RON can.
+    #[cfg(feature = "serde")]
+    fn ron_with(history_tail: &str, threshold: &str) -> String {
+        format!(
+            "(history: [[1.0{history_tail}]], thresholds: [{threshold}], history_depth: 5, deviation_thresholds: [(0.5, 1)])"
+        )
+    }
+
+    /// A checkpoint carrying NaN/±inf in `history` must not restore: it would
+    /// re-poison the state the encode-time skip rule keeps finite.
     #[cfg(feature = "serde")]
     #[test]
-    fn test_predictive_serde_rejects_non_finite_history_and_ewma() {
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let mut poisoned_history = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).unwrap();
-            poisoned_history.history[0].push_back(bad);
-            let json = serde_json::to_string(&poisoned_history).expect("serialize");
+    fn test_predictive_serde_rejects_non_finite_history() {
+        for bad in ["NaN", "inf", "-inf"] {
+            let err = ron::from_str::<PredictiveEncoder>(&ron_with(&format!(", {bad}"), "1.0"))
+                .expect_err("non-finite history must not restore");
             assert!(
-                serde_json::from_str::<PredictiveEncoder>(&json).is_err(),
-                "{bad}: non-finite history must not restore"
+                err.to_string().contains("history channel 0 must be finite"),
+                "{bad}: unexpected error {err}"
             );
+        }
+    }
 
-            let mut poisoned_ewma = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).unwrap();
-            poisoned_ewma.thresholds[0] = bad;
-            let json = serde_json::to_string(&poisoned_ewma).expect("serialize");
+    /// Same for the EWMA `thresholds` vector.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_serde_rejects_non_finite_ewma() {
+        for bad in ["NaN", "inf", "-inf"] {
+            let err = ron::from_str::<PredictiveEncoder>(&ron_with("", bad))
+                .expect_err("non-finite EWMA threshold must not restore");
             assert!(
-                serde_json::from_str::<PredictiveEncoder>(&json).is_err(),
-                "{bad}: non-finite EWMA threshold must not restore"
+                err.to_string().contains("thresholds must be finite"),
+                "{bad}: unexpected error {err}"
             );
         }
         let finite = r#"{"history": [[1e30]], "thresholds": [-1e30], "history_depth": 5, "deviation_thresholds": [[0.5, 1]]}"#;
         assert!(serde_json::from_str::<PredictiveEncoder>(finite).is_ok());
     }
 
-    /// The explicit finiteness checks (which serde_json's `null` mapping
-    /// bypasses with a type error) each report their own reason.
+    #[cfg(feature = "serde")]
+    const DEV: [(f32, u16); 1] = [(0.5, 1)];
+
+    #[cfg(feature = "serde")]
+    fn ok_history() -> Vec<VecDeque<f32>> {
+        vec![VecDeque::from(vec![1.0f32; 5])]
+    }
+
     #[cfg(feature = "serde")]
     #[test]
-    fn test_predictive_validate_restored_values_reports_each_reason() {
-        let ok_hist = vec![VecDeque::from(vec![1.0f32; 5])];
-        let nan_hist = vec![VecDeque::from(vec![1.0f32, f32::NAN])];
-        let inf_hist = vec![VecDeque::from(vec![f32::INFINITY])];
-        let dev = [(0.5f32, 1u16)];
+    fn test_predictive_validate_restored_values_rejects_non_finite_history() {
+        assert!(validate_restored_values(&ok_history(), &[1.0], 5, &DEV).is_ok());
+        for bad in NON_FINITE {
+            let poisoned = vec![VecDeque::from(vec![1.0f32, bad])];
+            assert_eq!(
+                validate_restored_values(&poisoned, &[1.0], 5, &DEV),
+                Err("history channel 0 must be finite".to_string()),
+                "{bad}"
+            );
+        }
+    }
 
-        assert!(validate_restored_values(&ok_hist, &[1.0], 5, &dev).is_ok());
-        assert_eq!(
-            validate_restored_values(&nan_hist, &[1.0], 5, &dev),
-            Err("history channel 0 must be finite".to_string())
-        );
-        assert_eq!(
-            validate_restored_values(&inf_hist, &[1.0], 5, &dev),
-            Err("history channel 0 must be finite".to_string())
-        );
-        assert_eq!(
-            validate_restored_values(&ok_hist, &[f32::NAN], 5, &dev),
-            Err("thresholds must be finite".to_string())
-        );
-        assert_eq!(
-            validate_restored_values(&ok_hist, &[f32::NEG_INFINITY], 5, &dev),
-            Err("thresholds must be finite".to_string())
-        );
-        assert!(validate_restored_values(&ok_hist, &[1.0], 4, &dev).is_err());
-        assert!(validate_restored_values(&ok_hist, &[1.0], 5, &[(-1.0, 1)]).is_err());
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_validate_restored_values_rejects_non_finite_ewma() {
+        for bad in NON_FINITE {
+            assert_eq!(
+                validate_restored_values(&ok_history(), &[bad], 5, &DEV),
+                Err("thresholds must be finite".to_string()),
+                "{bad}"
+            );
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_validate_restored_values_rejects_bad_depth_and_thresholds() {
+        assert!(validate_restored_values(&ok_history(), &[1.0], 4, &DEV).is_err());
+        assert!(validate_restored_values(&ok_history(), &[1.0], 5, &[(-1.0, 1)]).is_err());
+        assert!(validate_restored_values(&ok_history(), &[1.0], 5, &[(f32::NAN, 1)]).is_err());
     }
 
     #[cfg(feature = "serde")]
