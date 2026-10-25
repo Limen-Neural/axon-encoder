@@ -74,6 +74,21 @@ impl From<PredictiveEncoderError> for EncoderError {
 ///     threshold[i] = 0.9 * threshold[i] + 0.1 * mean(history[-5:])
 /// ```
 ///
+/// # Non-finite input
+///
+/// A `NaN` or `±inf` sample is **skipped**: it is not pushed into history,
+/// does not count toward warm-up, emits no spike, and does not advance the
+/// EWMA prediction. The next finite sample is evaluated against the prediction
+/// formed from finite samples only, as if the non-finite step never happened.
+/// Without the skip a single `NaN` would poison the EWMA (`0.9 * NaN + ...`)
+/// and silence the channel until [`reset`](Encoder::reset). This is the
+/// crate-wide rule for stateful encoders (see also [`DerivativeEncoder`] and
+/// [`TemporalEncoder`]); constructor and serde validation of non-finite
+/// thresholds is unchanged.
+///
+/// [`DerivativeEncoder`]: crate::encoders::DerivativeEncoder
+/// [`TemporalEncoder`]: crate::encoders::TemporalEncoder
+///
 /// # When to Use
 ///
 /// - Anomaly detection in sensor streams
@@ -189,6 +204,11 @@ impl PredictiveEncoder {
         for (i, &value) in input.iter().enumerate() {
             if i >= self.history.len() {
                 break;
+            }
+            // Skip rule: a non-finite sample never enters history, the
+            // prediction, or the EWMA; it also does not count toward warm-up.
+            if !value.is_finite() {
+                continue;
             }
 
             if self.warm_up_channel(i, value) {
@@ -633,6 +653,67 @@ mod tests {
             assert!(encoder.encode(&[10.0]).spikes.is_empty());
         }
         assert_eq!(encoder.thresholds[0], 10.0);
+    }
+
+    /// Skip rule: NaN / ±inf never reach history or the EWMA, emit nothing,
+    /// and a finite jump that fires on a fresh encoder fires on the live one.
+    #[test]
+    fn test_predictive_encoder_skips_non_finite_without_poisoning_ewma() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut live = PredictiveEncoder::new(5, vec![(0.5, 1)], 2).expect("valid");
+            let mut fresh = PredictiveEncoder::new(5, vec![(0.5, 1)], 2).expect("valid");
+
+            // Non-finite during warm-up does not count as a warm-up sample.
+            assert!(live.encode_step(&[bad, 1.0]).spikes.is_empty());
+            assert_eq!(live.history[0].len(), 0, "{bad}: must not be stored");
+            assert_eq!(live.history[1].len(), 1);
+
+            for _ in 0..5 {
+                assert!(live.encode_step(&[1.0, 1.0]).spikes.is_empty());
+                assert!(fresh.encode_step(&[1.0, 1.0]).spikes.is_empty());
+            }
+            // Non-finite after warm-up: no fire, no EWMA advance, nothing stored.
+            let before = live.clone();
+            assert!(live.encode_step(&[bad, bad]).spikes.is_empty());
+            assert_eq!(live, before, "{bad}: state must be untouched");
+            assert!(live.thresholds.iter().all(|t| t.is_finite()));
+            assert!(live.history.iter().flatten().all(|v| v.is_finite()));
+
+            let live_out = live.encode_step(&[4.0, 4.0]);
+            let fresh_out = fresh.encode_step(&[4.0, 4.0]);
+            assert_eq!(live_out.spikes, fresh_out.spikes, "{bad}: finite recovery");
+            assert_eq!(live_out.spikes.len(), 2);
+            assert_eq!(live.thresholds, fresh.thresholds);
+        }
+    }
+
+    #[test]
+    fn test_predictive_encoder_skip_rule_holds_on_every_public_path() {
+        let run = |f: &mut dyn FnMut(&mut PredictiveEncoder, &[f32]) -> Vec<SpikeEvent>| {
+            let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid");
+            for _ in 0..5 {
+                assert!(f(&mut enc, &[1.0]).is_empty());
+            }
+            assert!(f(&mut enc, &[f32::NAN]).is_empty());
+            assert!(f(&mut enc, &[f32::INFINITY]).is_empty());
+            assert_eq!(enc.thresholds[0], 1.0);
+            assert_eq!(enc.history[0].len(), 5);
+            let spikes = f(&mut enc, &[4.0]);
+            assert_eq!(spikes.len(), 1);
+            assert!(spikes[0].polarity);
+        };
+        run(&mut |e, x| e.encode(x).spikes);
+        run(&mut |e, x| e.encode_step(x).spikes);
+        run(&mut |e, x| {
+            let mut sink = Vec::new();
+            e.encode_into(x, &mut sink);
+            sink
+        });
+        run(&mut |e, x| {
+            let mut sink = Vec::new();
+            e.encode_step_into(x, &mut sink);
+            sink
+        });
     }
 
     #[test]

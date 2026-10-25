@@ -13,6 +13,20 @@ use crate::prelude::*;
 /// spike if delta > threshold
 /// ```
 ///
+/// # Non-finite input
+///
+/// A `NaN` or `±inf` sample is **skipped**: it is not stored in `last_values`
+/// and emits no spike, so the next finite sample is compared against the last
+/// *finite* baseline as if the non-finite step never happened. (`NaN` was
+/// already silent because every comparison with it is false; `±inf` used to
+/// fire once and then poison the baseline so every later finite sample fired.)
+/// This is the crate-wide rule for stateful encoders, shared with
+/// [`DerivativeEncoder`], [`TemporalEncoder`], and [`PredictiveEncoder`].
+///
+/// [`DerivativeEncoder`]: crate::encoders::DerivativeEncoder
+/// [`TemporalEncoder`]: crate::encoders::TemporalEncoder
+/// [`PredictiveEncoder`]: crate::encoders::PredictiveEncoder
+///
 /// # When to Use
 ///
 /// - Event-based encoding where changes are more important than absolute values
@@ -86,6 +100,10 @@ impl DeltaEncoder {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
                 break;
             };
+            // Skip rule: a non-finite sample is neither compared nor stored.
+            if !value.is_finite() {
+                continue;
+            }
             let delta = (value - self.last_values[i]).abs();
             if delta > effective_threshold {
                 sink.push(SpikeEvent::at_step_start(
@@ -352,6 +370,34 @@ mod tests {
         );
         let modulated = encoder.encode_step_with_modulators(&[0.75], &modulators, &gain_curves);
         assert_eq!(modulated.spikes.len(), 1);
+    }
+
+    /// Skip rule: ±inf must not fire once and then poison the baseline.
+    #[test]
+    fn test_delta_encoder_skips_non_finite_without_poisoning_baseline() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut live = DeltaEncoder::new(0.5, 2);
+            let mut fresh = DeltaEncoder::new(0.5, 2);
+            assert!(live.encode_step(&[bad, 0.1]).spikes.is_empty(), "{bad}");
+            assert_eq!(
+                live.last_values,
+                vec![0.0, 0.0],
+                "{bad}: must not be stored"
+            );
+            let live_out = live.encode_step(&[0.2, 0.1]);
+            let fresh_out = fresh.encode_step(&[0.2, 0.1]);
+            assert_eq!(live_out.spikes, fresh_out.spikes, "{bad}: finite recovery");
+            assert!(
+                live_out.spikes.is_empty(),
+                "{bad}: small change must stay silent"
+            );
+            assert_eq!(live.encode(&[1.0, 1.0]).spikes.len(), 2);
+            let mut sink = Vec::new();
+            live.encode_into(&[bad, bad], &mut sink);
+            live.encode_step_into(&[bad], &mut sink);
+            assert!(sink.is_empty(), "{bad}: sink paths honour the skip rule");
+            assert_eq!(live.last_values, vec![1.0, 1.0]);
+        }
     }
 
     #[test]

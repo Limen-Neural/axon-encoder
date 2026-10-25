@@ -17,6 +17,20 @@ use std::collections::VecDeque;
 /// spike if change > threshold
 /// ```
 ///
+/// # Non-finite input
+///
+/// A `NaN` or `±inf` sample is **skipped**: it is not pushed into the channel's
+/// history, the channel emits nothing for that step, and the window is left
+/// exactly as it was. The next finite sample extends the history as if the
+/// non-finite step never happened. Without the skip a `NaN` would sit in the
+/// 3+3 window for six steps, silencing the channel and then producing a
+/// delayed spurious spike as it slid out. This is the crate-wide rule for
+/// stateful encoders (see also [`DerivativeEncoder`] and [`PredictiveEncoder`]);
+/// constructor and serde validation of non-finite thresholds is unchanged.
+///
+/// [`DerivativeEncoder`]: crate::encoders::DerivativeEncoder
+/// [`PredictiveEncoder`]: crate::encoders::PredictiveEncoder
+///
 /// # When to Use
 ///
 /// - Detecting sudden changes in signal (edge detection)
@@ -107,6 +121,10 @@ impl TemporalEncoder {
                 // Remaining channels exceed u16::MAX; stop rather than wrap.
                 break;
             };
+            // Skip rule: a non-finite sample never enters the history window.
+            if !value.is_finite() {
+                continue;
+            }
             let channel_history = &mut self.history[i];
             if channel_history.len() == self.history_depth {
                 channel_history.pop_front();
@@ -383,6 +401,76 @@ mod tests {
         }
         let output = encoder.encode_with_modulators(&[5.0], &modulators, &gain_curves);
         assert_eq!(output.spikes.len(), 1);
+    }
+
+    /// Skip rule: NaN / ±inf never enter the history, emit nothing, and the
+    /// live encoder matches a fresh one fed only the finite samples.
+    #[test]
+    fn test_temporal_encoder_skips_non_finite_without_poisoning_history() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut live = TemporalEncoder::new(6, vec![(0.5, 1)], 2);
+            let mut fresh = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
+
+            for _ in 0..3 {
+                assert!(live.encode_step(&[0.0, 0.0]).spikes.is_empty());
+                assert!(fresh.encode_step(&[0.0]).spikes.is_empty());
+            }
+            // Mixed-channel slice: channel 0 poisoned, channel 1 finite.
+            let out = live.encode_step(&[bad, 0.0]);
+            assert!(out.spikes.is_empty(), "{bad}: no fire on non-finite step");
+            assert_eq!(live.history[0].len(), 3, "{bad}: must not be stored");
+            assert_eq!(live.history[1].len(), 4);
+            assert!(live.history.iter().flatten().all(|v| v.is_finite()));
+
+            // Channel 0 of the live encoder behaves exactly like a fresh
+            // encoder that never saw the non-finite step: the jump fires on the
+            // same steps, and once the window is flat neither emits a delayed
+            // spurious spike as the old samples slide out.
+            for step in 0..12 {
+                let live_ch0: Vec<_> = live
+                    .encode_step(&[2.0, 2.0])
+                    .spikes
+                    .into_iter()
+                    .filter(|s| s.channel == 0)
+                    .collect();
+                let fresh_out = fresh.encode_step(&[2.0]).spikes;
+                assert_eq!(live_ch0, fresh_out, "{bad}: finite recovery at step {step}");
+                assert_eq!(
+                    live_ch0.len(),
+                    usize::from((2..5).contains(&step)),
+                    "{bad}: step {step}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_temporal_encoder_skip_rule_holds_on_every_public_path() {
+        let run = |f: &mut dyn FnMut(&mut TemporalEncoder, &[f32]) -> Vec<SpikeEvent>| {
+            let mut enc = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
+            for _ in 0..3 {
+                assert!(f(&mut enc, &[0.0]).is_empty());
+            }
+            assert!(f(&mut enc, &[f32::NAN]).is_empty());
+            assert!(f(&mut enc, &[f32::NEG_INFINITY]).is_empty());
+            assert_eq!(enc.history[0].len(), 3);
+            for _ in 0..2 {
+                assert!(f(&mut enc, &[2.0]).is_empty());
+            }
+            assert_eq!(f(&mut enc, &[2.0]).len(), 1);
+        };
+        run(&mut |e, x| e.encode(x).spikes);
+        run(&mut |e, x| e.encode_step(x).spikes);
+        run(&mut |e, x| {
+            let mut sink = Vec::new();
+            e.encode_into(x, &mut sink);
+            sink
+        });
+        run(&mut |e, x| {
+            let mut sink = Vec::new();
+            e.encode_step_into(x, &mut sink);
+            sink
+        });
     }
 
     #[test]

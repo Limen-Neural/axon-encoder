@@ -5,6 +5,21 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 ///
+/// # Non-finite input
+///
+/// A `NaN` or `±inf` sample is **skipped**: it is not stored in `last_values`,
+/// it emits no spike, and the channel's state is left exactly as it was. The
+/// next finite sample is compared against the last *finite* sample, so the
+/// encoder behaves as if the non-finite step never happened. This is the
+/// crate-wide rule for stateful encoders (see also [`TemporalEncoder`] and
+/// [`PredictiveEncoder`]); constructor and serde validation of non-finite
+/// configuration is unchanged. Without the skip, `+inf` followed by a finite
+/// value would compute `finite - inf = -inf` and emit a spurious inhibitory
+/// spike, and `NaN` would silence the channel for one step.
+///
+/// [`TemporalEncoder`]: crate::encoders::TemporalEncoder
+/// [`PredictiveEncoder`]: crate::encoders::PredictiveEncoder
+///
 /// # Examples
 ///
 /// ```rust
@@ -95,6 +110,10 @@ impl DerivativeEncoder {
         for (i, &current_val) in current_values.iter().enumerate() {
             if i >= self.thresholds.len() {
                 break;
+            }
+            // Skip rule: a non-finite sample is neither stored nor compared.
+            if !current_val.is_finite() {
+                continue;
             }
 
             let delta = current_val - self.last_values[i];
@@ -279,6 +298,61 @@ mod branch_coverage_tests {
         let output = encoder.encode_step(&[1.0, -2.0]);
         assert!(output.spikes.is_empty());
         assert_eq!(encoder.last_values, vec![1.0, -2.0]);
+    }
+
+    /// Skip rule: NaN / ±inf are never written into `last_values`, emit no
+    /// spike, and a finite jump afterwards fires exactly as on a fresh encoder.
+    #[test]
+    fn derivative_encoder_skips_non_finite_samples_without_poisoning_state() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut live = DerivativeEncoder::new(vec![0.5, 0.5]);
+            let mut fresh = DerivativeEncoder::new(vec![0.5, 0.5]);
+
+            // Mixed-channel slice: channel 0 is poisoned, channel 1 is finite.
+            let out = live.encode_step(&[bad, 0.1]);
+            assert!(
+                out.spikes.is_empty(),
+                "{bad}: no fire on the non-finite step"
+            );
+            assert_eq!(live.last_values[0], 0.0, "{bad}: must not be stored");
+            assert_eq!(live.last_values[1], 0.1);
+            assert!(live.last_values.iter().all(|v| v.is_finite()));
+
+            // Inf -> finite must not produce a fake inhibitory spike.
+            let _ = fresh.encode_step(&[0.0, 0.1]);
+            let live_out = live.encode_step(&[1.0, 0.1]);
+            let fresh_out = fresh.encode_step(&[1.0, 0.1]);
+            assert_eq!(live_out.spikes, fresh_out.spikes, "{bad}: finite recovery");
+            assert_eq!(live_out.spikes.len(), 1);
+            assert_eq!(live_out.spikes[0].channel, 0);
+            assert!(live_out.spikes[0].polarity, "{bad}: must be excitatory");
+        }
+    }
+
+    #[test]
+    fn derivative_encoder_skip_rule_holds_on_every_public_path() {
+        let thresholds = vec![0.5];
+        let run = |f: &mut dyn FnMut(&mut DerivativeEncoder, &[f32]) -> Vec<SpikeEvent>| {
+            let mut enc = DerivativeEncoder::new(thresholds.clone());
+            assert!(f(&mut enc, &[f32::INFINITY]).is_empty());
+            assert!(f(&mut enc, &[f32::NAN]).is_empty());
+            assert_eq!(enc.last_values, vec![0.0]);
+            let spikes = f(&mut enc, &[1.0]);
+            assert_eq!(spikes.len(), 1);
+            assert!(spikes[0].polarity);
+        };
+        run(&mut |e, x| e.encode(x).spikes);
+        run(&mut |e, x| e.encode_step(x).spikes);
+        run(&mut |e, x| {
+            let mut sink = Vec::new();
+            e.encode_into(x, &mut sink);
+            sink
+        });
+        run(&mut |e, x| {
+            let mut sink = Vec::new();
+            e.encode_step_into(x, &mut sink);
+            sink
+        });
     }
 
     #[test]
