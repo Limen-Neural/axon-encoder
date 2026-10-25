@@ -78,104 +78,169 @@ fn population_width(len: usize) -> usize {
     len * CHANNELS
 }
 
+/// Table-driven construction: one small row per encoder.
 fn subjects() -> Vec<Subject> {
     vec![
-        Subject {
-            label: "RateEncoder",
-            build: || Box::new(RateEncoder::try_new(5.0, 400.0, RANGE, 0.002).unwrap()),
-            modulated: Some(|| Box::new(RateEncoder::try_new(5.0, 400.0, RANGE, 0.002).unwrap())),
-            channel_cap: input_width,
-            deterministic: false,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "LatencyEncoder",
-            build: || Box::new(LatencyEncoder::try_new(10, RANGE).unwrap()),
-            modulated: Some(|| Box::new(LatencyEncoder::try_new(10, RANGE).unwrap())),
-            channel_cap: input_width,
-            deterministic: true,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "PhaseEncoder",
-            build: || Box::new(PhaseEncoder::try_new(16, RANGE).unwrap()),
-            modulated: Some(|| Box::new(PhaseEncoder::try_new(16, RANGE).unwrap())),
-            channel_cap: input_width,
-            deterministic: true,
-            skips_non_finite: false,
-        },
-        Subject {
-            label: "PopulationEncoder",
-            build: || Box::new(PopulationEncoder::try_new(CHANNELS, RANGE, 0.2).unwrap()),
-            modulated: Some(|| Box::new(PopulationEncoder::try_new(CHANNELS, RANGE, 0.2).unwrap())),
-            channel_cap: population_width,
-            deterministic: false,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "DeltaEncoder",
-            build: || Box::new(DeltaEncoder::try_new(0.1, CHANNELS).unwrap()),
-            modulated: Some(|| Box::new(DeltaEncoder::try_new(0.1, CHANNELS).unwrap())),
-            channel_cap: fixed_width,
-            deterministic: true,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "DerivativeEncoder",
-            build: || Box::new(DerivativeEncoder::try_new(vec![0.1; CHANNELS]).unwrap()),
-            modulated: None,
-            channel_cap: fixed_width,
-            deterministic: true,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "BaselineHoldTernaryEncoder",
-            build: || Box::new(BaselineHoldTernaryEncoder::try_new(vec![0.1; CHANNELS]).unwrap()),
-            modulated: None,
-            channel_cap: fixed_width,
-            deterministic: true,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "TemporalEncoder",
-            build: || Box::new(TemporalEncoder::try_new(8, vec![(0.2, 1)], CHANNELS).unwrap()),
-            modulated: Some(|| {
-                Box::new(TemporalEncoder::try_new(8, vec![(0.2, 1)], CHANNELS).unwrap())
-            }),
-            channel_cap: fixed_width,
-            deterministic: true,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "PredictiveEncoder",
-            build: || Box::new(PredictiveEncoder::try_new(8, vec![(0.2, 1)], CHANNELS).unwrap()),
-            modulated: Some(|| {
-                Box::new(PredictiveEncoder::try_new(8, vec![(0.2, 1)], CHANNELS).unwrap())
-            }),
-            channel_cap: fixed_width,
-            deterministic: true,
-            skips_non_finite: true,
-        },
-        Subject {
-            label: "EmbeddingRateEncoder",
-            build: || {
-                Box::new(
-                    EmbeddingRateEncoder::try_new(CHANNELS, EmbeddingEncoderConfig { v_th: 0.3 })
-                        .unwrap(),
-                )
-            },
-            modulated: Some(|| {
-                Box::new(
-                    EmbeddingRateEncoder::try_new(CHANNELS, EmbeddingEncoderConfig { v_th: 0.3 })
-                        .unwrap(),
-                )
-            }),
-            channel_cap: fixed_width,
-            deterministic: true,
-            skips_non_finite: true,
-        },
+        subject("RateEncoder", rate, Some(rate_m), input_width, false, true),
+        subject(
+            "LatencyEncoder",
+            latency,
+            Some(latency_m),
+            input_width,
+            true,
+            true,
+        ),
+        // Phase's oscillator advances on every call (finite or not), which is
+        // still a pure function of the call history, hence deterministic; it
+        // does not *skip* non-finite samples, so it is excluded from recovery.
+        subject(
+            "PhaseEncoder",
+            phase,
+            Some(phase_m),
+            input_width,
+            true,
+            false,
+        ),
+        subject(
+            "PopulationEncoder",
+            population,
+            Some(population_m),
+            population_width,
+            false,
+            true,
+        ),
+        subject(
+            "DeltaEncoder",
+            delta,
+            Some(delta_m),
+            fixed_width,
+            true,
+            true,
+        ),
+        subject(
+            "DerivativeEncoder",
+            derivative,
+            None,
+            fixed_width,
+            true,
+            true,
+        ),
+        subject(
+            "BaselineHoldTernaryEncoder",
+            baseline_hold,
+            None,
+            fixed_width,
+            true,
+            true,
+        ),
+        subject(
+            "TemporalEncoder",
+            temporal,
+            Some(temporal_m),
+            fixed_width,
+            true,
+            true,
+        ),
+        subject(
+            "PredictiveEncoder",
+            predictive,
+            Some(predictive_m),
+            fixed_width,
+            true,
+            true,
+        ),
+        subject(
+            "EmbeddingRateEncoder",
+            embedding,
+            Some(embedding_m),
+            fixed_width,
+            true,
+            true,
+        ),
     ]
 }
+
+fn subject(
+    label: &'static str,
+    build: Factory,
+    modulated: Option<ModulatedFactory>,
+    channel_cap: fn(usize) -> usize,
+    deterministic: bool,
+    skips_non_finite: bool,
+) -> Subject {
+    Subject {
+        label,
+        build,
+        modulated,
+        channel_cap,
+        deterministic,
+        skips_non_finite,
+    }
+}
+
+/// Concrete constructors. `boxed!` emits a `Factory` and, for gain-aware
+/// encoders, a `ModulatedFactory` from one expression, so each encoder's
+/// configuration is written exactly once.
+macro_rules! boxed {
+    ($enc:ident, $modulated:ident, $expr:expr) => {
+        fn $enc() -> Box<dyn Encoder> {
+            Box::new($expr)
+        }
+        fn $modulated() -> Box<dyn ModulatedEncoder> {
+            Box::new($expr)
+        }
+    };
+    ($enc:ident, $expr:expr) => {
+        fn $enc() -> Box<dyn Encoder> {
+            Box::new($expr)
+        }
+    };
+}
+
+boxed!(
+    rate,
+    rate_m,
+    RateEncoder::try_new(5.0, 400.0, RANGE, 0.002).unwrap()
+);
+boxed!(
+    latency,
+    latency_m,
+    LatencyEncoder::try_new(10, RANGE).unwrap()
+);
+boxed!(phase, phase_m, PhaseEncoder::try_new(16, RANGE).unwrap());
+boxed!(
+    population,
+    population_m,
+    PopulationEncoder::try_new(CHANNELS, RANGE, 0.2).unwrap()
+);
+boxed!(
+    delta,
+    delta_m,
+    DeltaEncoder::try_new(0.1, CHANNELS).unwrap()
+);
+boxed!(
+    derivative,
+    DerivativeEncoder::try_new(vec![0.1; CHANNELS]).unwrap()
+);
+boxed!(
+    baseline_hold,
+    BaselineHoldTernaryEncoder::try_new(vec![0.1; CHANNELS]).unwrap()
+);
+boxed!(
+    temporal,
+    temporal_m,
+    TemporalEncoder::try_new(8, vec![(0.2, 1)], CHANNELS).unwrap()
+);
+boxed!(
+    predictive,
+    predictive_m,
+    PredictiveEncoder::try_new(8, vec![(0.2, 1)], CHANNELS).unwrap()
+);
+boxed!(
+    embedding,
+    embedding_m,
+    EmbeddingRateEncoder::try_new(CHANNELS, EmbeddingEncoderConfig { v_th: 0.3 }).unwrap()
+);
 
 // --- seeded samplers -----------------------------------------------------------
 
@@ -321,19 +386,19 @@ fn rate_batch_and_streaming_respect_their_caps() {
             &input,
         );
 
+        // Non-finite samples are silent, so the bound is the finite count.
+        let finite = input.iter().filter(|v| v.is_finite()).count();
         let batch = encoder.encode(&input).spikes;
         assert!(
-            batch.len() <= input.len(),
-            "{label}: batch emitted {} > {} channels",
-            batch.len(),
-            input.len()
+            batch.len() <= finite,
+            "{label}: batch emitted {} > {finite} finite channels",
+            batch.len()
         );
         let streamed = encoder.encode_step(&input).spikes;
         assert!(
-            streamed.len() <= STREAM_CAP * input.len(),
-            "{label}: streaming emitted {} > 1024 × {}",
-            streamed.len(),
-            input.len()
+            streamed.len() <= STREAM_CAP * finite,
+            "{label}: streaming emitted {} > 1024 × {finite}",
+            streamed.len()
         );
     }
 }
@@ -373,22 +438,31 @@ fn excess_channels_never_emit_past_the_cap_and_short_slices_do_not_panic() {
             let len = sample_len(&mut rng);
             let input = sample_input(&mut rng, len, false);
             let label = ctx("dims", subject.label, trial, &input);
-            let cap = (subject.channel_cap)(len);
-            for spikes in [
-                encoder.encode(&input).spikes,
-                encoder.encode_step(&input).spikes,
-                collect_into(encoder.as_mut(), &input, false),
-                collect_into(encoder.as_mut(), &input, true),
-            ] {
-                for spike in &spikes {
-                    assert!(
-                        usize::from(spike.channel) < cap,
-                        "{label}: channel {} >= cap {cap}",
-                        spike.channel
-                    );
-                }
-            }
+            assert_all_paths_under_cap(
+                encoder.as_mut(),
+                &input,
+                (subject.channel_cap)(len),
+                &label,
+            );
         }
+    }
+}
+
+/// Runs all four public paths on `input` and checks every emitted channel
+/// against `cap`.
+fn assert_all_paths_under_cap(encoder: &mut dyn Encoder, input: &[f32], cap: usize, label: &str) {
+    let outputs = [
+        encoder.encode(input).spikes,
+        encoder.encode_step(input).spikes,
+        collect_into(encoder, input, false),
+        collect_into(encoder, input, true),
+    ];
+    for spike in outputs.iter().flatten() {
+        assert!(
+            usize::from(spike.channel) < cap,
+            "{label}: channel {} >= cap {cap}",
+            spike.channel
+        );
     }
 }
 
@@ -441,22 +515,40 @@ fn sink_paths_match_returning_paths_on_deterministic_encoders() {
             // A short warm-up sequence, then the probe length, so stateful
             // encoders are compared mid-stream rather than cold.
             for round in 0..3 {
-                let input = sample_input(&mut rng, if round == 2 { len } else { CHANNELS }, false);
+                let probe = if round == 2 { len } else { CHANNELS };
+                let input = sample_input(&mut rng, probe, false);
                 let label = ctx("sink", subject.label, trial, &input);
-                let step = round % 2 == 1;
-                let expected = if step {
-                    returning.encode_step(&input).spikes
-                } else {
-                    returning.encode(&input).spikes
-                };
-                let actual = collect_into(sinking.as_mut(), &input, step);
-                assert_eq!(
-                    actual, expected,
-                    "{label}: sink path diverged (step={step})"
+                assert_sink_matches(
+                    returning.as_mut(),
+                    sinking.as_mut(),
+                    &input,
+                    round % 2 == 1,
+                    &label,
                 );
             }
         }
     }
+}
+
+/// One step on both encoders — returning API on one, sink API on the other —
+/// must yield identical spikes.
+fn assert_sink_matches(
+    returning: &mut dyn Encoder,
+    sinking: &mut dyn Encoder,
+    input: &[f32],
+    step: bool,
+    label: &str,
+) {
+    let expected = if step {
+        returning.encode_step(input).spikes
+    } else {
+        returning.encode(input).spikes
+    };
+    let actual = collect_into(sinking, input, step);
+    assert_eq!(
+        actual, expected,
+        "{label}: sink path diverged (step={step})"
+    );
 }
 
 // --- 6. reset ------------------------------------------------------------------------
@@ -535,7 +627,8 @@ fn finite_recovery_after_non_finite_steps() {
                 );
             }
             // Only the poisoned encoder sees an all-non-finite step.
-            let bad: Vec<f32> = (0..sample_len(&mut rng))
+            let bad_len = sample_len(&mut rng).max(1); // never a no-op trial
+            let bad: Vec<f32> = (0..bad_len)
                 .map(|_| [f32::NAN, f32::INFINITY, f32::NEG_INFINITY][rng.random_range(0..3)])
                 .collect();
             // Stateless Latency still emits (at its collision endpoint) for a
