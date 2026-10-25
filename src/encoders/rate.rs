@@ -169,22 +169,28 @@ impl RateEncoder {
         Self::DEFAULT_DT_SECONDS
     }
 
-    /// The `f64` step duration both the streaming accumulator and
-    /// [`Encoder::time_model`] use.
+    /// The `f64` step duration both the streaming accumulator, the batch
+    /// probability, and [`Encoder::time_model`] use.
     ///
     /// An `f32` has no exact `0.1`; the stored bits widen to
     /// `0.100000001490116…`. Rust's `Display` for `f32` prints the shortest
     /// decimal that round-trips to those bits (`"0.1"`), so parsing that string
     /// as `f64` recovers the literal the caller wrote with no bias of its own.
-    /// The result always rounds back to the same `f32`, so `dt_seconds()` and
-    /// serde are unaffected.
+    /// The decimal is only used when it sits within one f32 ULP (relative
+    /// `f32::EPSILON`) of the exact widening; otherwise — subnormal durations,
+    /// where the shortest round-tripping decimal is far from the stored bits —
+    /// the exact widening is kept, so the accumulator never advances by a
+    /// different interval than `dt_seconds` specifies.
     fn physical_dt(dt_seconds: f32) -> f64 {
-        // `dt_seconds` is validated finite and positive, so this cannot fail;
-        // fall back to plain widening rather than panic if it ever did.
-        dt_seconds
-            .to_string()
-            .parse::<f64>()
-            .unwrap_or_else(|_| f64::from(dt_seconds))
+        let widened = f64::from(dt_seconds);
+        let Ok(decimal) = dt_seconds.to_string().parse::<f64>() else {
+            return widened;
+        };
+        if (decimal - widened).abs() <= widened * f64::from(f32::EPSILON) {
+            decimal
+        } else {
+            widened
+        }
     }
 
     fn validate_dt_seconds(dt_seconds: f32) -> Result<(), EncoderError> {
@@ -280,13 +286,7 @@ impl RateEncoder {
                 break;
             };
             let rate = self.effective_rate_hz(value, rate_scale);
-            // Deliberately the f32 `dt_seconds`: `probability_from_rate_hz` is a
-            // public f32 API shared with `tests/reference_decoders`, and the
-            // ~1.5e-9 relative f32 bias in Δt is far below f32 resolution of
-            // `1 - exp(-λΔt)`, so the corrected f64 `dt` would not change a
-            // single draw. The timebase and streaming increment, where the bias
-            // accumulates across ticks, use `self.dt`.
-            let probability = crate::poisson::probability_from_rate_hz(rate, self.dt_seconds);
+            let probability = self.batch_probability(rate);
 
             if crate::rng::gen_unit_f32_with_rng(rng) < probability {
                 sink.push(SpikeEvent::at_step_start(channel, true));
@@ -345,6 +345,23 @@ impl RateEncoder {
         }
         // rate_hz and dt are finite → product is finite in f64.
         (f64::from(rate_hz) * self.dt).clamp(0.0, u64::MAX as f64)
+    }
+
+    /// Bernoulli probability `1 - exp(-rate_hz * dt)` for one batch call.
+    ///
+    /// Uses the same corrected `f64` `dt` as [`Self::streaming_increment`] and
+    /// [`Encoder::time_model`], so both modes describe one physical interval
+    /// (an `f32` round trip of `dt` would discard the correction, and for
+    /// subnormal `dt` the two intervals can differ by tens of percent). Same
+    /// shape as [`crate::poisson::probability_from_rate_hz`]: non-positive
+    /// rates are silent, `exp_m1` keeps tiny products nonzero, result clamped
+    /// to `[0, 1]`.
+    fn batch_probability(&self, rate_hz: f32) -> f32 {
+        if !(rate_hz.is_finite() && rate_hz > 0.0) {
+            return 0.0;
+        }
+        let x = f64::from(rate_hz) * self.dt;
+        (-(-x).exp_m1()).clamp(0.0, 1.0) as f32
     }
 
     fn emit_capped_channel_spikes<S: SpikeSink + ?Sized>(
@@ -1270,6 +1287,48 @@ mod tests {
                 dt_f32,
                 "public accessor keeps the f32"
             );
+        }
+    }
+
+    /// Batch and streaming must describe one physical interval. For a
+    /// subnormal / awkward f32 `dt` the f32 round trip of `dt` differs from
+    /// the f64 value by tens of percent; the batch probability must track the
+    /// f64 interval the streaming increment uses.
+    #[test]
+    fn test_rate_encoder_batch_probability_uses_the_streaming_dt() {
+        for dt in [1e-40f32, 3e-39, 1e-30, 0.1, 0.004, 0.3] {
+            let encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), dt).unwrap();
+            let expected_x = encoder.streaming_increment(1.0, 1.0); // λΔt in f64
+            let expected_p = (-(-expected_x).exp_m1()) as f32;
+            let p = encoder.batch_probability(10.0);
+            assert_eq!(p, expected_p, "dt={dt}: batch p must come from the f64 Δt");
+            // Δt never departs from the f32 value by more than one f32 ULP.
+            let widened = f64::from(dt);
+            assert!(
+                (encoder.dt - widened).abs() <= widened * f64::from(f32::EPSILON),
+                "dt={dt}: corrected {} vs widened {widened}",
+                encoder.dt
+            );
+        }
+    }
+
+    /// The decimal correction is guarded: it applies to ordinary durations
+    /// (recovering the literal) and is skipped for subnormal ones, whose
+    /// shortest round-tripping decimal is tens of percent off the stored bits.
+    #[test]
+    fn test_rate_encoder_physical_dt_guard() {
+        assert_eq!(RateEncoder::physical_dt(0.1), 0.1);
+        assert_eq!(RateEncoder::physical_dt(0.004), 0.004);
+        for subnormal in [1e-40f32, 1e-45, 3e-39] {
+            assert_eq!(
+                RateEncoder::physical_dt(subnormal),
+                f64::from(subnormal),
+                "{subnormal}: exact widening must be kept"
+            );
+        }
+        // Whatever branch is taken, the result rounds back to the same f32.
+        for dt in [0.1f32, 0.3, 1e-7, 1e-40, 123.456] {
+            assert_eq!(RateEncoder::physical_dt(dt) as f32, dt);
         }
     }
 
