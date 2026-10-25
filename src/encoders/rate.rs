@@ -1295,14 +1295,9 @@ mod tests {
             let encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), dt_f32).unwrap();
             let expected = Timebase::try_from_seconds(dt_f64).unwrap();
             assert_eq!(
-                encoder.time_model().timebase(),
-                Some(expected),
-                "dt={dt_f32}: timebase must match the f64 literal"
-            );
-            assert_eq!(
-                encoder.dt_seconds(),
-                dt_f32,
-                "public accessor keeps the f32"
+                (encoder.time_model().timebase(), encoder.dt_seconds()),
+                (Some(expected), dt_f32),
+                "dt={dt_f32}: timebase matches the f64 literal; accessor keeps the f32"
             );
         }
     }
@@ -1334,11 +1329,15 @@ mod tests {
     #[test]
     fn test_rate_encoder_batch_probability_edges() {
         let encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), 1.0).unwrap();
-        assert_eq!(encoder.batch_probability(0.0), 0.0);
-        assert_eq!(encoder.batch_probability(-1.0), 0.0);
-        assert_eq!(encoder.batch_probability(f32::NAN), 0.0);
-        assert_eq!(encoder.batch_probability(1e9), 1.0);
-        assert_eq!(encoder.batch_probability(f32::MAX), 1.0);
+        for (rate, expected) in [
+            (0.0f32, 0.0f32),
+            (-1.0, 0.0),
+            (f32::NAN, 0.0),
+            (1e9, 1.0),
+            (f32::MAX, 1.0),
+        ] {
+            assert_eq!(encoder.batch_probability(rate), expected, "rate={rate}");
+        }
     }
 
     /// The decimal correction is guarded: it applies to ordinary durations
@@ -1346,16 +1345,22 @@ mod tests {
     /// shortest round-tripping decimal is tens of percent off the stored bits.
     #[test]
     fn test_rate_encoder_physical_dt_guard() {
-        assert_eq!(RateEncoder::physical_dt(0.1), 0.1);
-        assert_eq!(RateEncoder::physical_dt(0.004), 0.004);
-        for subnormal in [1e-40f32, 1e-45, 3e-39] {
-            assert_eq!(
-                RateEncoder::physical_dt(subnormal),
-                f64::from(subnormal),
-                "{subnormal}: exact widening must be kept"
-            );
+        let cases = [
+            (0.1f32, 0.1f64),
+            (0.004, 0.004),
+            (1e-40, f64::from(1e-40f32)),
+            (1e-45, f64::from(1e-45f32)),
+            (3e-39, f64::from(3e-39f32)),
+        ];
+        for (dt, expected) in cases {
+            assert_eq!(RateEncoder::physical_dt(dt), expected, "dt={dt}");
         }
-        // Whatever branch is taken, the result rounds back to the same f32.
+    }
+
+    /// Whatever branch `physical_dt` takes, the result rounds back to the
+    /// same f32, so `dt_seconds()` and serde are unaffected.
+    #[test]
+    fn test_rate_encoder_physical_dt_round_trips_to_f32() {
         for dt in [0.1f32, 0.3, 1e-7, 1e-40, 123.456] {
             assert_eq!(RateEncoder::physical_dt(dt) as f32, dt);
         }
@@ -1424,7 +1429,8 @@ mod tests {
 
     /// Integer-friendly products must fire on time: 100 Hz at dt = 0.01 is
     /// exactly λΔt = 1.0 in the f64 step increment, so the first step fires
-    /// (the raw f32 product is 0.99999998 and would not).
+    /// with no residual phase (the raw f32 product is 0.99999998, at most 1.0
+    /// for every fixture here, and would not fire on its own).
     #[test]
     fn test_rate_encoder_streaming_integer_rate_dt_fires_on_first_step() {
         for (rate_hz, dt) in [
@@ -1433,18 +1439,12 @@ mod tests {
             (1000.0, 0.001),
             (250.0, 0.004),
         ] {
-            // Fixture sanity: the raw f32 product is at most 1.0 (0.99999998 for
-            // 100 * 0.01), so only the f64 decimal dt can make this fire.
-            assert!(rate_hz * dt <= 1.0, "{rate_hz} * {dt} = {}", rate_hz * dt);
             let mut encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt).unwrap();
+            let fired = encoder.encode_step(&[1.0]).spikes.len();
             assert_eq!(
-                encoder.encode_step(&[1.0]).spikes.len(),
-                1,
-                "{rate_hz} Hz at dt={dt} must fire on the first step"
-            );
-            assert_eq!(
-                encoder.phases[0], 0.0,
-                "no residual phase after an exact hit"
+                (rate_hz * dt <= 1.0, fired, encoder.phases[0]),
+                (true, 1, 0.0),
+                "{rate_hz} Hz at dt={dt}: (f32 product ≤ 1, fired once, no residual)"
             );
         }
     }
@@ -1472,13 +1472,10 @@ mod tests {
         let bernoulli_hz = (1.0 - (-lambda_dt).exp()) / f64::from(dt); // ≈ 39.35 Hz at λΔt = 0.5
         let inverted_hz = -(1.0 - p_hat).ln() / f64::from(dt);
 
+        let under_read = (naive_hz - f64::from(rate_hz)).abs();
         assert!(
-            (naive_hz - bernoulli_hz).abs() < (naive_hz - f64::from(rate_hz)).abs(),
-            "naive count/dt on batch must sit nearer (1-e^-λΔt)/Δt={bernoulli_hz} than λ={rate_hz}; got {naive_hz}"
-        );
-        assert!(
-            (naive_hz - f64::from(rate_hz)).abs() > 8.0,
-            "naive estimate should under-read by ~10 Hz here, got {naive_hz}"
+            (naive_hz - bernoulli_hz).abs() < under_read && under_read > 8.0,
+            "naive count/dt on batch must sit nearer (1-e^-λΔt)/Δt={bernoulli_hz} than λ={rate_hz} (under-reading by ~10 Hz); got {naive_hz}"
         );
         // Binomial std of p̂ at p≈0.39, N=40k is ≈0.0024; ±4σ in Hz is ≈1.6 Hz.
         assert!(
