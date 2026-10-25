@@ -31,12 +31,16 @@ use crate::prelude::*;
 /// ```
 /// The expected count per step is exactly `λΔt`, so the naive estimator is the
 /// right one: `λ̂ = n / (N·Δt)`, accurate to within `1 / (N·Δt)` Hz (one spike
-/// of quantisation over the elapsed window). Whole spikes beyond the per-step
-/// cap of 1024 stay queued and drain on later steps, so the long-run count is
-/// never lost.
+/// of quantisation over the elapsed window). That bound holds while
+/// `λΔt ≤ 1024`: above the per-step cap only 1024 spikes are emitted per step
+/// and the rest accrue as a backlog, so a windowed count under-reads until the
+/// rate drops and the backlog drains. The backlog itself is an exact `u64`
+/// with saturating arithmetic, so the long-run count is lost only if a
+/// sustained extreme rate drives it past `u64::MAX` whole spikes.
 ///
 /// Because the step increment is computed from the shortest round-tripping
-/// decimal of `dt_seconds` in `f64`, integer-friendly products fire on time:
+/// decimal of `dt_seconds` in `f64` (for normal `dt_seconds`; subnormals keep
+/// the exact widening), integer-friendly products fire on time:
 /// `100 Hz` at `dt_seconds = 0.01` accumulates exactly `1.0` and fires on the
 /// first step (the raw `f32` product `0.99999998` would have missed it).
 ///
