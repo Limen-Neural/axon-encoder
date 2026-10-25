@@ -60,7 +60,7 @@ fn test_serde_encoders_and_state() {
     assert_eq!(pred_encoder, deserialized_pred);
 
     // 10. Test TemporalEncoder
-    let temp_encoder = TemporalEncoder::new(6, vec![(0.5, 1)], 2);
+    let temp_encoder = TemporalEncoder::new(6, vec![0.5], 2);
     let serialized_temp = serde_json::to_string(&temp_encoder).unwrap();
     let deserialized_temp: TemporalEncoder = serde_json::from_str(&serialized_temp).unwrap();
     assert_eq!(temp_encoder, deserialized_temp);
@@ -154,7 +154,7 @@ fn test_serde_validation_failures() {
     let invalid_temp_depth_json = r#"{
         "history": [[0.0]],
         "history_depth": 5,
-        "change_thresholds": []
+        "change_thresholds": [0.5]
     }"#;
     let res: Result<TemporalEncoder, _> = serde_json::from_str(invalid_temp_depth_json);
     assert!(res.is_err());

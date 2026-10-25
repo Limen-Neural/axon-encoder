@@ -51,11 +51,15 @@ spike backlog). Restore a **JSON-serializable** checkpoint and keep calling
 spikes and finish in the same state as the original.
 
 That contract covers Delta, Derivative, Temporal, Predictive, Phase,
-`EmbeddingRateEncoder`, and `RateEncoder::encode_step`, provided the live
-floats are finite. JSON cannot represent NaN/Inf (`serde_json` writes
-`null`), and deserialize rejects that payload, so a snapshot taken after
-`DerivativeEncoder` stores a non-finite `last_values` entry is not
-restorable via `serde_json`.
+`EmbeddingRateEncoder`, and `RateEncoder::encode_step`. Live floats are
+always finite: stateful encoders (Delta, Derivative, Temporal, Predictive,
+`BaselineHoldTernaryEncoder`, `EmbeddingRateEncoder`) **skip** a `NaN`/`±inf`
+sample at encode time (nothing stored, no spike, no adaptive state advanced),
+so the next finite sample behaves as if the non-finite step never happened;
+Temporal and Predictive also accumulate their window means in `f64` so huge
+finite samples cannot overflow state to `inf`. JSON cannot represent NaN/Inf
+(`serde_json` writes `null`), and deserialize rejects non-finite state in every
+checkpoint, hand-built or otherwise.
 
 It does **not** cover stochastic paths: `RateEncoder::encode` (batch), and
 both batch and streaming `PopulationEncoder` / `PoissonEncoder`. Those methods
@@ -248,6 +252,34 @@ step_ticks`), since a call can place a spike anywhere in the ongoing cycle.
 Run `cargo run --example spike_timebase` for a worked integration: two encoders,
 two cursors, one merged nanosecond-timed stream.
 
+### Decoder contract
+
+The crate ships **no decoder**; the contract a downstream decoder must honour
+is locked by [`tests/decode_consistency.rs`](tests/decode_consistency.rs),
+with the per-encoder inverse formulas and their collision points in
+[`tests/reference_decoders/`](tests/reference_decoders/). In short:
+
+- `LatencyEncoder`: `x̂ = min + (1 - t/L)·span` with `L = max_latency > 0`
+  (the span is `L + 1` ticks, the denominator is `L`) — strong input is
+  **early**. `max_latency = 0` is valid but non-invertible: every value lands
+  on tick 0. Emission is channel-major, so sort by `timestamp` before any
+  "first spike wins" logic.
+- `PhaseEncoder`: `x̂ = min + ((b + 0.5)/C)·span` — strong input is **late**;
+  the polarity is opposite to Latency, so one decoder does not fit both.
+  Offsets are call-relative inside an overlapping window: convert through a
+  `TimeCursor` before comparing times across calls, and expect the absolute
+  chronology to differ from emission order.
+- `RateEncoder::encode_step`: `λ̂ = count / elapsed`, within one spike over the
+  window while `λΔt ≤ 1024` and no backlog is draining; above the per-step cap
+  the emitted count lags the true rate. (Batch `encode` is Bernoulli; see
+  "Rate encoder time semantics".)
+- `PopulationEncoder`: center of mass over pooled counts. Endpoints are biased
+  inward when neighbouring neurons still respond (tuning width wide enough that
+  their contribution survives the sum); for narrow widths the neighbours'
+  contribution is lost to rounding against the endpoint's `1.0` or underflows
+  outright, and the CoM collapses onto the endpoint exactly (see
+  `tests/reference_decoders/population.rs`).
+
 ## Buffered streaming
 
 `encode` and `encode_step` hand every call's spikes straight to the caller.
@@ -436,7 +468,7 @@ should normalize before calling `encode`, using the former formula
 - **Encoders** for different signal structures:
   - **`RateEncoder`** — spike *rate* tracks input magnitude
   - **`DerivativeEncoder`** — fires on *change* (jumps / drops)
-  - **`TemporalEncoder`** — *patterns* over time
+  - **`TemporalEncoder`** — dual-window *change detector* (recent 3-sample mean vs the 3 before); not a timing code
   - **`PopulationEncoder`** — value distributed across a *population* of units
   - **`DeltaEncoder`** — spike when the signal moves by a threshold
   - **`BaselineHoldTernaryEncoder`** — signed baseline-hold ternary events

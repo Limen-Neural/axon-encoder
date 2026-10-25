@@ -159,8 +159,8 @@ fn temporal_encoder_sink_path_matches_returning_path() {
     let steps: &[&[f32]] = &[low, low, low, high, high, high, low, high];
     assert_paths_agree(
         "TemporalEncoder",
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
         steps,
     );
 }
@@ -682,8 +682,8 @@ fn batch_sink_path_matches_encode_for_deterministic_encoders() {
     );
     assert_batch_paths_agree(
         "TemporalEncoder",
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
         &[low, low, low, high, high, high, low, high],
     );
     assert_batch_paths_agree(
@@ -739,8 +739,8 @@ fn gain_sink_path_matches_returning_path_for_deterministic_encoders() {
     );
     assert_gain_paths_agree(
         "TemporalEncoder",
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
         threshold_gains,
         &[low, low, low, high, high, high, low, high],
     );
@@ -950,8 +950,8 @@ fn every_encoder_overrides_both_modulated_sink_paths_consistently() {
     );
     assert_modulated_paths_agree(
         "TemporalEncoder",
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 3).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 3).expect("valid TemporalEncoder"),
         &modulators,
         &curves,
         &steps,
@@ -1025,8 +1025,8 @@ fn batch_modulated_sink_paths_cover_every_encoder() {
     );
     assert_batch_modulated_paths_agree(
         "TemporalEncoder",
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 3).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 3).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 3).expect("valid TemporalEncoder"),
         &modulators,
         &curves,
         &input,
@@ -1264,8 +1264,8 @@ fn streaming_gain_sink_path_matches_returning_path() {
     );
     assert_step_gain_paths_agree(
         "TemporalEncoder",
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
-        TemporalEncoder::try_new(6, vec![(0.2, 1)], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
+        TemporalEncoder::try_new(6, vec![0.2], 2).expect("valid TemporalEncoder"),
         threshold_gains,
         &[low, low, low, high, high, high, low, high],
     );

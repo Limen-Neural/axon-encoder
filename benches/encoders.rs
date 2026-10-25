@@ -111,7 +111,7 @@ fn bench_temporal_encoder(c: &mut Criterion) {
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut encoder =
-                TemporalEncoder::try_new(6, vec![(0.2, 1)], size).expect("valid TemporalEncoder");
+                TemporalEncoder::try_new(6, vec![0.2], size).expect("valid TemporalEncoder");
             let input = normalized_input(size);
             b.iter(|| black_box(encoder.encode(black_box(&input))));
         });
@@ -124,7 +124,7 @@ fn bench_temporal_encoder_step(c: &mut Criterion) {
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut encoder =
-                TemporalEncoder::try_new(6, vec![(0.2, 1)], size).expect("valid TemporalEncoder");
+                TemporalEncoder::try_new(6, vec![0.2], size).expect("valid TemporalEncoder");
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];
@@ -278,7 +278,7 @@ fn bench_temporal_encoder_step_into(c: &mut Criterion) {
     for size in SCALES {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let mut encoder =
-                TemporalEncoder::try_new(6, vec![(0.2, 1)], size).expect("valid TemporalEncoder");
+                TemporalEncoder::try_new(6, vec![0.2], size).expect("valid TemporalEncoder");
             let low = temporal_level(size, 0.0);
             let high = temporal_level(size, 1.0);
             let sequence = [&low, &low, &low, &high, &high, &high];

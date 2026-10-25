@@ -1307,9 +1307,14 @@ mod tests {
             let encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), dt_f32).unwrap();
             let expected = Timebase::try_from_seconds(dt_f64).unwrap();
             assert_eq!(
-                (encoder.time_model().timebase(), encoder.dt_seconds()),
-                (Some(expected), dt_f32),
-                "dt={dt_f32}: timebase matches the f64 literal; accessor keeps the f32"
+                encoder.time_model().timebase(),
+                Some(expected),
+                "dt={dt_f32}: timebase must match the f64 literal"
+            );
+            assert_eq!(
+                encoder.dt_seconds(),
+                dt_f32,
+                "public accessor keeps the f32"
             );
         }
     }
@@ -1341,15 +1346,11 @@ mod tests {
     #[test]
     fn test_rate_encoder_batch_probability_edges() {
         let encoder = RateEncoder::try_new(0.0, 10.0, (0.0, 1.0), 1.0).unwrap();
-        for (rate, expected) in [
-            (0.0f32, 0.0f32),
-            (-1.0, 0.0),
-            (f32::NAN, 0.0),
-            (1e9, 1.0),
-            (f32::MAX, 1.0),
-        ] {
-            assert_eq!(encoder.batch_probability(rate), expected, "rate={rate}");
-        }
+        assert_eq!(encoder.batch_probability(0.0), 0.0);
+        assert_eq!(encoder.batch_probability(-1.0), 0.0);
+        assert_eq!(encoder.batch_probability(f32::NAN), 0.0);
+        assert_eq!(encoder.batch_probability(1e9), 1.0);
+        assert_eq!(encoder.batch_probability(f32::MAX), 1.0);
     }
 
     /// The decimal correction is guarded: it applies to ordinary durations
@@ -1357,22 +1358,16 @@ mod tests {
     /// shortest round-tripping decimal is tens of percent off the stored bits.
     #[test]
     fn test_rate_encoder_physical_dt_guard() {
-        let cases = [
-            (0.1f32, 0.1f64),
-            (0.004, 0.004),
-            (1e-40, f64::from(1e-40f32)),
-            (1e-45, f64::from(1e-45f32)),
-            (3e-39, f64::from(3e-39f32)),
-        ];
-        for (dt, expected) in cases {
-            assert_eq!(RateEncoder::physical_dt(dt), expected, "dt={dt}");
+        assert_eq!(RateEncoder::physical_dt(0.1), 0.1);
+        assert_eq!(RateEncoder::physical_dt(0.004), 0.004);
+        for subnormal in [1e-40f32, 1e-45, 3e-39] {
+            assert_eq!(
+                RateEncoder::physical_dt(subnormal),
+                f64::from(subnormal),
+                "{subnormal}: exact widening must be kept"
+            );
         }
-    }
-
-    /// Whatever branch `physical_dt` takes, the result rounds back to the
-    /// same f32, so `dt_seconds()` and serde are unaffected.
-    #[test]
-    fn test_rate_encoder_physical_dt_round_trips_to_f32() {
+        // Whatever branch is taken, the result rounds back to the same f32.
         for dt in [0.1f32, 0.3, 1e-7, 1e-40, 123.456] {
             assert_eq!(RateEncoder::physical_dt(dt) as f32, dt);
         }
