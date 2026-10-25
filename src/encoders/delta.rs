@@ -19,7 +19,8 @@ use crate::prelude::*;
 /// and emits no spike, so the next finite sample is compared against the last
 /// *finite* baseline as if the non-finite step never happened. (`NaN` was
 /// already silent because every comparison with it is false; `±inf` used to
-/// fire once and then poison the baseline so every later finite sample fired.)
+/// fire once and be stored as the baseline, so the next finite sample fired
+/// once more before the baseline recovered — a spurious spike pair.)
 /// This is the crate-wide rule for stateful encoders, shared with
 /// [`DerivativeEncoder`], [`TemporalEncoder`], and [`PredictiveEncoder`].
 ///

@@ -306,11 +306,10 @@ mod branch_coverage_tests {
     fn step_via(path: &str, enc: &mut DerivativeEncoder, input: &[f32]) -> Vec<SpikeEvent> {
         let mut sink = Vec::new();
         match path {
-            "encode" => return enc.encode(input).spikes,
-            "encode_step" => return enc.encode_step(input).spikes,
+            "encode" => sink = enc.encode(input).spikes,
+            "encode_step" => sink = enc.encode_step(input).spikes,
             "encode_into" => enc.encode_into(input, &mut sink),
-            "encode_step_into" => enc.encode_step_into(input, &mut sink),
-            other => panic!("unknown path {other}"),
+            _ => enc.encode_step_into(input, &mut sink),
         }
         sink
     }

@@ -319,23 +319,8 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
                 .map_err(serde::de::Error::custom)?;
         }
 
-        for (i, deque) in helper.history.iter().enumerate() {
-            if deque.len() > helper.history_depth {
-                return Err(serde::de::Error::custom(format!(
-                    "history channel {} length ({}) exceeds history_depth ({})",
-                    i,
-                    deque.len(),
-                    helper.history_depth
-                )));
-            }
-            // Mirror DerivativeEncoder/DeltaEncoder: a restored checkpoint must
-            // not re-poison the state the encode-time skip rule keeps finite.
-            if deque.iter().any(|value| !value.is_finite()) {
-                return Err(serde::de::Error::custom(format!(
-                    "history channel {i} must be finite"
-                )));
-            }
-        }
+        validate_restored_history(&helper.history, helper.history_depth)
+            .map_err(serde::de::Error::custom)?;
 
         Ok(Self {
             history: helper.history,
@@ -343,6 +328,29 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
             change_thresholds: helper.change_thresholds,
         })
     }
+}
+
+/// Per-channel checks for a restored checkpoint: history within
+/// `history_depth`, and — mirroring `DerivativeEncoder`/`DeltaEncoder` — no
+/// non-finite entry, so a checkpoint cannot re-poison the state the
+/// encode-time skip rule keeps finite.
+#[cfg(feature = "serde")]
+fn validate_restored_history(
+    history: &[VecDeque<f32>],
+    history_depth: usize,
+) -> Result<(), String> {
+    for (i, deque) in history.iter().enumerate() {
+        if deque.len() > history_depth {
+            return Err(format!(
+                "history channel {i} length ({}) exceeds history_depth ({history_depth})",
+                deque.len()
+            ));
+        }
+        if deque.iter().any(|value| !value.is_finite()) {
+            return Err(format!("history channel {i} must be finite"));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -555,24 +563,44 @@ mod tests {
         assert!(res.is_ok());
     }
     /// A checkpoint carrying NaN/±inf in `history` must not restore: it would
-    /// re-poison the state the encode-time skip rule keeps finite. With
-    /// `serde_json` the non-finite value is written as `null`; formats that can
-    /// carry NaN hit the explicit finiteness check in `Deserialize`.
+    /// re-poison the state the encode-time skip rule keeps finite. JSON cannot
+    /// carry those values (`serde_json` writes `null`, rejected as a type
+    /// error before our check), so this goes through RON, which can, and
+    /// asserts the explicit finiteness guard fires with its own message.
     #[cfg(feature = "serde")]
     #[test]
     fn test_temporal_serde_rejects_non_finite_history() {
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let mut live = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
-            live.history[0].extend([0.0, bad]);
-            let json = serde_json::to_string(&live).expect("serialize");
+        for bad in ["NaN", "inf", "-inf"] {
+            let payload = format!(
+                "(history: [[0.0], [0.0, {bad}]], history_depth: 6, change_thresholds: [(0.5, 1)])"
+            );
+            let err = ron::from_str::<TemporalEncoder>(&payload)
+                .expect_err("non-finite history must not restore");
             assert!(
-                serde_json::from_str::<TemporalEncoder>(&json).is_err(),
-                "{bad}: non-finite history must not restore"
+                err.to_string().contains("history channel 1 must be finite"),
+                "{bad}: unexpected error {err}"
             );
         }
         let finite =
             r#"{"history": [[1e30, -1e30]], "history_depth": 6, "change_thresholds": [[0.5, 1]]}"#;
         assert!(serde_json::from_str::<TemporalEncoder>(finite).is_ok());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_validate_restored_history_reports_each_reason() {
+        let ok = vec![VecDeque::from(vec![1.0f32; 6])];
+        assert!(validate_restored_history(&ok, 6).is_ok());
+        assert!(
+            validate_restored_history(&ok, 5)
+                .unwrap_err()
+                .contains("exceeds")
+        );
+        let poisoned = vec![VecDeque::new(), VecDeque::from(vec![0.0, f32::NAN])];
+        assert_eq!(
+            validate_restored_history(&poisoned, 6),
+            Err("history channel 1 must be finite".to_string())
+        );
     }
 
     #[test]

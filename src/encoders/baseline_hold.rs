@@ -4,7 +4,7 @@ use crate::prelude::*;
 ///
 /// Each channel keeps a baseline that moves **only** when a signed threshold
 /// crossing fires. Each channel seeds independently on its first observed
-/// sample: that sample is copied into the baseline and the channel emits zero.
+/// finite sample: that sample is copied into the baseline and the channel emits zero.
 /// A shorter input seeds only the channels it contains; the tail stays unseeded.
 ///
 /// Crossing rules for an already-seeded channel (inclusive boundaries):

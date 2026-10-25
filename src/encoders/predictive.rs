@@ -301,8 +301,10 @@ impl PredictiveEncoder {
     /// Only called on a channel holding at least that many, so the divisor is
     /// always the number of values actually summed. The sum is accumulated in
     /// f64 so a window of `f32::MAX` samples cannot overflow to `+inf` on the
-    /// way to a mean that is itself representable; for ordinary magnitudes the
-    /// result rounds to the same f32 as the direct f32 sum.
+    /// way to a mean that is itself representable. For ordinary magnitudes the
+    /// result usually rounds to the same f32 as the old direct f32 sum, but it
+    /// can differ by one ULP, which may flip a spike sitting exactly on a
+    /// deviation-threshold boundary relative to pre-0.6 output.
     fn recent_average(history: &VecDeque<f32>) -> f32 {
         let sum: f64 = history
             .iter()
@@ -460,52 +462,19 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
         }
 
         let helper = Helper::deserialize(deserializer)?;
-
-        if helper.history.len() != helper.thresholds.len() {
-            return Err(serde::de::Error::custom(format!(
-                "mismatched history length ({}) and thresholds length ({})",
-                helper.history.len(),
-                helper.thresholds.len()
-            )));
-        }
-
-        // Mirror `new()`: spike channel IDs are u16 (indices 0..=u16::MAX).
-        if helper.history.len() > u16::MAX as usize + 1 {
-            return Err(serde::de::Error::custom(
-                "num_channels exceeds u16::MAX as usize + 1 (max addressable spike channels)",
-            ));
-        }
-
-        if helper.history_depth < 5 {
-            return Err(serde::de::Error::custom("history_depth must be at least 5"));
-        }
-
-        // Match try_new: reject non-finite / negative deviation thresholds on load.
-        for &(threshold, _) in &helper.deviation_thresholds {
-            crate::error::validate_non_negative_finite("deviation_threshold", threshold)
-                .map_err(serde::de::Error::custom)?;
-        }
-
-        for (i, deque) in helper.history.iter().enumerate() {
-            if deque.len() > helper.history_depth {
-                return Err(serde::de::Error::custom(format!(
-                    "history channel {} length ({}) exceeds history_depth ({})",
-                    i,
-                    deque.len(),
-                    helper.history_depth
-                )));
-            }
-            // Mirror DerivativeEncoder/DeltaEncoder: a restored checkpoint must
-            // not re-poison the state the encode-time skip rule keeps finite.
-            if deque.iter().any(|value| !value.is_finite()) {
-                return Err(serde::de::Error::custom(format!(
-                    "history channel {i} must be finite"
-                )));
-            }
-        }
-        if helper.thresholds.iter().any(|value| !value.is_finite()) {
-            return Err(serde::de::Error::custom("thresholds must be finite"));
-        }
+        validate_restored_shape(
+            helper.history.len(),
+            helper.thresholds.len(),
+            helper.history_depth,
+        )
+        .map_err(serde::de::Error::custom)?;
+        validate_restored_values(
+            &helper.history,
+            &helper.thresholds,
+            helper.history_depth,
+            &helper.deviation_thresholds,
+        )
+        .map_err(serde::de::Error::custom)?;
 
         Ok(Self {
             history: helper.history,
@@ -514,6 +483,64 @@ impl<'de> serde::Deserialize<'de> for PredictiveEncoder {
             deviation_thresholds: helper.deviation_thresholds,
         })
     }
+}
+
+/// Shape checks for a restored checkpoint: channel-count agreement, the u16
+/// channel-ID ceiling, and the minimum `history_depth` (all mirror `new()`).
+#[cfg(feature = "serde")]
+fn validate_restored_shape(
+    history_len: usize,
+    thresholds_len: usize,
+    history_depth: usize,
+) -> Result<(), String> {
+    if history_len != thresholds_len {
+        return Err(format!(
+            "mismatched history length ({history_len}) and thresholds length ({thresholds_len})"
+        ));
+    }
+    // Mirror `new()`: spike channel IDs are u16 (indices 0..=u16::MAX).
+    if history_len > u16::MAX as usize + 1 {
+        return Err(
+            "num_channels exceeds u16::MAX as usize + 1 (max addressable spike channels)".into(),
+        );
+    }
+    if history_depth < PredictiveEncoder::WARMUP_SAMPLES {
+        return Err("history_depth must be at least 5".into());
+    }
+    Ok(())
+}
+
+/// Value checks for a restored checkpoint: finite non-negative deviation
+/// thresholds (as `try_new`), per-channel history within `history_depth`, and
+/// — mirroring `DerivativeEncoder`/`DeltaEncoder` — no non-finite history or
+/// EWMA entry, so a checkpoint cannot re-poison the state the encode-time skip
+/// rule keeps finite.
+#[cfg(feature = "serde")]
+fn validate_restored_values(
+    history: &[VecDeque<f32>],
+    thresholds: &[f32],
+    history_depth: usize,
+    deviation_thresholds: &[(f32, u16)],
+) -> Result<(), String> {
+    for &(threshold, _) in deviation_thresholds {
+        crate::error::validate_non_negative_finite("deviation_threshold", threshold)
+            .map_err(|error| error.to_string())?;
+    }
+    for (i, deque) in history.iter().enumerate() {
+        if deque.len() > history_depth {
+            return Err(format!(
+                "history channel {i} length ({}) exceeds history_depth ({history_depth})",
+                deque.len()
+            ));
+        }
+        if deque.iter().any(|value| !value.is_finite()) {
+            return Err(format!("history channel {i} must be finite"));
+        }
+    }
+    if thresholds.iter().any(|value| !value.is_finite()) {
+        return Err("thresholds must be finite".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -720,6 +747,37 @@ mod tests {
             assert_eq!(live_out.spikes, fresh_out.spikes, "{bad}: finite recovery");
             assert_eq!(live_out.spikes.len(), 2);
             assert_eq!(live.thresholds, fresh.thresholds);
+        }
+    }
+
+    /// Defensive branch in `advance_channel`: if the EWMA update ever came out
+    /// non-finite, the step is a skip — sample dropped, prediction untouched,
+    /// evicted sample restored. Public paths filter non-finite input before
+    /// this point and f64 means cannot overflow from finite f32 input, so the
+    /// branch is driven directly with a non-finite sample.
+    #[test]
+    fn test_predictive_encoder_non_finite_ewma_result_is_a_skip() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            // Full window: the push would evict the oldest sample.
+            let mut enc = PredictiveEncoder::new(5, vec![(0.5, 1)], 1).expect("valid");
+            for v in [1.0, 2.0, 3.0, 4.0, 5.0] {
+                let _ = enc.encode_step(&[v]);
+            }
+            let before = enc.clone();
+            enc.advance_channel(0, bad);
+            assert_eq!(
+                enc, before,
+                "{bad}: evicted sample restored, prediction untouched"
+            );
+
+            // Partially filled window (no eviction) takes the other branch.
+            let mut enc = PredictiveEncoder::new(8, vec![(0.5, 1)], 1).expect("valid");
+            for v in [1.0, 2.0, 3.0, 4.0, 5.0] {
+                let _ = enc.encode_step(&[v]);
+            }
+            let before = enc.clone();
+            enc.advance_channel(0, bad);
+            assert_eq!(enc, before, "{bad}: sample dropped, prediction untouched");
         }
     }
 
@@ -939,6 +997,58 @@ mod tests {
         }
         let finite = r#"{"history": [[1e30]], "thresholds": [-1e30], "history_depth": 5, "deviation_thresholds": [[0.5, 1]]}"#;
         assert!(serde_json::from_str::<PredictiveEncoder>(finite).is_ok());
+    }
+
+    /// The explicit finiteness checks (which serde_json's `null` mapping
+    /// bypasses with a type error) each report their own reason.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_validate_restored_values_reports_each_reason() {
+        let ok_hist = vec![VecDeque::from(vec![1.0f32; 5])];
+        let nan_hist = vec![VecDeque::from(vec![1.0f32, f32::NAN])];
+        let inf_hist = vec![VecDeque::from(vec![f32::INFINITY])];
+        let dev = [(0.5f32, 1u16)];
+
+        assert!(validate_restored_values(&ok_hist, &[1.0], 5, &dev).is_ok());
+        assert_eq!(
+            validate_restored_values(&nan_hist, &[1.0], 5, &dev),
+            Err("history channel 0 must be finite".to_string())
+        );
+        assert_eq!(
+            validate_restored_values(&inf_hist, &[1.0], 5, &dev),
+            Err("history channel 0 must be finite".to_string())
+        );
+        assert_eq!(
+            validate_restored_values(&ok_hist, &[f32::NAN], 5, &dev),
+            Err("thresholds must be finite".to_string())
+        );
+        assert_eq!(
+            validate_restored_values(&ok_hist, &[f32::NEG_INFINITY], 5, &dev),
+            Err("thresholds must be finite".to_string())
+        );
+        assert!(validate_restored_values(&ok_hist, &[1.0], 4, &dev).is_err());
+        assert!(validate_restored_values(&ok_hist, &[1.0], 5, &[(-1.0, 1)]).is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_predictive_validate_restored_shape_reports_each_reason() {
+        assert!(validate_restored_shape(1, 1, 5).is_ok());
+        assert!(
+            validate_restored_shape(1, 2, 5)
+                .unwrap_err()
+                .contains("mismatched")
+        );
+        assert!(
+            validate_restored_shape(u16::MAX as usize + 2, u16::MAX as usize + 2, 5)
+                .unwrap_err()
+                .contains("u16::MAX")
+        );
+        assert!(
+            validate_restored_shape(1, 1, 4)
+                .unwrap_err()
+                .contains("at least 5")
+        );
     }
 
     #[cfg(feature = "serde")]
