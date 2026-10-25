@@ -66,6 +66,18 @@ struct Subject {
     /// A non-finite sample is a no-op on state (LIM-1332 skip rule). `Phase`
     /// advances its oscillation on every call regardless, by design.
     skips_non_finite: bool,
+    seeded_batch: Option<SeededBatch>,
+}
+
+impl Subject {
+    /// Batch spikes for `input`: the replayable seeded path where the encoder
+    /// is stochastic, otherwise `encode` on the live instance.
+    fn batch(&self, encoder: &mut dyn Encoder, input: &[f32], rng: &mut StdRng) -> Vec<SpikeEvent> {
+        match self.seeded_batch {
+            Some(seeded) => seeded(input, rng),
+            None => encoder.encode(input).spikes,
+        }
+    }
 }
 
 fn fixed_width(len: usize) -> usize {
@@ -84,22 +96,46 @@ struct Traits {
     channel_cap: fn(usize) -> usize,
     deterministic: bool,
     skips_non_finite: bool,
+    /// Replayable batch path for stochastic encoders: a fresh instance driven
+    /// through `encode_with_rng` with the trial's seeded `StdRng`, so a
+    /// spike-dependent failure reproduces from the trial index (the crate's
+    /// own reproducibility invariant). `None` means `Encoder::encode`.
+    seeded_batch: Option<SeededBatch>,
+}
+
+type SeededBatch = fn(&[f32], &mut StdRng) -> Vec<SpikeEvent>;
+
+fn rate_seeded(input: &[f32], rng: &mut StdRng) -> Vec<SpikeEvent> {
+    RateEncoder::try_new(5.0, 400.0, RANGE, 0.002)
+        .unwrap()
+        .encode_with_rng(input, rng)
+        .spikes
+}
+
+fn population_seeded(input: &[f32], rng: &mut StdRng) -> Vec<SpikeEvent> {
+    PopulationEncoder::try_new(CHANNELS, RANGE, 0.2)
+        .unwrap()
+        .encode_with_rng(input, rng)
+        .spikes
 }
 
 const STATELESS: Traits = Traits {
     channel_cap: input_width,
     deterministic: true,
     skips_non_finite: true,
+    seeded_batch: None,
 };
 const STOCHASTIC: Traits = Traits {
     channel_cap: input_width,
     deterministic: false,
     skips_non_finite: true,
+    seeded_batch: Some(rate_seeded),
 };
 const FIXED_WIDTH: Traits = Traits {
     channel_cap: fixed_width,
     deterministic: true,
     skips_non_finite: true,
+    seeded_batch: None,
 };
 
 /// Every public encoder, grouped by family.
@@ -131,6 +167,7 @@ fn timing_and_rate_subjects() -> Vec<Subject> {
             Some(population_m),
             Traits {
                 channel_cap: population_width,
+                seeded_batch: Some(population_seeded),
                 ..STOCHASTIC
             },
         ),
@@ -177,6 +214,7 @@ impl Subject {
             channel_cap: traits.channel_cap,
             deterministic: traits.deterministic,
             skips_non_finite: traits.skips_non_finite,
+            seeded_batch: traits.seeded_batch,
         }
     }
 }
@@ -358,12 +396,12 @@ fn every_call_conforms_to_the_time_contract_under_adversarial_input() {
                 sample_input(&mut rng, len, false)
             };
             let label = ctx("time", subject.label, trial, &input);
-            let out = if trial % 2 == 0 {
-                encoder.encode(&input)
+            let spikes = if trial % 2 == 0 {
+                subject.batch(encoder.as_mut(), &input, &mut rng)
             } else {
-                encoder.encode_step(&input)
+                encoder.encode_step(&input).spikes
             };
-            assert_call_conforms(&label, model, &out.spikes);
+            assert_call_conforms(&label, model, &spikes);
             assert_eq!(encoder.time_model(), model, "{label}: model drifted");
         }
     }
@@ -388,20 +426,40 @@ fn rate_batch_and_streaming_respect_their_caps() {
             trial,
             &input,
         );
-
-        // Non-finite samples are silent, so the bound is the finite count.
-        let finite = input.iter().filter(|v| v.is_finite()).count();
-        let batch = encoder.encode(&input).spikes;
-        assert!(
-            batch.len() <= finite,
-            "{label}: batch emitted {} > {finite} finite channels",
-            batch.len()
-        );
+        // Batch draws come from the trial's seeded RNG so a failure replays.
+        let batch = encoder.encode_with_rng(&input, &mut rng).spikes;
         let streamed = encoder.encode_step(&input).spikes;
+        assert_per_channel_caps(&label, &input, &batch, &streamed);
+    }
+}
+
+/// Batch: at most one spike per channel, and only on finite channels.
+/// Streaming: at most 1024 spikes per channel, and only on finite channels.
+fn assert_per_channel_caps(
+    label: &str,
+    input: &[f32],
+    batch: &[SpikeEvent],
+    streamed: &[SpikeEvent],
+) {
+    let is_finite = |spike: &SpikeEvent| input[usize::from(spike.channel)].is_finite();
+    for spikes in [batch, streamed] {
         assert!(
-            streamed.len() <= STREAM_CAP * finite,
-            "{label}: streaming emitted {} > 1024 × {finite}",
-            streamed.len()
+            spikes.iter().all(is_finite),
+            "{label}: a non-finite channel emitted a spike"
+        );
+    }
+    for (name, spikes, cap) in [
+        ("batch", batch, 1usize),
+        ("streaming", streamed, STREAM_CAP),
+    ] {
+        let mut per_channel = vec![0usize; input.len()];
+        for spike in spikes {
+            per_channel[usize::from(spike.channel)] += 1;
+        }
+        let worst = per_channel.iter().copied().max().unwrap_or(0);
+        assert!(
+            worst <= cap,
+            "{label}: {name} emitted {worst} spikes on one channel, cap {cap}"
         );
     }
 }
@@ -441,25 +499,29 @@ fn excess_channels_never_emit_past_the_cap_and_short_slices_do_not_panic() {
             let len = sample_len(&mut rng);
             let input = sample_input(&mut rng, len, false);
             let label = ctx("dims", subject.label, trial, &input);
-            assert_all_paths_under_cap(
-                encoder.as_mut(),
-                &input,
-                (subject.channel_cap)(len),
-                &label,
-            );
+            let outputs = all_paths(&subject, encoder.as_mut(), &input, &mut rng);
+            assert_channels_under_cap(&outputs, (subject.channel_cap)(len), &label);
         }
     }
 }
 
-/// Runs all four public paths on `input` and checks every emitted channel
-/// against `cap`.
-fn assert_all_paths_under_cap(encoder: &mut dyn Encoder, input: &[f32], cap: usize, label: &str) {
-    let outputs = [
-        encoder.encode(input).spikes,
+/// Runs all four public paths on `input` (the batch path through the
+/// replayable seeded entry point where the encoder is stochastic).
+fn all_paths(
+    subject: &Subject,
+    encoder: &mut dyn Encoder,
+    input: &[f32],
+    rng: &mut StdRng,
+) -> [Vec<SpikeEvent>; 4] {
+    [
+        subject.batch(encoder, input, rng),
         encoder.encode_step(input).spikes,
         collect_into(encoder, input, false),
         collect_into(encoder, input, true),
-    ];
+    ]
+}
+
+fn assert_channels_under_cap(outputs: &[Vec<SpikeEvent>], cap: usize, label: &str) {
     for spike in outputs.iter().flatten() {
         assert!(
             usize::from(spike.channel) < cap,
