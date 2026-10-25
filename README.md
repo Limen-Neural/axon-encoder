@@ -427,7 +427,7 @@ should normalize before calling `encode`, using the former formula
 - **Encoders** for different signal structures:
   - **`RateEncoder`** — spike *rate* tracks input magnitude
   - **`DerivativeEncoder`** — fires on *change* (jumps / drops)
-  - **`TemporalEncoder`** — *patterns* over time
+  - **`TemporalEncoder`** — dual-window *change detector* (recent 3-sample mean vs the 3 before); not a timing code
   - **`PopulationEncoder`** — value distributed across a *population* of units
   - **`DeltaEncoder`** — spike when the signal moves by a threshold
   - **`BaselineHoldTernaryEncoder`** — signed baseline-hold ternary events

@@ -137,7 +137,7 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
         "population" => population_case(stim, rng),
         // Deterministic threshold crossings over a rolling window.
         "temporal" => {
-            let mut enc = TemporalEncoder::new(8, vec![(0.05, 1), (0.15, 2), (0.30, 3)], CHANNELS);
+            let mut enc = TemporalEncoder::new(8, vec![0.05, 0.15, 0.30], CHANNELS);
             let (events, n_steps) = drive(&mut enc, stim);
             Case {
                 events,

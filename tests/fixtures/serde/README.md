@@ -43,6 +43,8 @@ reader/writer, not a promise that future incompatible versions must load.
 | `head/timebase_named.json` | HEAD | HEAD writer emits `{"tick_nanos":1000000}`; `v0.5/timebase.json`'s bare `1000000` still loads. |
 | `v0.5/timebase.json` | HEAD | Loads as legacy bare-u64 nanoseconds; HEAD writer output is locked by `head/timebase_named.json`, not this fixture. |
 | `head/spike_event_extra.json`, `head/poisson_extra.json` | HEAD | Unknown fields accepted and discarded, not rejected. |
+| `v0.5/temporal.json` | HEAD | Loads; `change_thresholds` pairs `[[0.5,1],[1.5,3]]` become `[0.5,1.5]` (the never-read `spike_value` label is dropped). HEAD writer output is locked by `head/temporal_plain.json`, not this fixture. |
+| `head/temporal_plain.json` | HEAD | HEAD writer emits `change_thresholds` as plain floats. |
 | `head/encoding_gains_empty.json` | HEAD | `{}` defaults to identity. |
 | `head/encoding_gains_unsanitized.json` | HEAD | Negative threshold becomes 0, sensitivity caps at 10,000, missing rate becomes 1, explicit zero latency stays zero. |
 | `head/neuromodulators_empty.json` | HEAD | Reject missing required fields; Rust `Default` does not imply serde defaults. |

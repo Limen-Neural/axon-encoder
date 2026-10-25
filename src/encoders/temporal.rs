@@ -1,21 +1,39 @@
 use crate::prelude::*;
 use std::collections::VecDeque;
 
-/// Encodes temporal patterns by tracking history of values per channel.
+/// Dual-window change detector over a per-channel sample history.
 ///
-/// Fires a spike when the rate of change exceeds configurable thresholds.
-/// Useful for detecting sudden changes or motion in sensor signals.
+/// Despite the name, this is **not** a temporal / time-to-first-spike code:
+/// every spike lands at [`TickOffset::ZERO`](crate::time::TickOffset::ZERO)
+/// with `polarity: true`, and the only information carried is *whether* the
+/// recent mean moved away from the older mean on this step. For codes that put
+/// information into spike *timing* use [`LatencyEncoder`] or [`PhaseEncoder`].
 ///
 /// # Mathematical Model
 ///
-/// Computes the difference between recent average (last 3 values) and older average
-/// (previous 3 values before that). A spike is generated when this change exceeds
-/// the threshold:
+/// Each channel keeps the newest [`Self::WINDOW`] (= 6) finite samples. Once
+/// six are held, the step compares the mean of the newest three against the
+/// mean of the three before them and fires when the absolute difference clears
+/// a threshold:
 ///
 /// ```text
 /// change = |mean(history[-3:]) - mean(history[-6:-3])|
-/// spike if change > threshold
+/// spike if change > threshold          (one spike per channel per step)
 /// ```
+///
+/// `change_thresholds` is scanned from the largest configured value down and
+/// the first one the change clears fires; since every band produces the same
+/// spike, this is equivalent to `change > min(change_thresholds)`. Multiple
+/// bands are accepted for configuration compatibility only.
+///
+/// # `history_depth` is buffer-only
+///
+/// `history_depth` sets how many finite samples each channel *retains*; it
+/// must be at least [`Self::WINDOW`]. The detector always reads the newest six,
+/// so `history_depth = 6` and `history_depth = 32` emit identical spikes on
+/// identical input (locked by a test). The extra retention only affects what a
+/// serde checkpoint carries. A configurable window is a possible future
+/// extension; it is not implied by a larger depth today.
 ///
 /// # Non-finite input
 ///
@@ -30,18 +48,33 @@ use std::collections::VecDeque;
 ///
 /// [`DerivativeEncoder`]: crate::encoders::DerivativeEncoder
 /// [`PredictiveEncoder`]: crate::encoders::PredictiveEncoder
+/// [`LatencyEncoder`]: crate::encoders::LatencyEncoder
+/// [`PhaseEncoder`]: crate::encoders::PhaseEncoder
 ///
 /// # When to Use
 ///
-/// - Detecting sudden changes in signal (edge detection)
+/// - Detecting sudden changes in signal (edge detection) with some smoothing
+///   over the 3+3 window, where [`DeltaEncoder`] would react to every sample
 /// - Motion detection in video or sensor streams
 /// - Event-based encoding where changes are more important than absolute values
 ///
+/// [`DeltaEncoder`]: crate::encoders::DeltaEncoder
+///
 /// # Parameters
 ///
-/// - `history_depth`: How many past values to track per channel
-/// - `change_thresholds`: Vec of (threshold, spike_value) pairs - fires when change exceeds threshold
-/// - `num_channels`: Number of input channels
+/// - `history_depth`: finite samples retained per channel (`>= 6`, buffer-only)
+/// - `change_thresholds`: finite non-negative change magnitudes; the channel
+///   fires when the change exceeds the smallest of them
+/// - `num_channels`: number of input channels
+///
+/// # Migration (0.7)
+///
+/// Before 0.7 `change_thresholds` was `Vec<(f32, u16)>`, documented as
+/// `(threshold, spike_value)`. The `u16` was never read: it did not set
+/// polarity, channel, or anything else. It is removed; pass `vec![0.5]` where
+/// you passed `vec![0.5]`. Checkpoints written with the pair form still
+/// deserialize (the labels are dropped); new checkpoints write plain floats.
+/// `PredictiveEncoder` keeps its pair form for now.
 ///
 /// # Examples
 ///
@@ -49,10 +82,13 @@ use std::collections::VecDeque;
 /// use axon_encoder::prelude::*;
 /// # fn main() -> Result<(), EncoderError> {
 /// // history_depth must be at least 6 for the dual-window change detector.
-/// let mut enc = TemporalEncoder::try_new(6, vec![(0.5, 1)], 1)?;
+/// let mut enc = TemporalEncoder::try_new(6, vec![0.5], 1)?;
+/// let mut fired = Vec::new();
 /// for v in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0] {
-///     let _ = enc.encode_step(&[v]);
+///     fired.push(enc.encode_step(&[v]).spikes.len());
 /// }
+/// // Six quiet samples fill the window; the jump then moves the recent mean.
+/// assert_eq!(fired, [0, 0, 0, 0, 0, 0, 1]);
 /// # Ok(())
 /// # }
 /// ```
@@ -61,10 +97,16 @@ use std::collections::VecDeque;
 pub struct TemporalEncoder {
     history: Vec<VecDeque<f32>>,
     history_depth: usize,
-    change_thresholds: Vec<(f32, u16)>,
+    change_thresholds: Vec<f32>,
 }
 
 impl TemporalEncoder {
+    /// Samples the detector reads: three recent plus three older.
+    ///
+    /// `history_depth` must be at least this; anything beyond it is retained
+    /// but never read.
+    pub const WINDOW: usize = 6;
+
     /// Creates a new `TemporalEncoder`, panicking if configuration is invalid.
     ///
     /// Prefer [`try_new`](Self::try_new) for typed validation errors.
@@ -72,11 +114,7 @@ impl TemporalEncoder {
     /// # Panics
     ///
     /// Panics if `history_depth < 6` or `num_channels` is unsupported.
-    pub fn new(
-        history_depth: usize,
-        change_thresholds: Vec<(f32, u16)>,
-        num_channels: usize,
-    ) -> Self {
+    pub fn new(history_depth: usize, change_thresholds: Vec<f32>, num_channels: usize) -> Self {
         Self::try_new(history_depth, change_thresholds, num_channels)
             .expect("invalid TemporalEncoder configuration")
     }
@@ -86,13 +124,15 @@ impl TemporalEncoder {
     /// Each threshold in `change_thresholds` must be finite and non-negative.
     pub fn try_new(
         history_depth: usize,
-        change_thresholds: Vec<(f32, u16)>,
+        change_thresholds: Vec<f32>,
         num_channels: usize,
     ) -> Result<Self, EncoderError> {
-        if history_depth < 6 {
-            return Err(EncoderError::HistoryDepthTooSmall { minimum: 6 });
+        if history_depth < Self::WINDOW {
+            return Err(EncoderError::HistoryDepthTooSmall {
+                minimum: Self::WINDOW,
+            });
         }
-        for &(threshold, _) in &change_thresholds {
+        for &threshold in &change_thresholds {
             crate::error::validate_non_negative_finite("change_threshold", threshold)?;
         }
         crate::error::validate_channel_count(num_channels)?;
@@ -129,9 +169,8 @@ impl TemporalEncoder {
                 continue;
             };
 
-            for &(threshold, _spike_val) in self.change_thresholds.iter().rev() {
+            for &threshold in self.change_thresholds.iter().rev() {
                 if change > (threshold * threshold_scale).max(0.0) {
-                    // Or use spike_val to determine polarity/strength.
                     sink.push(SpikeEvent::at_step_start(channel, true));
                     break; // Only fire one spike per channel per step
                 }
@@ -139,8 +178,9 @@ impl TemporalEncoder {
         }
     }
 
-    /// Pushes a finite sample into the channel's window and returns the
-    /// dual-window change, or `None` while fewer than six samples are held.
+    /// Pushes a finite sample into the channel's buffer and returns the
+    /// dual-window change over the newest [`Self::WINDOW`] samples, or `None`
+    /// while fewer than that are held.
     fn push_and_measure_change(&mut self, channel_idx: usize, value: f32) -> Option<f32> {
         let channel_history = &mut self.history[channel_idx];
         if channel_history.len() == self.history_depth {
@@ -148,7 +188,7 @@ impl TemporalEncoder {
         }
         channel_history.push_back(value);
 
-        if channel_history.len() < 6 {
+        if channel_history.len() < Self::WINDOW {
             return None;
         }
 
@@ -296,25 +336,49 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
     {
         use std::collections::VecDeque;
 
+        /// Pre-0.7 checkpoints wrote `(threshold, spike_value)` pairs; the
+        /// label was never read, so it is dropped on load.
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Threshold {
+            Plain(f32),
+            Legacy(f32, #[allow(dead_code)] u16),
+        }
+
+        impl From<Threshold> for f32 {
+            fn from(value: Threshold) -> f32 {
+                match value {
+                    Threshold::Plain(threshold) | Threshold::Legacy(threshold, _) => threshold,
+                }
+            }
+        }
+
         #[derive(serde::Deserialize)]
         struct Helper {
             history: Vec<VecDeque<f32>>,
             history_depth: usize,
-            change_thresholds: Vec<(f32, u16)>,
+            change_thresholds: Vec<Threshold>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
+        let change_thresholds: Vec<f32> = helper
+            .change_thresholds
+            .into_iter()
+            .map(f32::from)
+            .collect();
 
-        if helper.history_depth < 6 {
+        if helper.history_depth < Self::WINDOW {
             return Err(serde::de::Error::custom(
-                EncoderError::HistoryDepthTooSmall { minimum: 6 },
+                EncoderError::HistoryDepthTooSmall {
+                    minimum: Self::WINDOW,
+                },
             ));
         }
         crate::error::validate_channel_count(helper.history.len())
             .map_err(serde::de::Error::custom)?;
 
         // Match try_new: reject non-finite / negative thresholds on load.
-        for &(threshold, _) in &helper.change_thresholds {
+        for &threshold in &change_thresholds {
             crate::error::validate_non_negative_finite("change_threshold", threshold)
                 .map_err(serde::de::Error::custom)?;
         }
@@ -325,7 +389,7 @@ impl<'de> serde::Deserialize<'de> for TemporalEncoder {
         Ok(Self {
             history: helper.history,
             history_depth: helper.history_depth,
-            change_thresholds: helper.change_thresholds,
+            change_thresholds,
         })
     }
 }
@@ -360,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_temporal_encoder() {
-        let mut encoder = TemporalEncoder::new(6, vec![(2.0, 1), (5.0, 2)], 1);
+        let mut encoder = TemporalEncoder::new(6, vec![2.0, 5.0], 1);
         let _output = encoder.encode(&[1.0]);
         let _output = encoder.encode(&[1.0]);
         let _output = encoder.encode(&[1.0]);
@@ -372,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_temporal_encoder_modulators_reduce_threshold() {
-        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 1);
+        let mut encoder = TemporalEncoder::new(6, vec![4.5], 1);
         let modulators = NeuroModulators {
             tempo: 1.0,
             ..Default::default()
@@ -407,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_temporal_encoder_encode_with_modulators() {
-        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 1);
+        let mut encoder = TemporalEncoder::new(6, vec![4.5], 1);
         let modulators = NeuroModulators {
             tempo: 1.0,
             ..Default::default()
@@ -435,8 +499,8 @@ mod tests {
     #[test]
     fn test_temporal_encoder_skips_non_finite_without_poisoning_history() {
         for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let mut live = TemporalEncoder::new(6, vec![(0.5, 1)], 2);
-            let mut fresh = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
+            let mut live = TemporalEncoder::new(6, vec![0.5], 2);
+            let mut fresh = TemporalEncoder::new(6, vec![0.5], 1);
 
             for _ in 0..3 {
                 assert!(live.encode_step(&[0.0, 0.0]).spikes.is_empty());
@@ -475,7 +539,7 @@ mod tests {
     /// flat `f32::MAX` signal stays silent and the checkpoint round-trips.
     #[test]
     fn test_temporal_encoder_f32_max_inputs_keep_means_finite() {
-        let mut enc = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
+        let mut enc = TemporalEncoder::new(6, vec![0.5], 1);
         for step in 0..8 {
             let out = enc.encode_step(&[f32::MAX]);
             assert!(
@@ -495,7 +559,7 @@ mod tests {
     #[test]
     fn test_temporal_encoder_skip_rule_holds_on_every_public_path() {
         let run = |f: &mut dyn FnMut(&mut TemporalEncoder, &[f32]) -> Vec<SpikeEvent>| {
-            let mut enc = TemporalEncoder::new(6, vec![(0.5, 1)], 1);
+            let mut enc = TemporalEncoder::new(6, vec![0.5], 1);
             for _ in 0..3 {
                 assert!(f(&mut enc, &[0.0]).is_empty());
             }
@@ -523,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_temporal_encoder_step_longer_input() {
-        let mut encoder = TemporalEncoder::new(6, vec![(4.5, 1)], 2);
+        let mut encoder = TemporalEncoder::new(6, vec![4.5], 2);
         let output = encoder.encode_step(&[1.0, 2.0, 3.0]);
         assert!(output.spikes.len() <= 2);
     }
@@ -546,7 +610,7 @@ mod tests {
         let negative = r#"{
             "history": [[]],
             "history_depth": 6,
-            "change_thresholds": [[-0.5, 1]]
+            "change_thresholds": [-0.5]
         }"#;
         let res: Result<TemporalEncoder, _> = serde_json::from_str(negative);
         assert!(
@@ -557,7 +621,7 @@ mod tests {
         let ok = r#"{
             "history": [[]],
             "history_depth": 6,
-            "change_thresholds": [[0.0, 1], [1.5, 2]]
+            "change_thresholds": [0.0, 1.5]
         }"#;
         let res: Result<TemporalEncoder, _> = serde_json::from_str(ok);
         assert!(res.is_ok());
@@ -572,7 +636,7 @@ mod tests {
     fn test_temporal_serde_rejects_non_finite_history() {
         for bad in ["NaN", "inf", "-inf"] {
             let payload = format!(
-                "(history: [[0.0], [0.0, {bad}]], history_depth: 6, change_thresholds: [(0.5, 1)])"
+                "(history: [[0.0], [0.0, {bad}]], history_depth: 6, change_thresholds: [0.5])"
             );
             let err = ron::from_str::<TemporalEncoder>(&payload)
                 .expect_err("non-finite history must not restore");
@@ -582,7 +646,7 @@ mod tests {
             );
         }
         let finite =
-            r#"{"history": [[1e30, -1e30]], "history_depth": 6, "change_thresholds": [[0.5, 1]]}"#;
+            r#"{"history": [[1e30, -1e30]], "history_depth": 6, "change_thresholds": [0.5]}"#;
         assert!(serde_json::from_str::<TemporalEncoder>(finite).is_ok());
     }
 
@@ -603,28 +667,87 @@ mod tests {
         );
     }
 
+    /// `history_depth` is buffer-only: depth 6 and depth 32 emit identical
+    /// spikes on identical input, because the detector reads the newest
+    /// [`TemporalEncoder::WINDOW`] samples regardless of retention.
+    #[test]
+    fn test_temporal_encoder_history_depth_beyond_window_is_buffer_only() {
+        let signal: Vec<f32> = (0..40)
+            .map(|i| match i % 10 {
+                0..=4 => 0.0,
+                _ => 3.0,
+            })
+            .collect();
+        let mut shallow = TemporalEncoder::new(TemporalEncoder::WINDOW, vec![0.5], 1);
+        let mut deep = TemporalEncoder::new(32, vec![0.5], 1);
+        let shallow_out: Vec<_> = signal
+            .iter()
+            .map(|&v| shallow.encode_step(&[v]).spikes)
+            .collect();
+        let deep_out: Vec<_> = signal
+            .iter()
+            .map(|&v| deep.encode_step(&[v]).spikes)
+            .collect();
+        assert_eq!(shallow_out, deep_out, "depth must not change the algorithm");
+        assert!(
+            shallow_out.iter().any(|s| !s.is_empty()),
+            "fixture must fire"
+        );
+        assert_eq!((shallow.history[0].len(), deep.history[0].len()), (6, 32));
+    }
+
+    /// Several thresholds behave as the smallest one: every band emits the
+    /// same spike, so the extra bands change nothing.
+    #[test]
+    fn test_temporal_encoder_multiple_thresholds_equal_the_smallest() {
+        let drive = |thresholds: Vec<f32>| {
+            let mut enc = TemporalEncoder::new(6, thresholds, 1);
+            [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                .iter()
+                .map(|&v| enc.encode_step(&[v]).spikes.len())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(drive(vec![0.5, 2.0, 5.0]), drive(vec![0.5]));
+    }
+
+    /// Pre-0.7 checkpoints wrote `(threshold, spike_value)` pairs; they still
+    /// load with the label dropped, and HEAD writes plain floats.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_temporal_serde_accepts_legacy_threshold_pairs() {
+        let legacy =
+            r#"{"history": [[]], "history_depth": 6, "change_thresholds": [[0.5, 1], [1.5, 3]]}"#;
+        let restored: TemporalEncoder = serde_json::from_str(legacy).expect("legacy pairs load");
+        assert_eq!(restored, TemporalEncoder::new(6, vec![0.5, 1.5], 1));
+        let written = serde_json::to_string(&restored).expect("serialize");
+        assert!(
+            written.contains(r#""change_thresholds":[0.5,1.5]"#),
+            "{written}"
+        );
+    }
+
     #[test]
     fn test_temporal_encoder_try_new_validation() {
         assert_eq!(
-            TemporalEncoder::try_new(5, vec![(1.0, 1)], 1).err(),
+            TemporalEncoder::try_new(5, vec![1.0], 1).err(),
             Some(EncoderError::HistoryDepthTooSmall { minimum: 6 })
         );
         assert_eq!(
-            TemporalEncoder::try_new(6, vec![(1.0, 1)], u16::MAX as usize + 2).err(),
+            TemporalEncoder::try_new(6, vec![1.0], u16::MAX as usize + 2).err(),
             Some(EncoderError::NumChannelsTooLarge)
         );
         assert_eq!(
-            TemporalEncoder::try_new(6, vec![(f32::NAN, 1)], 1).err(),
+            TemporalEncoder::try_new(6, vec![f32::NAN], 1).err(),
             Some(EncoderError::NonNegativeFinite {
                 parameter: "change_threshold"
             })
         );
         assert_eq!(
-            TemporalEncoder::try_new(6, vec![(-0.5, 1)], 1).err(),
+            TemporalEncoder::try_new(6, vec![-0.5], 1).err(),
             Some(EncoderError::NonNegativeFinite {
                 parameter: "change_threshold"
             })
         );
-        assert!(TemporalEncoder::try_new(6, vec![(0.0, 1)], 1).is_ok());
+        assert!(TemporalEncoder::try_new(6, vec![0.0], 1).is_ok());
     }
 }
