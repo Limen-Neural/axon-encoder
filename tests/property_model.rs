@@ -2,8 +2,12 @@
 //!
 //! `tests/time_semantics.rs` checks the time contract on a fixed input table;
 //! this suite drives the same contract — plus dimension, reset, sink-parity,
-//! and malformed-input rules — through a seeded [`StdRng`] so each trial is
-//! reproducible from its index. There is no `proptest` dependency: the sampler
+//! and malformed-input rules — through a seeded [`StdRng`], one stream per
+//! (property, encoder). A trial is therefore reproducible given the fixed
+//! seed, the crate and `rand` versions, and the sampler's draw order (a trial
+//! depends on the draws of the trials before it in the same stream); the
+//! failure message names the trial index so the run can be replayed. There is
+//! no `proptest` dependency: the sampler
 //! is the same table-plus-uniform approach as `src/encoders/property_support.rs`
 //! (which is crate-internal, `#![cfg(test)]`, so integration tests cannot
 //! import it). Every failure message carries the trial index, the encoder
