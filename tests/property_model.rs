@@ -512,19 +512,19 @@ fn sink_paths_match_returning_paths_on_deterministic_encoders() {
         for (trial, &len) in LENGTHS.iter().enumerate() {
             let mut returning = (subject.build)();
             let mut sinking = (subject.build)();
-            // A short warm-up sequence, then the probe length, so stateful
-            // encoders are compared mid-stream rather than cold.
-            for round in 0..3 {
-                let probe = if round == 2 { len } else { CHANNELS };
+            // One warm-up round at the configured width, so stateful encoders
+            // are compared mid-stream rather than cold; then the probe length
+            // on both the batch and the streaming path.
+            for (round, (probe, step)) in [(CHANNELS, false), (len, false), (len, true)]
+                .into_iter()
+                .enumerate()
+            {
                 let input = sample_input(&mut rng, probe, false);
-                let label = ctx("sink", subject.label, trial, &input);
-                assert_sink_matches(
-                    returning.as_mut(),
-                    sinking.as_mut(),
-                    &input,
-                    round % 2 == 1,
-                    &label,
+                let label = format!(
+                    "{} round {round}",
+                    ctx("sink", subject.label, trial, &input)
                 );
+                assert_sink_matches(returning.as_mut(), sinking.as_mut(), &input, step, &label);
             }
         }
     }
