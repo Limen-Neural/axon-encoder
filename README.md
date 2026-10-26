@@ -387,9 +387,25 @@ impls keep compiling and inherit `TimeModel::INSTANT`.
 
 `RateEncoder` treats `base_rate` and `max_rate` as firing rates in **hertz**.
 Prefer `RateEncoder::try_new(base_rate_hz, max_rate_hz, range, dt_seconds)` so the
-sampling interval is explicit (finite and strictly positive). Stochastic batch
-encoding uses `p = 1 - exp(-rate_hz * dt_seconds)`; streaming accumulates
-`phase += rate_hz * dt_seconds`.
+sampling interval is explicit (finite and strictly positive). The two modes are
+different generative models with different decoders:
+
+| Mode | Model | Mean spikes per call | Decoder for `n` spikes over `N` calls |
+| --- | --- | --- | --- |
+| `encode` (batch) | Bernoulli, `p = 1 - exp(-λΔt)`, at most one spike per channel per call | `1 - exp(-λΔt)` (saturates at 1) | `λ̂ = -ln(1 - n/N) / Δt` (needs `n < N`; at saturation `n = N` the rate is unbounded) — naive `n/(N·Δt)` under-reads (≈0.79 λ at `λΔt = 0.5`) |
+| `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | long-run average `λΔt` for a constant rate with no cap, backlog, or phase reset; individual calls emit integer counts that can differ | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz when `λΔt ≤ 1024` and there is no queued-spike backlog or phase reset during the measurement window |
+
+Draining queued spikes from earlier capped steps does not satisfy the streaming
+estimator bound, even when the current `λΔt ≤ 1024`.
+
+In streaming mode the increment is computed in `f64` from the shortest
+round-tripping decimal of `dt_seconds`, not from the plainly widened `f32`
+(`0.01f32` widens to `0.0099999997…`, so the f64 product of the widened
+operands for `100 Hz × 0.01` is `0.99999998` and would miss the first step;
+the f32 × f32 product itself rounds to exactly `1.0`). Decimal `dt` values whose
+product with the rate is an exact `f64` integer (`100 × 0.01`, `10 × 0.1`) fire
+on time; products that are not exactly representable in `f64` (`100 × 0.29 =
+28.999999999999996`) may land one step late.
 
 `RateEncoder::new(base_rate, max_rate, range)` remains for compatibility and
 uses `dt_seconds = 0.1`.

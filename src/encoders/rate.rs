@@ -9,19 +9,50 @@ use crate::prelude::*;
 ///
 /// # Mathematical Model
 ///
-/// For batch encoding:
+/// The two modes are **different generative models** and need different
+/// decoders; neither is wrong, but a decoder built for one misreads the other.
+///
+/// **Batch (`encode`): Bernoulli per channel per call.**
 /// ```text
 /// rate_hz = base_rate + normalized * (max_rate - base_rate)
-/// probability = 1 - exp(-rate_hz * dt_seconds)
-/// spike if random() < probability
+/// p       = 1 - exp(-rate_hz * dt)                // batch_probability, f64 dt
+/// spike if random() < p                            // at most ONE spike per channel per call
 /// ```
+/// The expected spike count per call is `p = 1 - exp(-λΔt)`, **not** `λΔt`, and
+/// it saturates at 1. To recover the rate from `n` spikes over `N` calls,
+/// invert the Bernoulli mean: `p̂ = n / N`, `λ̂ = -ln(1 - p̂) / Δt` (requires
+/// `n < N`; a saturated window gives no finite estimate). The naive
+/// `n / (N·Δt)` under-reads: at `λΔt = 0.5` it estimates `(1 - e^-0.5)/Δt ≈
+/// 0.79 λ`, and the error grows with `λΔt`.
 ///
-/// For streaming (`encode_step`):
+/// **Streaming (`encode_step`): deterministic integrate-and-fire.**
 /// ```text
-/// rate_hz = base_rate + normalized[i] * (max_rate - base_rate)
-/// accumulator[i] += rate_hz * dt_seconds
-/// spike if accumulator[i] >= 1.0 (then accumulator -= 1.0)
+/// phase[i] += rate_hz * dt_seconds                  // exact in f64 (see LIM-1300)
+/// emit floor(phase[i]) spikes, keep the fraction    // bursts allowed, ≤ 1024 per step
 /// ```
+/// For a constant rate with no cap, backlog, or phase reset, the long-run
+/// average spike count per call is `λΔt`; individual calls emit integer counts
+/// that can differ. The estimator `λ̂ = n / (N·Δt)` is accurate to within
+/// `1 / (N·Δt)` Hz (one spike of quantisation over the elapsed window) only when
+/// `λΔt ≤ 1024` and there is no queued-spike backlog or phase reset during the
+/// measurement window. Draining spikes from earlier capped steps does not
+/// satisfy that bound, even when the current `λΔt ≤ 1024`. Above the per-step
+/// cap only 1024 spikes are emitted per step and the rest accrue as a backlog.
+/// A single increment exceeding `u64::MAX` is clamped and loses expected
+/// spikes. The whole-spike backlog uses saturating `u64` arithmetic, which can
+/// also lose counts when accumulated whole spikes exceed `u64::MAX`.
+///
+/// The step increment is computed in `f64` from the shortest round-tripping
+/// decimal of `dt_seconds` (for normal `dt_seconds`; subnormals keep the exact
+/// widening). Plainly widening the `f32` would carry its representation bias
+/// into the product: `0.01f32` widens to `0.0099999997…`, so the f64 product
+/// of the widened operands for `100 Hz × 0.01` is `0.99999998` and would miss
+/// the first step (the f32 × f32 product itself rounds to exactly `1.0`). The
+/// inversion `-ln(1 - p̂)/Δt` on the batch side needs `p̂ < 1`. With the corrected
+/// `dt`, decimal `dt_seconds` values whose product with the rate is an exact
+/// `f64` integer (`100 × 0.01`, `10 × 0.1`, `250 × 0.004`) fire on time;
+/// products that are not exactly representable in `f64` (`100 × 0.29 =
+/// 28.999999999999996`) can still land one step late.
 ///
 /// # When to Use
 ///
@@ -89,7 +120,8 @@ pub struct RateEncoder {
     /// checkpoints that stored a single combined float per channel.
     #[cfg_attr(feature = "serde", serde(rename = "accumulators"))]
     phases: Vec<f64>,
-    /// Exact whole-spike backlog per channel (drainable past f64's `2^53` cliff).
+    /// Whole-spike backlog per channel, exact until `u64` saturation.
+    /// Drainable past f64's `2^53` cliff; counts beyond `u64::MAX` are lost.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -329,16 +361,20 @@ impl RateEncoder {
     /// Cap on spikes emitted per channel per streaming step.
     ///
     /// Bounds allocation when `rate_hz * dt_seconds` is huge. Remaining whole
-    /// spikes stay in the exact `u64` pending queue and drain on later
-    /// `encode_step` calls (no permanent loss of expected spike count, and no
-    /// stall past f64's `2^53` integer cliff where `acc -= 1.0` would no-op).
+    /// spikes stay in the `u64` pending queue and drain on later `encode_step`
+    /// calls. Counts are lost if a single increment is clamped to `u64::MAX`
+    /// or accumulated whole spikes exceed `u64::MAX` and saturate the backlog.
+    /// Draining does not stall past f64's `2^53` integer cliff where
+    /// `acc -= 1.0` would no-op.
     /// Non-finite increments are skipped so the emission loop always terminates.
     const MAX_SPIKES_PER_CHANNEL_PER_STEP: usize = 1024;
 
     /// Expected spikes for one streaming step (`rate_hz * dt_seconds` in f64).
     ///
-    /// Always finite and non-negative; saturates at `u64::MAX`. Using f64 avoids
-    /// silent drops when the f32 product would overflow to `+inf`.
+    /// Always finite and non-negative. A single increment exceeding `u64::MAX`
+    /// is clamped and loses expected spikes; adding increments to the backlog
+    /// can also lose counts when accumulated whole spikes exceed `u64::MAX`.
+    /// Using f64 avoids silent drops when the f32 product would overflow to `+inf`.
     fn streaming_increment(&self, value: f32, rate_scale: f32) -> f64 {
         let rate_hz = self.effective_rate_hz(value, rate_scale);
         if rate_hz <= 0.0 {
@@ -1376,6 +1412,98 @@ mod tests {
                 "rate_hz={rate_hz}, dt={dt_seconds}, observed={observed_hz}"
             );
         }
+    }
+
+    /// Streaming decoder contract (LIM-1283): `count / elapsed` recovers the
+    /// configured rate to within one spike of quantisation, for a spread of
+    /// rates including fractional λΔt and both default and custom dt.
+    #[test]
+    fn test_rate_encoder_streaming_count_over_dt_decodes_to_hz() {
+        let cases = [
+            (5.0f32, 0.2f32, 10usize),
+            (20.0, 0.05, 20),
+            (7.5, 0.1, 40),
+            (3.0, 0.1, 100),   // λΔt = 0.3: fires every 3-4 steps
+            (0.7, 0.25, 400),  // λΔt = 0.175
+            (250.0, 0.01, 50), // λΔt = 2.5: bursts of 2-3 per step
+            (10.0, 0.1, 10_000),
+        ];
+        for (rate_hz, dt_seconds, steps) in cases {
+            let mut encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt_seconds).unwrap();
+            let spikes: usize = (0..steps)
+                .map(|_| encoder.encode_step(&[1.0]).spikes.len())
+                .sum();
+            let elapsed_seconds = f64::from(dt_seconds) * steps as f64;
+            let observed_hz = spikes as f64 / elapsed_seconds;
+            assert!(
+                (observed_hz - f64::from(rate_hz)).abs() <= 1.0 / elapsed_seconds,
+                "rate_hz={rate_hz}, dt={dt_seconds}, steps={steps}, observed={observed_hz}"
+            );
+        }
+    }
+
+    /// Exact-integer products must fire on time. The f32 product `100 * 0.01`
+    /// is already `1.0`, but widening `0.01f32` to f64 gives `0.0099999997…`
+    /// and a product of `0.99999998`, which would miss the first step; the
+    /// corrected `physical_dt` restores an exact `1.0`.
+    #[test]
+    fn test_rate_encoder_streaming_integer_rate_dt_fires_on_first_step() {
+        for (rate_hz, dt) in [
+            (100.0f32, 0.01f32),
+            (10.0, 0.1),
+            (1000.0, 0.001),
+            (250.0, 0.004),
+        ] {
+            let widened_product = f64::from(rate_hz) * f64::from(dt);
+            let corrected_product = f64::from(rate_hz) * RateEncoder::physical_dt(dt);
+            let mut encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt).unwrap();
+            let fired = encoder.encode_step(&[1.0]).spikes.len();
+            assert_eq!(
+                (
+                    widened_product != 1.0,
+                    corrected_product,
+                    fired,
+                    encoder.phases[0]
+                ),
+                (true, 1.0, 1, 0.0),
+                "{rate_hz} Hz at dt={dt}: widened product {widened_product} is biased, corrected is exact, fired once, no residual"
+            );
+        }
+    }
+
+    /// Batch decoder contract (LIM-1283): the batch mean is the Bernoulli
+    /// probability `1 - exp(-λΔt)`, so naive `count / elapsed` under-reads and
+    /// the correct inversion is `-ln(1 - p̂) / Δt`. Seeded so the bound is a
+    /// hard assertion, not a flake.
+    #[test]
+    fn test_rate_encoder_batch_count_over_dt_under_reads_and_log_inversion_recovers() {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        let (rate_hz, dt) = (50.0f32, 0.01f32); // λΔt = 0.5
+        let trials = 40_000usize;
+        let encoder = RateEncoder::try_new(0.0, rate_hz, (0.0, 1.0), dt).unwrap();
+        let mut rng = StdRng::seed_from_u64(0x1283);
+        let spikes: usize = (0..trials)
+            .map(|_| encoder.encode_with_rng(&[1.0], &mut rng).spikes.len())
+            .sum();
+        let p_hat = spikes as f64 / trials as f64;
+        let elapsed = f64::from(dt) * trials as f64;
+        let naive_hz = spikes as f64 / elapsed;
+        let lambda_dt = f64::from(rate_hz) * f64::from(dt);
+        let bernoulli_hz = (1.0 - (-lambda_dt).exp()) / f64::from(dt); // ≈ 39.35 Hz at λΔt = 0.5
+        let inverted_hz = -(1.0 - p_hat).ln() / f64::from(dt);
+
+        let under_read = (naive_hz - f64::from(rate_hz)).abs();
+        assert!(
+            (naive_hz - bernoulli_hz).abs() < under_read && under_read > 8.0,
+            "naive count/dt on batch must sit nearer (1-e^-λΔt)/Δt={bernoulli_hz} than λ={rate_hz} (under-reading by ~10 Hz); got {naive_hz}"
+        );
+        // Binomial std of p̂ at p≈0.39, N=40k is ≈0.0024; ±4σ in Hz is ≈1.6 Hz.
+        assert!(
+            (inverted_hz - f64::from(rate_hz)).abs() < 2.0,
+            "-ln(1-p̂)/Δt must recover λ={rate_hz}, got {inverted_hz}"
+        );
     }
 
     #[test]
