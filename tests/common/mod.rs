@@ -7,6 +7,8 @@
 
 #![allow(dead_code)]
 
+pub mod oracles;
+
 use axon_encoder::prelude::*;
 
 /// Asserts the full ordering and bounding contract for one call's output.

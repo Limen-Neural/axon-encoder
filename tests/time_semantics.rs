@@ -50,7 +50,7 @@ const MODULATED_FACTORIES: &[(&str, ModulatedFactory)] = &[
         Box::new(DeltaEncoder::try_new(0.1, 8).expect("valid delta"))
     }),
     ("TemporalEncoder", || {
-        Box::new(TemporalEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid temporal"))
+        Box::new(TemporalEncoder::try_new(8, vec![0.2], 8).expect("valid temporal"))
     }),
     ("PredictiveEncoder", || {
         Box::new(PredictiveEncoder::try_new(8, vec![(0.2, 1)], 8).expect("valid predictive"))

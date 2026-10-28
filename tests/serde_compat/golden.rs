@@ -106,11 +106,25 @@ golden!(serde_compat_predictive, PredictiveEncoder, "predictive", {
     encoder.encode_step(&[0.25, -0.5]);
     encoder
 });
-golden!(serde_compat_temporal, TemporalEncoder, "temporal", {
-    let mut encoder = TemporalEncoder::new(6, vec![(0.5, 1), (1.5, 3)], 2);
-    encoder.encode_step(&[0.25, -0.5]);
-    encoder
-});
+#[test]
+fn serde_compat_temporal() {
+    // v0.5 wrote `change_thresholds` as `(threshold, spike_value)` pairs; the
+    // label was never read and is dropped on load (LIM-1292).
+    let mut expected = TemporalEncoder::new(6, vec![0.5, 1.5], 2);
+    expected.encode_step(&[0.25, -0.5]);
+    let restored: TemporalEncoder =
+        read_fixture("v0.5/temporal.json", "v0.5 writer -> HEAD reader");
+    assert_eq!(
+        restored, expected,
+        "v0.5/temporal.json: legacy pairs must load"
+    );
+    // HEAD writes plain floats, locked by the head/ payload.
+    assert_json(
+        &expected,
+        "head/temporal_plain.json",
+        "HEAD writer -> head golden",
+    );
+}
 golden!(
     serde_compat_neuromodulators,
     NeuroModulators,

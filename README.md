@@ -252,6 +252,34 @@ step_ticks`), since a call can place a spike anywhere in the ongoing cycle.
 Run `cargo run --example spike_timebase` for a worked integration: two encoders,
 two cursors, one merged nanosecond-timed stream.
 
+### Decoder contract
+
+The crate ships **no decoder**; the contract a downstream decoder must honour
+is locked by [`tests/decode_consistency.rs`](tests/decode_consistency.rs),
+with the per-encoder inverse formulas and their collision points in
+[`tests/reference_decoders/`](tests/reference_decoders/). In short:
+
+- `LatencyEncoder`: `x̂ = min + (1 - t/L)·span` with `L = max_latency > 0`
+  (the span is `L + 1` ticks, the denominator is `L`) — strong input is
+  **early**. `max_latency = 0` is valid but non-invertible: every value lands
+  on tick 0. Emission is channel-major, so sort by `timestamp` before any
+  "first spike wins" logic.
+- `PhaseEncoder`: `x̂ = min + ((b + 0.5)/C)·span` — strong input is **late**;
+  the polarity is opposite to Latency, so one decoder does not fit both.
+  Offsets are call-relative inside an overlapping window: convert through a
+  `TimeCursor` before comparing times across calls, and expect the absolute
+  chronology to differ from emission order.
+- `RateEncoder::encode_step`: `λ̂ = count / elapsed`, within one spike over the
+  window while `λΔt ≤ 1024` and no backlog is draining; above the per-step cap
+  the emitted count lags the true rate. (Batch `encode` is Bernoulli; see
+  "Rate encoder time semantics".)
+- `PopulationEncoder`: center of mass over pooled counts. Endpoints are biased
+  inward when neighbouring neurons still respond (tuning width wide enough that
+  their contribution survives the sum); for narrow widths the neighbours'
+  contribution is lost to rounding against the endpoint's `1.0` or underflows
+  outright, and the CoM collapses onto the endpoint exactly (see
+  `tests/reference_decoders/population.rs`).
+
 ## Buffered streaming
 
 `encode` and `encode_step` hand every call's spikes straight to the caller.
@@ -359,9 +387,25 @@ impls keep compiling and inherit `TimeModel::INSTANT`.
 
 `RateEncoder` treats `base_rate` and `max_rate` as firing rates in **hertz**.
 Prefer `RateEncoder::try_new(base_rate_hz, max_rate_hz, range, dt_seconds)` so the
-sampling interval is explicit (finite and strictly positive). Stochastic batch
-encoding uses `p = 1 - exp(-rate_hz * dt_seconds)`; streaming accumulates
-`phase += rate_hz * dt_seconds`.
+sampling interval is explicit (finite and strictly positive). The two modes are
+different generative models with different decoders:
+
+| Mode | Model | Mean spikes per call | Decoder for `n` spikes over `N` calls |
+| --- | --- | --- | --- |
+| `encode` (batch) | Bernoulli, `p = 1 - exp(-λΔt)`, at most one spike per channel per call | `1 - exp(-λΔt)` (saturates at 1) | `λ̂ = -ln(1 - n/N) / Δt` (needs `n < N`; at saturation `n = N` the rate is unbounded) — naive `n/(N·Δt)` under-reads (≈0.79 λ at `λΔt = 0.5`) |
+| `encode_step` (streaming) | deterministic integrate-and-fire, `phase += λΔt`, bursts allowed (≤ 1024 per step, remainder queued) | long-run average `λΔt` for a constant rate with no cap, backlog, or phase reset; individual calls emit integer counts that can differ | `λ̂ = n / (N·Δt)`, within `1/(N·Δt)` Hz when `λΔt ≤ 1024` and there is no queued-spike backlog or phase reset during the measurement window |
+
+Draining queued spikes from earlier capped steps does not satisfy the streaming
+estimator bound, even when the current `λΔt ≤ 1024`.
+
+In streaming mode the increment is computed in `f64` from the shortest
+round-tripping decimal of `dt_seconds`, not from the plainly widened `f32`
+(`0.01f32` widens to `0.0099999997…`, so the f64 product of the widened
+operands for `100 Hz × 0.01` is `0.99999998` and would miss the first step;
+the f32 × f32 product itself rounds to exactly `1.0`). Decimal `dt` values whose
+product with the rate is an exact `f64` integer (`100 × 0.01`, `10 × 0.1`) fire
+on time; products that are not exactly representable in `f64` (`100 × 0.29 =
+28.999999999999996`) may land one step late.
 
 `RateEncoder::new(base_rate, max_rate, range)` remains for compatibility and
 uses `dt_seconds = 0.1`.
@@ -427,7 +471,7 @@ should normalize before calling `encode`, using the former formula
 - **Encoders** for different signal structures:
   - **`RateEncoder`** — spike *rate* tracks input magnitude
   - **`DerivativeEncoder`** — fires on *change* (jumps / drops)
-  - **`TemporalEncoder`** — *patterns* over time
+  - **`TemporalEncoder`** — dual-window *change detector* (recent 3-sample mean vs the 3 before); not a timing code
   - **`PopulationEncoder`** — value distributed across a *population* of units
   - **`DeltaEncoder`** — spike when the signal moves by a threshold
   - **`BaselineHoldTernaryEncoder`** — signed baseline-hold ternary events

@@ -2,30 +2,8 @@
 
 use axon_encoder::prelude::*;
 
-/// Reference inverse of [`PhaseEncoder`].
-///
-/// Forward (from `src/encoders/phase.rs`):
-/// `bin = floor(normalized * cycle_steps).min(cycle_steps - 1)`.
-///
-/// The best point estimate for a quantized bin is its center, so decode bin `b`
-/// to `x = min + ((b + 0.5) / cycle_steps) * (max - min)`. The reconstruction
-/// error is then bounded by half a bin width.
-///
-/// # Scope of the half-bin bound
-///
-/// The half-bin reconstruction bound is only meaningful for `cycle_steps` small
-/// enough that f64 can resolve a single bin — i.e. where the relative bin width
-/// `1 / cycle_steps` is well above f64's machine epsilon (`≈ 2.22e-16`). For
-/// astronomically large `cycle_steps` (relative bin width approaching or below
-/// `2^-52`), neither the forward `normalized * cycle_steps` product nor this
-/// inverse can distinguish adjacent bins in f64, so the advertised `0.5 /
-/// cycle_steps` bound stops being physically resolvable. The tests exercise the
-/// bound at resolvable cycle sizes; they make no claim at cycle sizes below
-/// f64's resolution.
-fn phase_decode(bin: u64, cycle_steps: u64, range: (f32, f32)) -> f64 {
-    let (min, max) = (range.0 as f64, range.1 as f64);
-    min + ((bin as f64 + 0.5) / cycle_steps as f64) * (max - min)
-}
+/// Reference inverse of [`PhaseEncoder`]; defined once in `tests/common/oracles.rs`.
+use super::oracles::phase_decode;
 
 #[test]
 fn phase_bin_center_inverse_respects_the_half_bin_bound() {

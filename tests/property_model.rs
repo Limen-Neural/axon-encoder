@@ -287,7 +287,7 @@ boxed!(
 boxed!(
     temporal,
     temporal_m,
-    TemporalEncoder::try_new(8, vec![(0.2, 1)], CHANNELS).unwrap()
+    TemporalEncoder::try_new(8, vec![0.2], CHANNELS).unwrap()
 );
 boxed!(
     predictive,

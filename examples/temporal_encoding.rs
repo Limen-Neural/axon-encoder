@@ -1,8 +1,11 @@
 //! Temporal Encoding Example
 //!
-//! Demonstrates temporal change-detection encoding. Spikes are generated when
-//! the difference between recent and older input averages exceeds configured
-//! thresholds — useful for detecting sudden shifts in time-series data.
+//! Demonstrates the dual-window change detector. A channel fires when the
+//! mean of its three newest samples moves away from the mean of the three
+//! before them by more than the configured threshold — useful for detecting
+//! sudden shifts in time-series data. Spikes carry no timing or magnitude
+//! information (all at tick zero, polarity `true`); for timing codes see the
+//! `latency_encoding` and `spike_timebase` examples.
 //!
 //! ```
 //! cargo run --example temporal_encoding
@@ -11,12 +14,14 @@
 use axon_encoder::prelude::*;
 
 fn main() {
-    // Create a temporal encoder:
-    //   history_depth      = 10  (number of past values to track)
-    //   change_thresholds  = [(2.0, 1), (5.0, 2)]  (threshold, spike value)
+    // Create a change detector:
+    //   history_depth      = 6   (samples retained; the detector reads exactly 6,
+    //                             so a larger depth changes nothing but the checkpoint)
+    //   change_thresholds  = [2.0]  (fire when |recent mean - older mean| > 2.0;
+    //                                with several values the smallest decides)
     //   num_channels       = 2
-    let mut encoder =
-        TemporalEncoder::try_new(10, vec![(2.0, 1), (5.0, 2)], 2).expect("valid TemporalEncoder");
+    let mut encoder = TemporalEncoder::try_new(TemporalEncoder::WINDOW, vec![2.0], 2)
+        .expect("valid TemporalEncoder");
 
     // Simulate a stable period followed by sudden change on channel 0.
     let stable_readings = [[1.0, 5.0], [1.1, 5.1], [1.0, 4.9], [1.2, 5.0], [1.0, 5.2]];

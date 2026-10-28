@@ -189,7 +189,7 @@ fn report_delta_encoder() {
 fn report_temporal_encoder() {
     for scale in SCALES {
         let mut encoder =
-            TemporalEncoder::try_new(6, vec![(0.2, 1)], scale).expect("valid TemporalEncoder");
+            TemporalEncoder::try_new(6, vec![0.2], scale).expect("valid TemporalEncoder");
         let low = constant_input(scale, 0.0);
         let high = constant_input(scale, 1.0);
 
@@ -303,7 +303,7 @@ fn report_delta_encoder_into() {
 fn report_temporal_encoder_into() {
     for scale in SCALES {
         let mut encoder =
-            TemporalEncoder::try_new(6, vec![(0.2, 1)], scale).expect("valid TemporalEncoder");
+            TemporalEncoder::try_new(6, vec![0.2], scale).expect("valid TemporalEncoder");
         let low = constant_input(scale, 0.0);
         let high = constant_input(scale, 1.0);
         let mut buffer = Vec::with_capacity(scale);
@@ -492,7 +492,7 @@ fn report_delta_encode() {
 fn report_temporal_encode() {
     for scale in SCALES {
         let mut encoder =
-            TemporalEncoder::try_new(6, vec![(0.2, 1)], scale).expect("valid TemporalEncoder");
+            TemporalEncoder::try_new(6, vec![0.2], scale).expect("valid TemporalEncoder");
         let input = normalized_input(scale);
         for _ in 0..6 {
             encoder.encode(&input);
