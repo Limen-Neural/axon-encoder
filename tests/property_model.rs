@@ -676,7 +676,7 @@ fn malformed_sequences_never_panic() {
                 let len = sample_len(&mut rng);
                 sample_input(&mut rng, len, false)
             };
-            let _label = ctx("malformed", subject.label, trial, &input);
+            eprintln!("{}", ctx("malformed", subject.label, trial, &input));
             let _ = encoder.encode(&input);
             let _ = encoder.encode_step(&input);
             let _ = collect_into(encoder.as_mut(), &input, false);
