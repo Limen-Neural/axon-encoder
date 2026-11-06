@@ -606,25 +606,23 @@ mod tests {
 
         // Another workspace member may unify `nir-rs/hdf5` on; then the write
         // succeeds, which is also correct delegation.
-        match write_nir(&path, &graph) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&path);
-            }
-            Err(NirExportError::Write(NirError::Unimplemented(_))) => {}
-            Err(error) => panic!("unexpected NIR write result: {error}"),
-        }
+        let result = write_nir(&path, &graph);
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(
+            result,
+            Ok(()) | Err(NirExportError::Write(NirError::Unimplemented(_)))
+        ));
     }
 
     #[test]
     fn write_nir_trait_method_delegates_to_to_nir() {
         let path = std::env::temp_dir().join("axon_encoder_nir_trait.nir");
-        match encoder(1, 0.4).write_nir(&path, 1) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&path);
-            }
-            Err(NirExportError::Write(_)) => {}
-            Err(error) => panic!("unexpected NIR write result: {error}"),
-        }
+        let result = encoder(1, 0.4).write_nir(&path, 1);
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(
+            result,
+            Ok(()) | Err(NirExportError::Write(NirError::Unimplemented(_)))
+        ));
     }
 
     #[test]
