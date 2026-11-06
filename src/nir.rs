@@ -462,6 +462,48 @@ mod tests {
             .expect("valid EmbeddingRateEncoder")
     }
 
+    fn input_of(graph: &NirGraph, name: &str) -> Input {
+        let Some(NirNode::Input(node)) = graph.get(name) else {
+            panic!("`{name}` is not an Input node");
+        };
+        node.clone()
+    }
+
+    fn output_of(graph: &NirGraph, name: &str) -> Output {
+        let Some(NirNode::Output(node)) = graph.get(name) else {
+            panic!("`{name}` is not an Output node");
+        };
+        node.clone()
+    }
+
+    fn if_of(graph: &NirGraph, name: &str) -> If {
+        let Some(NirNode::If(node)) = graph.get(name) else {
+            panic!("`{name}` is not an IF node");
+        };
+        node.clone()
+    }
+
+    #[test]
+    #[should_panic(expected = "is not an Input node")]
+    fn input_of_rejects_a_node_of_another_type() {
+        let graph = encoder(1, 0.4).to_nir(1).expect("export succeeds");
+        input_of(&graph, ENCODER_NODE_NAME);
+    }
+
+    #[test]
+    #[should_panic(expected = "is not an Output node")]
+    fn output_of_rejects_a_node_of_another_type() {
+        let graph = encoder(1, 0.4).to_nir(1).expect("export succeeds");
+        output_of(&graph, "input");
+    }
+
+    #[test]
+    #[should_panic(expected = "is not an IF node")]
+    fn if_of_rejects_a_node_of_another_type() {
+        let graph = encoder(1, 0.4).to_nir(1).expect("export succeeds");
+        if_of(&graph, "input");
+    }
+
     #[test]
     fn exports_input_encoder_output_with_ordered_edges() {
         let graph = encoder(3, 0.4).to_nir(3).expect("export succeeds");
@@ -481,28 +523,20 @@ mod tests {
     fn exports_ports_at_the_requested_width() {
         let graph = encoder(4, 0.4).to_nir(4).expect("export succeeds");
 
-        let NirNode::Input(input) = graph.get("input").expect("input node") else {
-            panic!("input node has the wrong type");
-        };
-        let NirNode::Output(output) = graph.get("output").expect("output node") else {
-            panic!("output node has the wrong type");
-        };
-        assert_eq!(input.shape, vec![4]);
-        assert_eq!(output.shape, vec![4]);
+        assert_eq!(input_of(&graph, "input").shape, vec![4]);
+        assert_eq!(output_of(&graph, "output").shape, vec![4]);
     }
 
     #[test]
     fn maps_v_th_onto_the_if_threshold() {
         let graph = encoder(2, 0.25).to_nir(2).expect("export succeeds");
 
-        let NirNode::If(neuron) = graph.get(ENCODER_NODE_NAME).expect("encoder node") else {
-            panic!("encoder node has the wrong type");
-        };
+        let neuron = if_of(&graph, ENCODER_NODE_NAME);
         assert_eq!(neuron.v_threshold.shape(), &[2]);
-        let nir_rs::types::TensorData::F32(values) = neuron.v_threshold.data() else {
-            panic!("v_threshold is not f32");
-        };
-        assert_eq!(values, &[0.25, 0.25]);
+        assert_eq!(
+            neuron.v_threshold.data(),
+            &nir_rs::types::TensorData::F32(vec![0.25, 0.25])
+        );
         assert_eq!(neuron.r.numel(), 2);
         assert!(neuron.v_reset.is_none(), "NIR default reset applies");
     }
@@ -524,11 +558,8 @@ mod tests {
             Some(&MetadataValue::I64(1))
         );
 
-        let NirNode::If(neuron) = graph.get(ENCODER_NODE_NAME).expect("encoder node") else {
-            panic!("encoder node has the wrong type");
-        };
         assert_eq!(
-            neuron
+            if_of(&graph, ENCODER_NODE_NAME)
                 .metadata
                 .get(&format!("{NIR_METADATA_PREFIX}.reset"))
                 .cloned(),
