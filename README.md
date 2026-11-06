@@ -32,7 +32,7 @@ Optional features:
 | --- | --- |
 | `serde` | Serialize configs, gain types, and live encoder state. Deterministic `encode_step` paths resume exactly from a JSON-serializable checkpoint; stochastic paths that draw a thread-local RNG are not replay-stable. |
 | `ndarray` | Encode from `ndarray` views (`ArrayView1` / `ArrayView2`) |
-| `nir` | Export encoder parameters as a [NIR](https://github.com/neuromorphs/NIR) graph through `nir-rs`. Pure Rust: no HDF5 dependency, and nothing is enabled by default. |
+| `nir` | Export encoder parameters as a [NIR](https://github.com/neuromorphs/NIR) graph through `nir-rs`. Pure Rust: no HDF5 dependency, and nothing is enabled by default. Unreleased: not in the published 0.6.0, so it ships with the next release. |
 | `wasm-js` | Enable JavaScript-host entropy for `wasm32-unknown-unknown` through `getrandom`'s `wasm_js` backend. Intended for browsers, Web Workers, and supported Node.js hosts. |
 
 ```toml
@@ -479,9 +479,12 @@ runtime is still `SpikeEvent` values on a caller-owned `TimeCursor` timeline;
 the `nir` feature adds a projection of an encoder's configuration and never
 touches that contract.
 
+The `nir` feature is not in the published 0.6.0; it ships with the next release.
+Until then, depend on the repository directly:
+
 ```toml
 [dependencies]
-axon-encoder = { version = "0.6", features = ["nir"] }
+axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder", features = ["nir"] }
 ```
 
 ```rust
@@ -517,17 +520,18 @@ unifies the features:
 
 ```toml
 [dependencies]
-axon-encoder = { version = "0.6", features = ["nir"] }
+axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder", features = ["nir"] }
 nir-rs = { version = "0.4", features = ["hdf5"] }
 ```
 
 ```rust
-# use axon_encoder::prelude::*;
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-# let encoder = EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.4 })?;
-encoder.write_nir("/tmp/encoder.nir", 2)?;
-# Ok(())
-# }
+use axon_encoder::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let encoder = EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.4 })?;
+    encoder.write_nir("/tmp/encoder.nir", 2)?;
+    Ok(())
+}
 ```
 
 Without `nir-rs`'s `hdf5` feature, `write_nir` returns an error wrapping
