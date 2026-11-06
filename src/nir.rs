@@ -69,11 +69,13 @@
 //!
 //! [`write_nir`] delegates to [`nir_rs::io::write`], which exists in every
 //! `nir-rs` build but only serializes when `nir-rs`'s `hdf5` feature is
-//! enabled. Enable it in your own dependency and Cargo unifies the features:
+//! enabled. Enable it in your own dependency and Cargo unifies the features.
+//! The `nir` feature is not in the published 0.6.0, so until the next release
+//! depend on the repository directly:
 //!
 //! ```toml
 //! [dependencies]
-//! axon-encoder = { version = "0.6", features = ["nir"] }
+//! axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder", features = ["nir"] }
 //! nir-rs = { version = "0.4", features = ["hdf5"] }
 //! ```
 //!
