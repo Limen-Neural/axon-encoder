@@ -39,12 +39,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match env::args().nth(1) {
         Some(path) => match encoder.write_nir(&path, channels) {
             Ok(()) => println!("Wrote {path}"),
-            Err(error) => {
+            Err(NirExportError::Write(NirError::Unimplemented(_))) => {
                 // Expected when the linked `nir-rs` build has no `hdf5`
                 // feature: the graph above is still the export result.
-                println!("Could not write {path}: {error}");
+                println!("Could not write {path}: nir-rs was built without `hdf5`.");
                 println!("Enable `nir-rs`'s `hdf5` feature in your own dependency to serialize.");
             }
+            // Any other failure (bad path, permissions) must not look like success.
+            Err(error) => return Err(error.into()),
         },
         None => println!("Pass a path to write a .nir file."),
     }
