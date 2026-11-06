@@ -382,6 +382,8 @@ fn build_graph(
 /// - [`NirExportError::ChannelCountMismatch`] when `channels` is not
 ///   [`EmbeddingRateEncoder::num_channels`]
 /// - [`NirExportError::EmptyChannelCount`] / [`NirExportError::ChannelCountTooLarge`]
+/// - [`NirExportError::InvalidParameter`] when `config.v_th` is no longer finite
+///   and positive (the field is public and can be mutated after construction)
 /// - [`NirExportError::Graph`] if `nir-rs` rejects a constructed tensor
 ///
 /// # Example
