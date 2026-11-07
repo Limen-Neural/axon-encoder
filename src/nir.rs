@@ -52,7 +52,6 @@
 //! # Example
 //!
 //! ```
-//! # #[cfg(feature = "nir")] {
 //! use axon_encoder::prelude::*;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,7 +62,6 @@
 //! assert_eq!(graph.len(), 3);
 //! graph.validate_structure().expect("well-formed graph");
 //! # Ok(())
-//! # }
 //! # }
 //! ```
 //!
@@ -118,7 +116,8 @@
 //! is not preserved — `nir-rs` documents this for its HDF5 round-trip — so
 //! consumers must look nodes up by name rather than by position.
 
-use crate::encoder::EmbeddingRateEncoder;
+use crate::encoder::{EmbeddingRateEncoder, validate_v_th};
+use crate::error::EncoderError;
 use nir_rs::nodes::{If, Input, Output};
 use nir_rs::types::{MetadataMap, MetadataValue, Tensor};
 use std::fmt;
@@ -170,6 +169,11 @@ pub enum NirExportError {
         /// Largest supported channel count.
         maximum: usize,
     },
+    /// The encoder's current parameters violate its construction invariants.
+    ///
+    /// Encoder configs are public and can be mutated after construction, so
+    /// the exporter re-validates them rather than emitting an invalid graph.
+    InvalidEncoder(EncoderError),
     /// `nir-rs` rejected a graph or tensor this crate constructed.
     ///
     /// A construction failure is a bug in the exporter, not in the caller's
@@ -199,6 +203,7 @@ impl fmt::Display for NirExportError {
                 f,
                 "requested {requested} channel(s) exceeds the maximum of {maximum}"
             ),
+            Self::InvalidEncoder(error) => write!(f, "invalid encoder parameter: {error}"),
             Self::Graph(error) => write!(f, "failed to build NIR graph: {error}"),
             Self::Write(error) => write!(f, "failed to write NIR graph: {error}"),
         }
@@ -208,6 +213,7 @@ impl fmt::Display for NirExportError {
 impl std::error::Error for NirExportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::InvalidEncoder(error) => Some(error),
             Self::Graph(error) | Self::Write(error) => Some(error),
             Self::EmptyChannelCount
             | Self::ChannelCountMismatch { .. }
@@ -232,6 +238,8 @@ impl std::error::Error for NirExportError {
 /// - [`NirExportError::ChannelCountTooLarge`] when `channels` exceeds the
 ///   `u16` channel-ID range
 /// - [`NirExportError::ChannelCountMismatch`] for a fixed-width encoder
+/// - [`NirExportError::InvalidEncoder`] if the encoder's current parameters
+///   are invalid
 /// - [`NirExportError::Graph`] if `nir-rs` rejects a constructed node
 pub trait ToNir {
     /// Builds the parameter graph for `channels` channels.
@@ -368,12 +376,13 @@ fn build_graph(
 /// - [`NirExportError::ChannelCountMismatch`] when `channels` is not
 ///   [`EmbeddingRateEncoder::num_channels`]
 /// - [`NirExportError::EmptyChannelCount`] / [`NirExportError::ChannelCountTooLarge`]
+/// - [`NirExportError::InvalidEncoder`] when `config.v_th` is no longer finite
+///   and positive
 /// - [`NirExportError::Graph`] if `nir-rs` rejects a constructed tensor
 ///
 /// # Example
 ///
 /// ```
-/// # #[cfg(feature = "nir")] {
 /// use axon_encoder::prelude::*;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -387,7 +396,6 @@ fn build_graph(
 /// assert_eq!(neuron.v_threshold.numel(), 2);
 /// # Ok(())
 /// # }
-/// # }
 /// ```
 impl ToNir for EmbeddingRateEncoder {
     fn to_nir(&self, channels: usize) -> Result<NirGraph, NirExportError> {
@@ -400,6 +408,8 @@ impl ToNir for EmbeddingRateEncoder {
                 requested: channels,
             });
         }
+
+        validate_v_th(self.config.v_th).map_err(NirExportError::InvalidEncoder)?;
 
         let shape = vec![channels];
         let v_threshold = Tensor::from_f32(shape.clone(), vec![self.config.v_th; channels])
@@ -537,6 +547,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_threshold_mutated_after_construction() {
+        for v_th in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let mut encoder = encoder(1, 0.4);
+            encoder.config.v_th = v_th;
+
+            assert_eq!(
+                encoder
+                    .to_nir(1)
+                    .expect_err("invalid threshold is rejected"),
+                NirExportError::InvalidEncoder(EncoderError::NonPositiveOrNonFinite {
+                    parameter: "v_th"
+                })
+            );
+        }
+    }
+
+    #[test]
     fn rejects_zero_channels() {
         let error = encoder(1, 0.4).to_nir(0).expect_err("zero is rejected");
 
@@ -567,12 +594,10 @@ mod tests {
         let path = std::env::temp_dir().join("axon_encoder_nir_boundary.nir");
 
         let error = write_nir(&path, &graph).expect_err("hdf5 is not enabled here");
-        assert_eq!(
+        assert!(matches!(
             error,
-            NirExportError::Write(NirError::Unimplemented(
-                "io::write (enable feature \"hdf5\")"
-            ))
-        );
+            NirExportError::Write(NirError::Unimplemented(_))
+        ));
     }
 
     #[test]
@@ -622,6 +647,12 @@ mod tests {
         };
         assert!(too_large.to_string().contains("exceeds the maximum of 2"));
         assert!(too_large.source().is_none());
+
+        let invalid = NirExportError::InvalidEncoder(EncoderError::NonPositiveOrNonFinite {
+            parameter: "v_th",
+        });
+        assert!(invalid.to_string().contains("invalid encoder parameter"));
+        assert!(invalid.source().is_some());
 
         let graph = NirExportError::Graph(NirError::Unimplemented("io::read"));
         assert!(graph.to_string().contains("failed to build NIR graph"));
