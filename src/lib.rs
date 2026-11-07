@@ -97,6 +97,8 @@ pub mod error;
 pub mod modulators;
 #[cfg(feature = "ndarray")]
 pub mod ndarray_ext;
+#[cfg(feature = "nir")]
+pub mod nir;
 pub mod poisson;
 pub mod rng;
 pub mod sink;
@@ -119,6 +121,8 @@ pub mod prelude {
     pub use crate::modulators::*;
     #[cfg(feature = "ndarray")]
     pub use crate::ndarray_ext::NdarrayEncoderExt;
+    #[cfg(feature = "nir")]
+    pub use crate::nir::*;
     pub use crate::poisson::*;
     pub use crate::sink::*;
     pub use crate::streaming::*;

@@ -4,6 +4,23 @@
 
 ### Added
 
+- `nir` feature (off by default): NIR (Neuromorphic Intermediate Representation)
+  parameter-graph export built on the maintained `nir-rs` crate. `ToNir::to_nir`
+  projects an encoder's **static parameters** onto a `nir_rs::NirGraph`;
+  `ToNir::write_nir` / `nir::write_nir` delegate serialization to
+  `nir_rs::io::write`, so this crate gains no HDF5 dependency and never
+  hand-rolls the wire format. Exported graphs carry `axon_encoder.*` provenance
+  metadata and are validated against `nir-rs` before they are returned.
+  `EmbeddingRateEncoder` is the one mapped encoder (an integrate-and-fire
+  neuron, exported as a NIR `IF` node with `config.v_th` as `v_threshold`);
+  encoders whose semantics NIR has no node for are deliberately unmapped and
+  documented as such in the `nir` module. Verified end to end: a graph written
+  through `nir-rs` 0.4.5 loads in the Python reference implementation `nir`
+  1.0.8. See [issue #43](https://github.com/Limen-Neural/axon-encoder/issues/43).
+- `EmbeddingRateEncoder::num_channels`, returning the tracked channel count.
+- `examples/nir_export.rs`: builds a NIR graph from an encoder and reports the
+  `nir-rs`/HDF5 boundary instead of failing on a machine without libhdf5.
+
 - `BaselineHoldTernaryEncoder`: per-channel baseline-hold ternary encoding with
   inclusive signed threshold crossings and baseline updates only on events
   (Corinth `TelemetryEncoder` semantics from

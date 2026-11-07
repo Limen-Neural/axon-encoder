@@ -12,7 +12,7 @@
 
 use crate::prelude::*;
 
-fn validate_v_th(v_th: f32) -> Result<(), EncoderError> {
+pub(crate) fn validate_v_th(v_th: f32) -> Result<(), EncoderError> {
     if v_th.is_finite() && v_th > 0.0 {
         Ok(())
     } else {
@@ -146,6 +146,24 @@ impl EmbeddingRateEncoder {
             config,
             membrane_potentials: vec![0.0; num_channels],
         })
+    }
+
+    /// Number of channels this encoder tracks.
+    ///
+    /// Equal to the `num_channels` passed to [`try_new`](Self::try_new) and to
+    /// the length of the persistent membrane vector.
+    ///
+    /// ```rust
+    /// use axon_encoder::prelude::*;
+    ///
+    /// # fn main() -> Result<(), EncoderError> {
+    /// let encoder = EmbeddingRateEncoder::try_new(4, EmbeddingEncoderConfig { v_th: 0.5 })?;
+    /// assert_eq!(encoder.num_channels(), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn num_channels(&self) -> usize {
+        self.membrane_potentials.len()
     }
 
     /// Spike-emitting core: writes straight into `sink`, allocating nothing.

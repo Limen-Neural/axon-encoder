@@ -36,6 +36,11 @@ exclude = [
 ndarray = { version = "0.16", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 rand = "0.10.2"
+# Optional NIR (Neuromorphic Intermediate Representation) parameter export.
+# `nir-rs` owns the `.nir` wire format, so this crate never links HDF5 itself:
+# `nir-rs`'s own `hdf5` feature stays off here and is left to the consumer that
+# actually needs to write a file.
+nir-rs = { version = "0.4", optional = true, default-features = false }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 getrandom = { version = "0.4.3", features = ["wasm_js"], optional = true }
@@ -52,12 +57,20 @@ ndarray = "0.16"
 [features]
 default = []
 ndarray = ["dep:ndarray"]
+# NIR parameter-graph export (`to_nir()`), built on the maintained `nir-rs`
+# graph model. No native dependency and no HDF5: enable `nir-rs`'s own `hdf5`
+# feature in the consuming application to serialize `.nir` files.
+nir = ["dep:nir-rs"]
 serde = ["dep:serde"]
 wasm-js = ["dep:getrandom"]
 
 [[example]]
 name = "ndarray_encoding"
 required-features = ["ndarray"]
+
+[[example]]
+name = "nir_export"
+required-features = ["nir"]
 
 [[bench]]
 name = "encoders"
