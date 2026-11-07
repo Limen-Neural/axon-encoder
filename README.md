@@ -522,12 +522,13 @@ nir-rs = { version = "0.4", features = ["hdf5"] }
 ```
 
 ```rust
-# use axon_encoder::prelude::*;
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-# let encoder = EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.4 })?;
-encoder.write_nir("/tmp/encoder.nir", 2)?;
-# Ok(())
-# }
+use axon_encoder::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let encoder = EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.4 })?;
+    encoder.write_nir("/tmp/encoder.nir", 2)?;
+    Ok(())
+}
 ```
 
 Without `nir-rs`'s `hdf5` feature, `write_nir` returns an error wrapping

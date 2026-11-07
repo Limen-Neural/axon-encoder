@@ -12,7 +12,7 @@
 
 use crate::prelude::*;
 
-fn validate_v_th(v_th: f32) -> Result<(), EncoderError> {
+pub(crate) fn validate_v_th(v_th: f32) -> Result<(), EncoderError> {
     if v_th.is_finite() && v_th > 0.0 {
         Ok(())
     } else {
