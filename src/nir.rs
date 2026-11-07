@@ -140,7 +140,7 @@ pub const ENCODER_NODE_NAME: &str = "encoder";
 
 /// Error returned by [`ToNir::to_nir`] and [`write_nir`].
 ///
-/// Kept separate from [`EncoderError`](crate::EncoderError): that type reports
+/// Kept separate from [`EncoderError`]: that type reports
 /// invalid *encoder construction* parameters, while this one reports a failed
 /// *export* of an otherwise valid encoder.
 #[non_exhaustive]
