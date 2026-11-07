@@ -6,7 +6,9 @@
 //!
 //! The `.nir` write path is exercised only up to the documented boundary: this
 //! repository never enables `nir-rs`'s `hdf5` feature, so no test here links
-//! HDF5 or requires libhdf5 to be installed.
+//! HDF5 or requires libhdf5 to be installed. Write tests use a directory Cargo
+//! owns for this test target (`CARGO_TARGET_TMPDIR`), never the shared system
+//! temp directory.
 #![cfg(feature = "nir")]
 
 use axon_encoder::prelude::*;
@@ -80,4 +82,37 @@ fn the_encoder_keeps_encoding_after_an_export() {
 
     let second = encoder.encode(&[0.6]);
     assert_eq!(second.spikes.len(), 1, "membrane state survived the export");
+}
+
+/// Fresh, test-owned output path under Cargo's per-target scratch directory.
+fn scratch_path(test: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("nir_export_{}_{test}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create scratch directory");
+    dir.join("encoder.nir")
+}
+
+/// Without `nir-rs/hdf5` a write reports `Unimplemented`; if another workspace
+/// member unifies that feature on, it succeeds. Anything else is a failure.
+fn assert_hdf5_boundary(result: Result<(), NirExportError>, path: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(path.parent().expect("scratch parent"));
+    assert!(matches!(
+        result,
+        Ok(()) | Err(NirExportError::Write(NirError::Unimplemented(_)))
+    ));
+}
+
+#[test]
+fn write_nir_surfaces_the_nir_rs_hdf5_boundary() {
+    let graph = encoder(1, 0.4).to_nir(1).expect("export succeeds");
+    let path = scratch_path("free_fn");
+
+    assert_hdf5_boundary(write_nir(&path, &graph), &path);
+}
+
+#[test]
+fn write_nir_trait_method_delegates_to_to_nir() {
+    let path = scratch_path("trait_method");
+
+    assert_hdf5_boundary(encoder(1, 0.4).write_nir(&path, 1), &path);
 }

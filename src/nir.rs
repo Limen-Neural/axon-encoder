@@ -628,39 +628,10 @@ mod tests {
     }
 
     #[test]
-    fn write_nir_surfaces_the_nir_rs_hdf5_boundary() {
-        // This repository never enables `nir-rs`'s `hdf5` feature, so the
-        // delegation must report `Unimplemented` rather than panic or claim
-        // success. The same call serializes once a consumer enables it.
-        let graph = encoder(1, 0.4).to_nir(1).expect("export succeeds");
-        let path = std::env::temp_dir().join("axon_encoder_nir_boundary.nir");
-
-        // Another workspace member may unify `nir-rs/hdf5` on; then the write
-        // succeeds, which is also correct delegation.
-        let result = write_nir(&path, &graph);
-        let _ = std::fs::remove_file(&path);
-        assert!(matches!(
-            result,
-            Ok(()) | Err(NirExportError::Write(NirError::Unimplemented(_)))
-        ));
-    }
-
-    #[test]
-    fn write_nir_trait_method_delegates_to_to_nir() {
-        let path = std::env::temp_dir().join("axon_encoder_nir_trait.nir");
-        let result = encoder(1, 0.4).write_nir(&path, 1);
-        let _ = std::fs::remove_file(&path);
-        assert!(matches!(
-            result,
-            Ok(()) | Err(NirExportError::Write(NirError::Unimplemented(_)))
-        ));
-    }
-
-    #[test]
     fn write_nir_trait_method_reports_validation_before_writing() {
-        let path = std::env::temp_dir().join("axon_encoder_nir_invalid.nir");
+        // Validation fails before any I/O, so this path is never created.
         let error = encoder(2, 0.4)
-            .write_nir(&path, 9)
+            .write_nir("never-written.nir", 9)
             .expect_err("mismatch is rejected");
 
         assert_eq!(
