@@ -118,7 +118,8 @@
 //! is not preserved — `nir-rs` documents this for its HDF5 round-trip — so
 //! consumers must look nodes up by name rather than by position.
 
-use crate::encoder::EmbeddingRateEncoder;
+use crate::encoder::{EmbeddingRateEncoder, validate_v_th};
+use crate::error::EncoderError;
 use nir_rs::nodes::{If, Input, Output};
 use nir_rs::types::{MetadataMap, MetadataValue, Tensor};
 use std::fmt;
@@ -141,7 +142,7 @@ pub const ENCODER_NODE_NAME: &str = "encoder";
 
 /// Error returned by [`ToNir::to_nir`] and [`write_nir`].
 ///
-/// Kept separate from [`EncoderError`](crate::EncoderError): that type reports
+/// Kept separate from [`EncoderError`]: that type reports
 /// invalid *encoder construction* parameters, while this one reports a failed
 /// *export* of an otherwise valid encoder.
 #[non_exhaustive]
@@ -170,14 +171,11 @@ pub enum NirExportError {
         /// Largest supported channel count.
         maximum: usize,
     },
-    /// An encoder parameter is not exportable (for example a non-finite or
-    /// non-positive `v_th` set through the public `config` field).
-    InvalidParameter {
-        /// Name of the offending parameter.
-        parameter: &'static str,
-        /// Its current value.
-        value: f32,
-    },
+    /// The encoder's current parameters violate its construction invariants.
+    ///
+    /// Encoder configs are public and can be mutated after construction, so
+    /// the exporter re-validates them rather than emitting an invalid graph.
+    InvalidEncoder(EncoderError),
     /// `nir-rs` rejected a graph or tensor this crate constructed.
     ///
     /// A construction failure is a bug in the exporter, not in the caller's
@@ -207,10 +205,7 @@ impl fmt::Display for NirExportError {
                 f,
                 "requested {requested} channel(s) exceeds the maximum of {maximum}"
             ),
-            Self::InvalidParameter { parameter, value } => write!(
-                f,
-                "encoder parameter `{parameter}` = {value} cannot be exported"
-            ),
+            Self::InvalidEncoder(error) => write!(f, "invalid encoder parameter: {error}"),
             Self::Graph(error) => write!(f, "failed to build NIR graph: {error}"),
             Self::Write(error) => write!(f, "failed to write NIR graph: {error}"),
         }
@@ -220,11 +215,11 @@ impl fmt::Display for NirExportError {
 impl std::error::Error for NirExportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::InvalidEncoder(error) => Some(error),
             Self::Graph(error) | Self::Write(error) => Some(error),
             Self::EmptyChannelCount
             | Self::ChannelCountMismatch { .. }
-            | Self::ChannelCountTooLarge { .. }
-            | Self::InvalidParameter { .. } => None,
+            | Self::ChannelCountTooLarge { .. } => None,
         }
     }
 }
@@ -245,7 +240,8 @@ impl std::error::Error for NirExportError {
 /// - [`NirExportError::ChannelCountTooLarge`] when `channels` exceeds the
 ///   `u16` channel-ID range
 /// - [`NirExportError::ChannelCountMismatch`] for a fixed-width encoder
-/// - [`NirExportError::InvalidParameter`] for a non-exportable parameter
+/// - [`NirExportError::InvalidEncoder`] if the encoder's current parameters
+///   are invalid
 /// - [`NirExportError::Graph`] if `nir-rs` rejects a constructed node
 pub trait ToNir {
     /// Builds the parameter graph for `channels` channels.
@@ -382,8 +378,8 @@ fn build_graph(
 /// - [`NirExportError::ChannelCountMismatch`] when `channels` is not
 ///   [`EmbeddingRateEncoder::num_channels`]
 /// - [`NirExportError::EmptyChannelCount`] / [`NirExportError::ChannelCountTooLarge`]
-/// - [`NirExportError::InvalidParameter`] when `config.v_th` is no longer finite
-///   and positive (the field is public and can be mutated after construction)
+/// - [`NirExportError::InvalidEncoder`] when `config.v_th` is no longer finite
+///   and positive
 /// - [`NirExportError::Graph`] if `nir-rs` rejects a constructed tensor
 ///
 /// # Example
@@ -415,14 +411,7 @@ impl ToNir for EmbeddingRateEncoder {
             });
         }
 
-        // `config` is public, so `v_th` may have been mutated since
-        // construction; re-check the constructor's invariant before exporting.
-        if !(self.config.v_th.is_finite() && self.config.v_th > 0.0) {
-            return Err(NirExportError::InvalidParameter {
-                parameter: "v_th",
-                value: self.config.v_th,
-            });
-        }
+        validate_v_th(self.config.v_th).map_err(NirExportError::InvalidEncoder)?;
 
         let shape = vec![channels];
         let v_threshold = Tensor::from_f32(shape.clone(), vec![self.config.v_th; channels])
@@ -591,17 +580,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_v_th_mutated_to_an_invalid_value() {
+    fn rejects_a_threshold_mutated_after_construction() {
         for v_th in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            let mut enc = encoder(1, 0.4);
-            enc.config.v_th = v_th;
-            assert!(matches!(
-                enc.to_nir(1),
-                Err(NirExportError::InvalidParameter {
-                    parameter: "v_th",
-                    ..
+            let mut encoder = encoder(1, 0.4);
+            encoder.config.v_th = v_th;
+
+            assert_eq!(
+                encoder
+                    .to_nir(1)
+                    .expect_err("invalid threshold is rejected"),
+                NirExportError::InvalidEncoder(EncoderError::NonPositiveOrNonFinite {
+                    parameter: "v_th"
                 })
-            ));
+            );
         }
     }
 
@@ -665,12 +656,11 @@ mod tests {
         assert!(too_large.to_string().contains("exceeds the maximum of 2"));
         assert!(too_large.source().is_none());
 
-        let invalid = NirExportError::InvalidParameter {
+        let invalid = NirExportError::InvalidEncoder(EncoderError::NonPositiveOrNonFinite {
             parameter: "v_th",
-            value: -1.0,
-        };
-        assert!(invalid.to_string().contains("`v_th`"));
-        assert!(invalid.source().is_none());
+        });
+        assert!(invalid.to_string().contains("invalid encoder parameter"));
+        assert!(invalid.source().is_some());
 
         let graph = NirExportError::Graph(NirError::Unimplemented("io::read"));
         assert!(graph.to_string().contains("failed to build NIR graph"));

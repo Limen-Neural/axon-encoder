@@ -529,7 +529,7 @@ use axon_encoder::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let encoder = EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.4 })?;
-    encoder.write_nir("/tmp/encoder.nir", 2)?;
+    encoder.write_nir(std::env::temp_dir().join("encoder.nir"), 2)?;
     Ok(())
 }
 ```
