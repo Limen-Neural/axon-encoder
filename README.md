@@ -32,6 +32,7 @@ Optional features:
 | --- | --- |
 | `serde` | Serialize configs, gain types, and live encoder state. Deterministic `encode_step` paths resume exactly from a JSON-serializable checkpoint; stochastic paths that draw a thread-local RNG are not replay-stable. |
 | `ndarray` | Encode from `ndarray` views (`ArrayView1` / `ArrayView2`) |
+| `nir` | Export encoder parameters as a [NIR](https://github.com/neuromorphs/NIR) graph through `nir-rs`. Pure Rust: no HDF5 dependency, and nothing is enabled by default. Unreleased: not in the published 0.6.0, so it ships with the next release. |
 | `wasm-js` | Enable JavaScript-host entropy for `wasm32-unknown-unknown` through `getrandom`'s `wasm_js` backend. Intended for browsers, Web Workers, and supported Node.js hosts. |
 
 ```toml
@@ -465,6 +466,89 @@ construction-time transform whose result depended on the full embedding
 distribution rather than on any one call's input. Callers that relied on it
 should normalize before calling `encode`, using the former formula
 `(x - min) / (max - min + 1e-5)`.
+
+## NIR export (optional)
+
+NIR (Neuromorphic Intermediate Representation) is a framework-agnostic graph
+format for spiking networks. The opt-in `nir` feature exports an encoder's
+**static parameters** as a `nir-rs` graph, so a downstream tool can read the
+encoding front-end configuration in a standard form.
+
+This is an **export of parameters, not of data**. What leaves the crate at
+runtime is still `SpikeEvent` values on a caller-owned `TimeCursor` timeline;
+the `nir` feature adds a projection of an encoder's configuration and never
+touches that contract.
+
+The `nir` feature is not in the published 0.6.0; it ships with the next release.
+Until then, depend on the repository directly:
+
+```toml
+[dependencies]
+axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder", features = ["nir"] }
+```
+
+```rust
+use axon_encoder::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let encoder = EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.4 })?;
+
+    // `input` -> `encoder` -> `output`, carrying the encoder's parameters.
+    let graph = encoder.to_nir(2)?;
+    graph.validate_structure()?;
+    Ok(())
+}
+```
+
+Only encoders with a defensible NIR representation are mapped. `EmbeddingRateEncoder`
+is an integrate-and-fire neuron, so it exports as a NIR `IF` node whose
+`v_threshold` is `config.v_th`. Rate, latency, phase, population, temporal,
+predictive, derivative, delta, baseline-hold, and Poisson encoding all depend on
+analog-to-spike semantics that NIR has no node for; they are deliberately not
+mapped rather than approximated. See the `nir` module docs for the per-encoder
+audit and the documented deviations (discrete per-call time, soft reset).
+
+Exported graphs record provenance under the `axon_encoder.` metadata key prefix
+(`axon_encoder.encoder`, `axon_encoder.channels`, and so on), so a consumer can
+tell an exported parameter graph from a hand-authored network.
+
+### Writing a `.nir` file
+
+`axon-encoder` has no HDF5 dependency: `nir-rs` owns the wire format, and its
+own `hdf5` feature is what serializes. Enable it in your dependency and Cargo
+unifies the features:
+
+```toml
+[dependencies]
+axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder", features = ["nir"] }
+nir-rs = { version = "0.4", features = ["hdf5"] }
+```
+
+```rust
+use axon_encoder::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let encoder = EmbeddingRateEncoder::try_new(2, EmbeddingEncoderConfig { v_th: 0.4 })?;
+    encoder.write_nir(std::env::temp_dir().join("encoder.nir"), 2)?;
+    Ok(())
+}
+```
+
+Without `nir-rs`'s `hdf5` feature, `write_nir` returns an error wrapping
+`nir_rs::NirError::Unimplemented` rather than silently doing nothing. See
+`cargo run --example nir_export --features nir` for a runnable walkthrough.
+
+Acceptance by an independent consumer is a documented manual gate, not a CI
+step: the repository runs no Python. The gate has been performed for the current
+mapping — an exported graph was written through `nir-rs` 0.4.5 and loaded with
+the reference implementation, Python `nir` 1.0.8, which read back the `input`,
+`encoder`, and `output` nodes, both edges, the `IF` parameters, and the
+provenance metadata. To repeat it when a mapping changes, write a graph and load
+it with `nir.read(...)` (`pip install "nir==1.0.8"`).
+
+Serializing and reloading preserves graph semantics: node names and types,
+ordered edges, parameter values, and metadata. Node *insertion order* is not
+preserved by the HDF5 round-trip, so look nodes up by name.
 
 ## Features
 
