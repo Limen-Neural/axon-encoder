@@ -191,13 +191,13 @@ jobs:
           persist-credentials: false
 
       - name: Read rust-version from Cargo.toml
-        id: msrv
+        id: msr
         shell: bash
         run: |
           set -euo pipefail
           msrv=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r')
           echo "msrv=$msrv"
-          echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
+          echo "msr=$msrv" >> "$GITHUB_OUTPUT"
 
       - name: Install MSRV toolchain
         run: rustup toolchain install "${{ steps.msr.outputs.msr }}" --profile minimal
