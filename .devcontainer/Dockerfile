@@ -1,5 +1,6 @@
-# Keep `rust:1.99.0` in sync with Cargo.toml rust-version / rust-toolchain.toml
-# / CI toolchain pin (see REVIEW.md MSRV pin rule).
+# Keep `rust:1.99.0` in sync with rust-toolchain.toml channel / CI toolchain
+# pins (see REVIEW.md "MSRV vs dev-toolchain pin"). This is the dev toolchain,
+# not the crate MSRV — Cargo.toml rust-version stays lower by design.
 FROM rust:1.99.0-slim-bookworm
 
 USER root

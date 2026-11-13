@@ -8,29 +8,60 @@ They match the suite used to sign off PR #37 (rmems, 2026-07-15) and are
 **required** for security-oriented PRs such as PR #50 so merge thrash
 cannot land “green CI” while deleting product surface.
 
-## MSRV pin rule
+## MSRV vs dev-toolchain pin rule
 
-`Cargo.toml` `rust-version`, `rust-toolchain.toml` `channel`, and the
-`toolchain:` string in `.github/workflows/ci.yml` must stay **identical**
-(currently **1.99.0**). The contributor-only `.devcontainer/Dockerfile`
-`FROM rust:<ver>` tag must match too. CI fails if these pins drift
-(issue #67 / LIM-1014, #61 / LIM-972).
+`Cargo.toml` `rust-version` is the **true measured MSRV**: the oldest rustc
+that actually builds the crate, verified with
+`cargo +<ver> check --locked --all-targets --features serde,ndarray`
+(currently **1.88.0**; let-chains in `src/streaming.rs` need 1.88, and 1.85
+fails). It is intentionally allowed — and expected — to be **lower** than the
+dev toolchain. Exception: the optional `nir` feature is floored by `nir-rs`'s
+own `rust-version` (1.98.1 in nir-rs 0.4.5), not by this crate — it is
+excluded from the msrv job until Limen-Neural/nir-rs#70 lands.
 
-The coverage workflow uses the same pin. `.agents/setup` and `.agents/resume`
-read `rust-toolchain.toml` directly, so fresh and resumed orbs use Rust 1.99.0
-without a separate version constant.
+The **dev-toolchain pin** is `rust-toolchain.toml` `channel` (currently
+**1.99.0**), every literal `toolchain:` string in `.github/workflows/ci.yml`
+and `coverage.yml` (wasm, audit, validate, coverage), and the
+contributor-only `.devcontainer/Dockerfile` `FROM rust:<ver>` tag. These must
+stay **identical to each other**, and `rust-version <= toolchain channel`
+must hold (issue #123 / LIM-1571, parent Limen-Neural/neuromod#214;
+supersedes the old "MSRV pin rule" from #67 / LIM-1014).
 
-To bump MSRV:
+The dedicated `msrv` job in `ci.yml` reads `rust-version` from Cargo.toml,
+installs exactly that toolchain, and runs `cargo check`/`cargo test` on it —
+so the advertised MSRV is enforced continuously and toolchain upgrades no
+longer bump it.
 
-1. Set the new version in Cargo.toml, rust-toolchain.toml, ci.yml, and the
-   `FROM rust:` tag in `.devcontainer/Dockerfile`; update coverage.yml and the
-   devcontainer display name and README.md's Rust requirement too.
-2. Run the mandatory commands below on that toolchain
+The coverage workflow uses the dev pin. `.agents/setup` and `.agents/resume`
+read `rust-toolchain.toml` directly, so fresh and resumed orbs use Rust
+1.99.0 without a separate version constant.
+
+To bump the **dev toolchain** (e.g. to the next stable):
+
+1. Set the new version in rust-toolchain.toml, the `toolchain:` strings in
+   ci.yml and coverage.yml, the `cargo +<ver>` step commands, the
+   `FROM rust:` tag in `.devcontainer/Dockerfile`, and the devcontainer
+   display name; update README/REVIEW mentions of the dev pin.
+2. Leave `rust-version` alone unless measurement shows the MSRV changed;
+   confirm `rust-version <= toolchain channel` still holds.
+3. Run the mandatory commands below on that toolchain
    (`rustup run <ver> cargo test --locked`, etc.).
-3. Confirm GitHub Actions matrix (Linux / macOS / Windows) is green.
-4. Rebuild the devcontainer and confirm the editor tooling starts correctly.
+4. Confirm GitHub Actions matrix (Linux / macOS / Windows) plus the `msrv`
+   job is green.
+5. Rebuild the devcontainer and confirm the editor tooling starts correctly.
 
-Do not bump only one pin.
+To change the **MSRV**:
+
+1. Measure the oldest passing rustc:
+   `cargo +<ver> check --locked --all-targets --features serde,ndarray`
+   (then `cargo +<ver> test --locked --features serde,ndarray` for the msrv
+   job's test step). `--all-features` additionally pulls in `nir`/`nir-rs`,
+   whose floor is its own `rust-version`, not this crate's. Note
+   dev-dependency floors: criterion 0.8.2 needs 1.86, so an all-targets MSRV
+   below that cannot work.
+2. Set `rust-version` in Cargo.toml to the lowest passing version; update
+   README.md's Rust requirement.
+3. Let the `msrv` CI job prove it; do not touch the dev-toolchain pin.
 
 ## When to run
 

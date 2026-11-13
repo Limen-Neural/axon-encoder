@@ -69,16 +69,18 @@ jobs:
         with:
           persist-credentials: false
 
-      # Keep Cargo.toml rust-version, rust-toolchain.toml channel, and this
-      # job's toolchain: string identical (MSRV single source of truth — #67).
+      # rust-version (true MSRV) is enforced by the `msrv` job and may be lower
+      # than the dev-toolchain pin. rust-toolchain.toml channel, every literal
+      # `toolchain:` pin (including this job's), and the devcontainer rust image
+      # must all equal the dev pin, and rust-version must not exceed it
+      # (REVIEW.md "MSRV vs dev-toolchain pin" — #123 / LIM-1571).
       - name: Install Rust 1.99.0
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: 1.99.0
           components: clippy, rustfmt
 
-      # shell: bash so the script runs on Windows runners too.
-      - name: Verify MSRV pins agree
+      - name: Verify MSRV/dev-toolchain pins
         shell: bash
         run: |
           set -euo pipefail
@@ -87,12 +89,24 @@ jobs:
           toolchain_ch=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/' | strip_cr)
           echo "Cargo.toml rust-version=$cargo_rv"
           echo "rust-toolchain.toml channel=$toolchain_ch"
-          if [ "$cargo_rv" != "$toolchain_ch" ]; then
-            echo "ERROR: MSRV pins disagree (must be identical)." >&2
+          # Numeric x.y.z compare: returns 0 when $1 <= $2.
+          ver_le() {
+            local IFS=.
+            local -a a=($1) b=($2)
+            local i
+            for i in 0 1 2; do
+              if [ "${a[i]:-0}" -lt "${b[i]:-0}" ]; then return 0; fi
+              if [ "${a[i]:-0}" -gt "${b[i]:-0}" ]; then return 1; fi
+            done
+            return 0
+          }
+          if ! ver_le "$cargo_rv" "$toolchain_ch"; then
+            echo "ERROR: rust-version=$cargo_rv must be <= toolchain channel=$toolchain_ch." >&2
             exit 1
           fi
-          # Check every job's toolchain pin, including validate and coverage.
-          # Strip CR for Windows checkouts; do not stop at the audit job.
+          # Check every literal toolchain pin. The `msrv` job installs its
+          # toolchain via rustup from Cargo.toml rust-version, so it has no
+          # literal `toolchain:` line and is intentionally not matched here.
           for workflow in .github/workflows/ci.yml .github/workflows/coverage.yml; do
             pins=$(awk '/^[[:space:]]*toolchain:[[:space:]]*/ {
               sub(/^[[:space:]]*toolchain:[[:space:]]*/, "")
@@ -105,8 +119,8 @@ jobs:
             fi
             while IFS= read -r pin; do
               echo "$workflow toolchain=$pin"
-              if [ "$pin" != "$cargo_rv" ]; then
-                echo "ERROR: $workflow toolchain must match rust-version=$cargo_rv (got '$pin')." >&2
+              if [ "$pin" != "$toolchain_ch" ]; then
+                echo "ERROR: $workflow toolchain must match rust-toolchain.toml channel=$toolchain_ch (got '$pin')." >&2
                 exit 1
               fi
             done <<< "$pins"
@@ -117,8 +131,8 @@ jobs:
               # Do not let missing matches abort under pipefail before the ERROR.
               img=$(grep -m1 -E '^FROM[[:space:]]+rust:' "$df" 2>/dev/null | sed -E 's/.*rust:([0-9]+\.[0-9]+\.[0-9]+).*/\1/' | tr -d '\r' || true)
               echo "$df rust image tag=${img:-<missing>}"
-              if [ -z "$img" ] || [ "$img" != "$cargo_rv" ]; then
-                echo "ERROR: $df rust image tag must match rust-version=$cargo_rv (got '${img:-<missing>}')." >&2
+              if [ -z "$img" ] || [ "$img" != "$toolchain_ch" ]; then
+                echo "ERROR: $df rust image tag must match toolchain channel=$toolchain_ch (got '${img:-<missing>}')." >&2
                 exit 1
               fi
             fi
@@ -158,3 +172,46 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --all-features
+
+  # True-MSRV gate: installs exactly the rustc that Cargo.toml `rust-version`
+  # declares and builds/tests the crate on it. Kept separate from the
+  # dev-toolchain pin (1.99.0) so toolchain upgrades stop bumping the MSRV
+  # (#123 / LIM-1571, parent Limen-Neural/neuromod#214).
+  msrv:
+    name: MSRV (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        shell: bash
+        run: |
+          set -euo pipefail
+          msrv=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r')
+          echo "msrv=$msrv"
+          echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
+
+      - name: Install MSRV toolchain
+        run: rustup toolchain install "${{ steps.msr.outputs.msr }}" --profile minimal
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2
+        with:
+          key: msrv-${{ steps.msr.outputs.msr }}
+
+      # `nir` is excluded: it is gated by nir-rs's own rust-version (1.98.1 in
+      # nir-rs 0.4.5), which is tracked separately (Limen-Neural/nir-rs#70).
+      # `serde` and `ndarray` cover the optional in-crate features.
+      - name: Check all targets on MSRV
+        run: cargo +${{ steps.msr.outputs.msr }} check --locked --all-targets --features serde,ndarray
+
+      - name: Test on MSRV
+        run: cargo +${{ steps.msr.outputs.msr }} test --locked --features serde,ndarray

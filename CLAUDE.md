@@ -22,7 +22,7 @@ Linux, CPU only). `Cargo.lock` is tracked, so `--locked` is correct. Set `CARGO_
 | `cargo +1.99.0 check --locked --target wasm32-unknown-unknown --no-default-features --features serde,wasm-js` | not run (wasm32 target not installed here) |
 | `cargo audit`, `cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info` | not run (`cargo-audit` not installed; coverage is a CI job) |
 
-CI (`ci.yml`) runs wasm, audit, and a Linux/macOS/Windows matrix with an MSRV-pin check; `coverage.yml` uploads to Codecov.
+CI (`ci.yml`) runs wasm, audit, a Linux/macOS/Windows matrix, and a dedicated `msrv` job that reads `rust-version` from Cargo.toml; `coverage.yml` uploads to Codecov.
 Run the fmt and clippy gates before committing; CI fails on either. The full local bar and regression guards are in `REVIEW.md`.
 
 ## Architecture map
@@ -49,7 +49,7 @@ Run the fmt and clippy gates before committing; CI fails on either. The full loc
 
 ## Gotchas
 
-- `Cargo.toml` `rust-version`, `rust-toolchain.toml`, the `toolchain:` pins in `ci.yml` and `coverage.yml`, and the Rust version in the `.devcontainer/Dockerfile` `FROM rust:<version>-slim-bookworm` tag must stay identical.
+- `Cargo.toml` `rust-version` is the true measured MSRV (1.88.0); `rust-toolchain.toml` `channel`, the non-MSRV `toolchain:` pins in `ci.yml` and `coverage.yml`, and the `.devcontainer/Dockerfile` `FROM rust:<version>-slim-bookworm` tag are the dev-toolchain pin (1.99.0). They must satisfy `rust-version <= toolchain channel` but need not be equal (REVIEW.md "MSRV vs dev-toolchain pin").
 - `cargo test --test serde_tests` without `--features serde` runs zero tests.
 - `.claude/` is not gitignored; do not commit local agent state there.
 - Never run `cargo publish` or create release tags.

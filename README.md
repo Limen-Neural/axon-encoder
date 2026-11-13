@@ -32,7 +32,7 @@ Optional features:
 | --- | --- |
 | `serde` | Serialize configs, gain types, and live encoder state. Deterministic `encode_step` paths resume exactly from a JSON-serializable checkpoint; stochastic paths that draw a thread-local RNG are not replay-stable. |
 | `ndarray` | Encode from `ndarray` views (`ArrayView1` / `ArrayView2`) |
-| `nir` | Export encoder parameters as a [NIR](https://github.com/neuromorphs/NIR) graph through `nir-rs`. Pure Rust: no HDF5 dependency, and nothing is enabled by default. Unreleased: not in the published 0.6.0, so it ships with the next release. |
+| `nir` | Export encoder parameters as a [NIR](https://github.com/neuromorphs/NIR) graph through `nir-rs`. Pure Rust: no HDF5 dependency, and nothing is enabled by default. Unreleased: not in the published 0.6.0, so it ships with the next release. Requires Rust 1.98.1+ via `nir-rs` 0.4.5's own `rust-version`; the crate MSRV (1.88.0) covers every other feature. |
 | `wasm-js` | Enable JavaScript-host entropy for `wasm32-unknown-unknown` through `getrandom`'s `wasm_js` backend. Intended for browsers, Web Workers, and supported Node.js hosts. |
 
 ```toml
@@ -41,7 +41,7 @@ axon-encoder = { version = "0.5", features = ["ndarray"] }
 ndarray = "0.16" # declare yourself so you can build ArrayView values
 ```
 
-Requires **Rust 1.99.0+** (edition 2024). See `rust-version` in `Cargo.toml`.
+Requires **Rust 1.88.0+** (edition 2024). See `rust-version` in `Cargo.toml`.
 
 ### Serde checkpoints
 
