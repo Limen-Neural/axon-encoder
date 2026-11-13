@@ -125,7 +125,7 @@ jobs:
               fi
             done <<< "$pins"
             # Hard-coded `cargo +<ver>` invocations (e.g. the wasm check) must
-            # use the dev pin too. `cargo +${{ ... }}` templates are skipped
+            # use the dev pin too. Expression-templated cargo calls are skipped
             # because they do not start with a digit.
             cargo_pins=$(grep -oE 'cargo \+[0-9]+\.[0-9]+\.[0-9]+' "$workflow" | sed -E 's/.*\+//' | sort -u || true)
             while IFS= read -r cpin; do
