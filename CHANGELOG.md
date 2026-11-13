@@ -47,6 +47,14 @@
 
 ### Changed
 
+- `rust-version` lowered from `1.99.0` to the measured MSRV **1.88.0**
+  (let-chains in `src/streaming.rs`; `1.85` fails). The optional `nir`
+  feature remains floored at Rust 1.98.1 by `nir-rs` 0.4.5's own
+  `rust-version`. The dev toolchain stays
+  pinned at 1.99.0 (`rust-toolchain.toml`, CI, devcontainer) and a dedicated
+  `msrv` CI job now builds and tests on the `rust-version` toolchain, per the
+  MSRV-sweep policy ([issue #123](https://github.com/Limen-Neural/axon-encoder/issues/123),
+  parent [neuromod#214](https://github.com/Limen-Neural/neuromod/issues/214)).
 - **Breaking:** `TemporalEncoder::new` / `try_new` take `change_thresholds: Vec<f32>`
   instead of `Vec<(f32, u16)>`. The `u16` "spike value" was never read (it set
   neither polarity nor channel), so it is removed; pass `vec![0.5]` where you

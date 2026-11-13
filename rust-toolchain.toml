@@ -1,5 +1,7 @@
 [toolchain]
-# Keep identical to Cargo.toml `rust-version` and the CI workflow
-# `toolchain:` pin (see REVIEW.md "MSRV pin rule").
+# Dev-toolchain pin: must match the CI workflow `toolchain:` pins and the
+# .devcontainer Dockerfile rust image tag (see REVIEW.md "MSRV vs
+# dev-toolchain pin"). Deliberately newer than Cargo.toml `rust-version`,
+# which is the true measured MSRV enforced by the `msrv` CI job.
 channel = "1.99.0"
 components = ["clippy", "rustfmt"]

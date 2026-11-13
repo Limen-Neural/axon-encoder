@@ -10,9 +10,12 @@ documentation = "https://docs.rs/axon-encoder"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 edition = "2024"
-# Keep identical to rust-toolchain.toml `channel` and the CI workflow
-# `toolchain:` pin (see REVIEW.md "MSRV pin rule").
-rust-version = "1.99.0"
+# True measured MSRV (let-chains in src/streaming.rs need 1.88; verified with
+# `cargo +1.88.0 check --locked --all-targets --features serde,ndarray`).
+# Intentionally lower than the dev toolchain pin — see REVIEW.md "MSRV vs
+# dev-toolchain pin". The optional `nir` feature is floored higher by
+# nir-rs's own rust-version (1.98.1 as of nir-rs 0.4.5), not by this crate.
+rust-version = "1.88.0"
 keywords = ["snn", "spiking", "neuromorphic", "encoding", "spike"]
 categories = ["science", "algorithms", "simulation"]
 # crates.io surface: keep licenses, README, sources, examples, and tests.
