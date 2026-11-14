@@ -519,7 +519,7 @@ unifies the features:
 
 ```toml
 [dependencies]
-axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder", features = ["nir"] }
+axon-encoder = { version = "0.7", features = ["nir"] }
 nir-rs = { version = "0.4", features = ["hdf5"] }
 ```
 
