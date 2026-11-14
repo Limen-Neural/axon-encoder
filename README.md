@@ -16,14 +16,14 @@ front-end of a neuromorphic pipeline without pulling in a full SNN simulator.
 
 ## Installation
 
-**0.5.x is experimental (pre-1.0).** Cargo treats `axon-encoder = "0.5"` as
-`^0.5` (that is `>= 0.5.0, < 0.6.0`): compatible **patch** updates only.
-The 0.5 release is a breaking line from 0.4; pin `"=0.5.0"` if you need an
+**0.7.x is experimental (pre-1.0).** Cargo treats `axon-encoder = "0.7"` as
+`^0.7` (that is `>= 0.7.0, < 0.8.0`): compatible **patch** updates only.
+The 0.7 release is a breaking line from 0.6; pin `"=0.7.0"` if you need an
 exact crate version.
 
 ```toml
 [dependencies]
-axon-encoder = "0.5"
+axon-encoder = "0.7"
 ```
 
 Optional features:
@@ -32,12 +32,12 @@ Optional features:
 | --- | --- |
 | `serde` | Serialize configs, gain types, and live encoder state. Deterministic `encode_step` paths resume exactly from a JSON-serializable checkpoint; stochastic paths that draw a thread-local RNG are not replay-stable. |
 | `ndarray` | Encode from `ndarray` views (`ArrayView1` / `ArrayView2`) |
-| `nir` | Export encoder parameters as a [NIR](https://github.com/neuromorphs/NIR) graph through `nir-rs`. Pure Rust: no HDF5 dependency, and nothing is enabled by default. Unreleased: not in the published 0.6.0, so it ships with the next release. Requires Rust 1.98.1+ via `nir-rs` 0.4.5's own `rust-version`; the crate MSRV (1.88.0) covers every other feature. |
+| `nir` | Export encoder parameters as a [NIR](https://github.com/neuromorphs/NIR) graph through `nir-rs`. Pure Rust: no HDF5 dependency, and nothing is enabled by default. Available from 0.7.0. Requires Rust 1.98.1+ via `nir-rs` 0.4.5's own `rust-version`; the crate MSRV (1.88.0) covers every other feature. |
 | `wasm-js` | Enable JavaScript-host entropy for `wasm32-unknown-unknown` through `getrandom`'s `wasm_js` backend. Intended for browsers, Web Workers, and supported Node.js hosts. |
 
 ```toml
 [dependencies]
-axon-encoder = { version = "0.5", features = ["ndarray"] }
+axon-encoder = { version = "0.7", features = ["ndarray"] }
 ndarray = "0.16" # declare yourself so you can build ArrayView values
 ```
 
@@ -479,8 +479,7 @@ runtime is still `SpikeEvent` values on a caller-owned `TimeCursor` timeline;
 the `nir` feature adds a projection of an encoder's configuration and never
 touches that contract.
 
-The `nir` feature is not in the published 0.6.0; it ships with the next release.
-Until then, depend on the repository directly:
+The `nir` feature is available from 0.7.0. If you need it on an older release, depend on the repository directly:
 
 ```toml
 [dependencies]
@@ -590,7 +589,7 @@ Consumers targeting browsers, Web Workers, or supported Node.js hosts (Node.js
 
 ```toml
 [dependencies]
-axon-encoder = { version = "0.5", features = ["wasm-js"] }
+axon-encoder = { version = "0.7", features = ["wasm-js"] }
 ```
 
 The feature is opt-in because `wasm32-unknown-unknown` also supports non-JS and

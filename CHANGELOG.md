@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-14
+
 ### Added
 
 - `nir` feature (off by default): NIR (Neuromorphic Intermediate Representation)
