@@ -1,0 +1,43 @@
+# Dependabot version updates for Cargo and GitHub Actions.
+#
+# rust-toolchain.toml, .devcontainer/Dockerfile, and the CI `toolchain:` pins are
+# deliberately not managed here: the Rust dev-toolchain pin must move atomically
+# across those files and docs (REVIEW.md "MSRV vs dev-toolchain pin"), which
+# Dependabot cannot do in one PR. The devcontainer has no Features or lockfile,
+# so `devcontainers` has nothing to update.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    groups:
+      # Most Cargo deps here are 0.x, where a minor bump can be breaking;
+      # group only patch updates and leave minor/major updates individual.
+      cargo-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
