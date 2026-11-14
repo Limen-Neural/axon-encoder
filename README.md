@@ -479,7 +479,7 @@ runtime is still `SpikeEvent` values on a caller-owned `TimeCursor` timeline;
 the `nir` feature adds a projection of an encoder's configuration and never
 touches that contract.
 
-The `nir` feature is available from 0.7.0. If you are on an older release, upgrade to 0.7; depending on the repository's default branch will select the latest release, not the older one.
+The `nir` feature is available from 0.7.0. If you are on an older release, upgrade to 0.7; depending on the repository's default branch will select that branch's current code, not an older release.
 
 ```toml
 [dependencies]
