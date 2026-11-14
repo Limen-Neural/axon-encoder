@@ -16,12 +16,13 @@ updates:
       timezone: "Etc/UTC"
     open-pull-requests-limit: 10
     groups:
-      cargo-minor-patch:
+      # Most Cargo deps here are 0.x, where a minor bump can be breaking;
+      # group only patch updates and leave minor/major updates individual.
+      cargo-patch:
         applies-to: version-updates
         patterns:
           - "*"
         update-types:
-          - "minor"
           - "patch"
 
   - package-ecosystem: "github-actions"
