@@ -479,11 +479,11 @@ runtime is still `SpikeEvent` values on a caller-owned `TimeCursor` timeline;
 the `nir` feature adds a projection of an encoder's configuration and never
 touches that contract.
 
-The `nir` feature is available from 0.7.0. If you need it on an older release, depend on the repository directly:
+The `nir` feature is available from 0.7.0. If you are on an older release, upgrade to 0.7; depending on the repository's default branch will select the latest release, not the older one.
 
 ```toml
 [dependencies]
-axon-encoder = { git = "https://github.com/Limen-Neural/axon-encoder", features = ["nir"] }
+axon-encoder = { version = "0.7", features = ["nir"] }
 ```
 
 ```rust
