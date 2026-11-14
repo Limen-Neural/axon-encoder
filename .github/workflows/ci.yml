@@ -151,7 +151,7 @@ jobs:
           done
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
 
       - name: Check formatting
         if: runner.os == 'Linux'
@@ -215,7 +215,7 @@ jobs:
         run: rustup toolchain install "${{ steps.msr.outputs.msr }}" --profile minimal
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           key: msrv-${{ steps.msr.outputs.msr }}
 
