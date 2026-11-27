@@ -9,6 +9,8 @@ pub mod predictive;
 pub mod rate;
 pub mod temporal;
 
+pub(crate) mod population_core;
+
 #[cfg(test)]
 pub(crate) mod property_support;
 
