@@ -1,7 +1,7 @@
 # Encoder guide
 
-This guide chooses and operates the public `axon-encoder` 0.5 API for a
-real-time pipeline. Start with `try_new`, keep the encoder alive for the life
+This guide chooses and operates the public `axon-encoder` API for a real-time
+pipeline. Start with `try_new`, keep the encoder alive for the life
 of a stream, and call `encode_step` once per incoming frame.
 
 ## Choose an encoder
@@ -122,8 +122,9 @@ Restoring a finite JSON checkpoint continues deterministic `encode_step` paths
 exactly. It does **not** make a stochastic path replayable: batch
 `RateEncoder::encode` and the thread-local `PopulationEncoder`,
 `DirectionalPopulationEncoder`, and `PoissonEncoder` modes create RNG state
-internally. Their seeded `*_with_rng` forms replay within fixed crate/RNG
-versions, but serde checkpoints do not capture that caller-owned generator.
+internally. Their seeded `*_with_rng` forms replay for a fixed crate/RNG
+version, platform, configuration, seed, and input-call sequence, but serde
+checkpoints do not capture that caller-owned generator.
 Treat restored stochastic outputs as fresh draws unless the RNG is checkpointed
 separately.
 

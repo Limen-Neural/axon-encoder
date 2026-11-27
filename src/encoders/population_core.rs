@@ -7,6 +7,24 @@
 
 use crate::prelude::*;
 
+/// Mutable draw state and modulation for one population-encoding call.
+///
+/// Grouping these two inputs keeps the shared sink path small without putting
+/// either object in the stateless encoder itself.
+pub(crate) struct PopulationEncodeContext<'a, R: rand::Rng + ?Sized> {
+    sensitivity_scale: f32,
+    rng: &'a mut R,
+}
+
+impl<'a, R: rand::Rng + ?Sized> PopulationEncodeContext<'a, R> {
+    pub(crate) fn new(sensitivity_scale: f32, rng: &'a mut R) -> Self {
+        Self {
+            sensitivity_scale,
+            rng,
+        }
+    }
+}
+
 /// Crate-internal tuning model shared by population-style encoders.
 pub(crate) trait PopulationCore {
     /// Number of tuned neurons emitted for each input channel.
@@ -39,11 +57,10 @@ pub(crate) trait PopulationCore {
     }
 
     /// Spike-emitting core shared by every returning and sink-based path.
-    fn encode_with_sensitivity_scale_into<S: SpikeSink + ?Sized, R: rand::Rng + ?Sized>(
+    fn encode_with_context_into<S: SpikeSink + ?Sized, R: rand::Rng + ?Sized>(
         &mut self,
         input: &[f32],
-        sensitivity_scale: f32,
-        rng: &mut R,
+        context: &mut PopulationEncodeContext<'_, R>,
         sink: &mut S,
     ) {
         let num_neurons = self.num_neurons();
@@ -58,13 +75,13 @@ pub(crate) trait PopulationCore {
         );
 
         // Zero/negative/non-finite sensitivity fully suppresses population responses.
-        if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
+        if !context.sensitivity_scale.is_finite() || context.sensitivity_scale <= 0.0 {
             return;
         }
-        let tuning_width = self.effective_tuning_width(sensitivity_scale);
+        let tuning_width = self.effective_tuning_width(context.sensitivity_scale);
         // Scales > 1 narrow the width above; scales in (0, 1) only reduce rate
         // so small positive gains never produce near-universal firing.
-        let rate_gain = sensitivity_scale.min(1.0);
+        let rate_gain = context.sensitivity_scale.min(1.0);
 
         for (input_channel, &value) in input.iter().enumerate() {
             let channel_base = input_channel * num_neurons;
@@ -72,7 +89,7 @@ pub(crate) trait PopulationCore {
                 let channel = u16::try_from(channel_base + i)
                     .expect("population channel count was validated above");
                 let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
-                if crate::rng::gen_unit_f32_with_rng(rng) < rate {
+                if crate::rng::gen_unit_f32_with_rng(&mut *context.rng) < rate {
                     sink.push(SpikeEvent::at_step_start(channel, true));
                 }
             }
@@ -87,12 +104,8 @@ pub(crate) trait PopulationCore {
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
         let mut rng = rand::rng();
-        self.encode_with_sensitivity_scale_into(
-            input,
-            sensitivity_scale,
-            &mut rng,
-            &mut output.spikes,
-        );
+        let mut context = PopulationEncodeContext::new(sensitivity_scale, &mut rng);
+        self.encode_with_context_into(input, &mut context, &mut output.spikes);
         output
     }
 
@@ -103,7 +116,8 @@ pub(crate) trait PopulationCore {
         rng: &mut R,
     ) -> EncodedOutput {
         let mut output = EncodedOutput::new();
-        self.encode_with_sensitivity_scale_into(input, 1.0, rng, &mut output.spikes);
+        let mut context = PopulationEncodeContext::new(1.0, rng);
+        self.encode_with_context_into(input, &mut context, &mut output.spikes);
         output
     }
 }
@@ -155,8 +169,12 @@ macro_rules! impl_population_encoder_api {
             fn encode_into(&mut self, input: &[f32], sink: &mut dyn $crate::sink::SpikeSink) {
                 $crate::sink::through_chunks(sink, |sink| {
                     let mut rng = rand::rng();
-                    <Self as $crate::encoders::population_core::PopulationCore>::encode_with_sensitivity_scale_into(
-                        self, input, 1.0, &mut rng, sink,
+                    let mut context =
+                        $crate::encoders::population_core::PopulationEncodeContext::new(
+                            1.0, &mut rng,
+                        );
+                    <Self as $crate::encoders::population_core::PopulationCore>::encode_with_context_into(
+                        self, input, &mut context, sink,
                     )
                 });
             }
@@ -203,12 +221,13 @@ macro_rules! impl_population_encoder_api {
                 let sensitivity_scale = gains.sanitize().sensitivity_scale;
                 $crate::sink::through_chunks(sink, |sink| {
                     let mut rng = rand::rng();
-                    <Self as $crate::encoders::population_core::PopulationCore>::encode_with_sensitivity_scale_into(
-                        self,
-                        input,
-                        sensitivity_scale,
-                        &mut rng,
-                        sink,
+                    let mut context =
+                        $crate::encoders::population_core::PopulationEncodeContext::new(
+                            sensitivity_scale,
+                            &mut rng,
+                        );
+                    <Self as $crate::encoders::population_core::PopulationCore>::encode_with_context_into(
+                        self, input, &mut context, sink,
                     )
                 });
             }

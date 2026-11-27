@@ -3,8 +3,8 @@
 These hand-checked payloads anchor field layouts from the `v0.3.0`, `v0.4.0`,
 and `v0.5.0` Git tags. They were reconstructed from those tags' serde derives,
 helper structs, and validation, not automatically regenerated from HEAD.
-`v0.5/` covers the **20 public serde types that existed in that historical matrix**; the current reader loads
-each and the current writer is checked against the same JSON. `head/` adds
+`v0.5/` covers the **20 public serde types that existed in that historical
+matrix**; the current reader loads each and the current writer is checked against the same JSON. `head/` adds
 partial, extended, invalid, and rate-state edge cases. Tests compare JSON values
 (ignoring whitespace/key order), except the historical `SpikeEvent` test also
 checks the identical compact JSON bytes. Integers stay integers, including a
@@ -64,7 +64,7 @@ current serde API for removed `EncoderState`, `EncoderConfig`, or
 
 ## Scope and maintenance
 
-**Stochastic encoders are config-only here.** Population batch encoding,
+**Stochastic encoders are config-only here.** Population and directional-population batch encoding,
 Poisson trains, and Rate batch encoding do not persist a random stream in these
 payloads. These tests never generate stochastic trains or use RNG injection
 and do not claim spike-train replay. Live deterministic checkpoint continuation

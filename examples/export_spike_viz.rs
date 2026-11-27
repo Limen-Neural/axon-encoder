@@ -109,21 +109,20 @@ struct Case {
 }
 
 impl Case {
-    fn new(
-        events: Events,
-        n_neurons: usize,
-        n_steps: u64,
-        config: serde_json::Value,
-        stimulus: &[Vec<f32>],
-    ) -> Self {
+    fn new(events: Events, n_neurons: usize, n_steps: u64, config: serde_json::Value) -> Self {
         Self {
             events,
             n_neurons,
             n_steps,
             config,
-            stimulus: stimulus.to_vec(),
+            stimulus: Vec::new(),
             preferred_angles_radians: None,
         }
+    }
+
+    fn with_stimulus(mut self, stimulus: &[Vec<f32>]) -> Self {
+        self.stimulus = stimulus.to_vec();
+        self
     }
 
     fn with_preferred_angles(mut self, preferred_angles_radians: Vec<f32>) -> Self {
@@ -146,8 +145,8 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
                 CHANNELS,
                 n_steps,
                 serde_json::json!({"base_rate_hz": 50.0, "max_rate_hz": 400.0, "range": [0.0, 1.0]}),
-                stim,
             )
+            .with_stimulus(stim)
         }
         "poisson" => poisson_case(stim, rng),
         // Deterministic; window model — absolute ticks advance by span per call.
@@ -159,8 +158,8 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
                 CHANNELS,
                 n_steps,
                 serde_json::json!({"max_latency": 10, "range": [0.0, 1.0]}),
-                stim,
             )
+            .with_stimulus(stim)
         }
         "population" => population_case(stim, rng),
         "directional_population" => directional_population_case(stim, rng),
@@ -173,8 +172,8 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
                 CHANNELS,
                 n_steps,
                 serde_json::json!({"history_depth": 8, "change_thresholds": [0.05, 0.15, 0.30]}),
-                stim,
             )
+            .with_stimulus(stim)
         }
         // Deterministic deviation predictions over a rolling window.
         "predictive" => {
@@ -187,8 +186,8 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
                 CHANNELS,
                 n_steps,
                 serde_json::json!({"history_depth": 8, "deviation_thresholds": [[0.05, 1], [0.15, 2], [0.30, 3]]}),
-                stim,
             )
+            .with_stimulus(stim)
         }
         other => {
             eprintln!("unknown encoder {other:?}");
@@ -218,8 +217,8 @@ fn poisson_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
         CHANNELS,
         CALLS as u64,
         serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus[t][ch]"}),
-        stim,
     )
+    .with_stimulus(stim)
 }
 
 /// Seeded RNG through the public surface; output channels fan out to
@@ -239,8 +238,8 @@ fn population_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
         CHANNELS * NEURONS_PER_INPUT,
         cursor.origin().max(model.span_ticks()),
         serde_json::json!({"num_neurons": NEURONS_PER_INPUT, "input_range": [0.0, 1.0], "tuning_width": 0.15}),
-        stim,
     )
+    .with_stimulus(stim)
 }
 
 /// Directional angles are the shared normalized stimulus scaled by 2π. The
@@ -280,8 +279,8 @@ fn directional_population_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
             "input_units": "radians",
             "angle_convention": "zero east, counterclockwise positive; input is the shared normalized stimulus scaled by 2π"
         }),
-        &angular_stim,
     )
+    .with_stimulus(&angular_stim)
     .with_preferred_angles(preferred_angles)
 }
 
@@ -338,7 +337,7 @@ fn main() {
     if args.len() != 3 {
         eprintln!("usage: export_spike_viz <encoder> <out_dir>");
         eprintln!(
-            "encoders: rate poisson latency population directional_population temporal predictive"
+            "encoders: rate poisson latency population directional_population (directional) temporal predictive"
         );
         std::process::exit(2);
     }

@@ -136,7 +136,10 @@ impl PopulationCore for DirectionalPopulationEncoder {
         } else {
             wrapped - std::f32::consts::TAU
         };
-        ((circular_delta.cos() - 1.0) / (tuning_width * tuning_width)).exp()
+        // cos(delta) - 1 catastrophically rounds to zero for small offsets.
+        // The half-angle identity keeps narrow tuning curves selective there.
+        let sin_half_delta = (circular_delta * 0.5).sin();
+        (-2.0 * sin_half_delta * sin_half_delta / (tuning_width * tuning_width)).exp()
     }
 }
 
@@ -199,6 +202,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn narrow_tuning_stays_selective_at_small_offsets() {
+        let encoder = DirectionalPopulationEncoder::new(16, 0.01);
+
+        let response = encoder.get_rate_with_tuning_width(0.0001, 0, 0.01);
+
+        assert!(
+            response < 1.0,
+            "small offset must not round to peak: {response}"
+        );
+        assert!(
+            response > 0.9999,
+            "half-angle response changed unexpectedly: {response}"
+        );
     }
 
     #[test]

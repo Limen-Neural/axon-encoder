@@ -283,7 +283,9 @@ with the per-encoder inverse formulas and their collision points in
   `tests/reference_decoders/population.rs`).
 - `DirectionalPopulationEncoder`: population-vector decode over pooled counts.
   Sum the unit vectors at each neuron's exported preferred angle, weighting by
-  spike count, and read the resultant angle with `atan2`; the circular mean
+  spike count. Decode the resultant angle with `atan2` only when its magnitude
+  is well above zero: with no spikes, or with cancelling counts, the heading is
+  undefined rather than evidence for any particular direction. The circular mean
   wraps across 0/2π instead of averaging angles linearly (see
   `tests/reference_decoders/directional_population.rs`).
 

@@ -136,6 +136,14 @@ fn test_serde_encoders_and_state() {
 }
 
 #[test]
+fn test_directional_population_serde_validation_failures() {
+    let invalid_directional_json = r#"{"num_neurons":8,"tuning_width":0.0}"#;
+    let res: Result<DirectionalPopulationEncoder, _> =
+        serde_json::from_str(invalid_directional_json);
+    assert!(res.is_err());
+}
+
+#[test]
 fn test_serde_validation_failures() {
     // 1. Mismatched history and thresholds length in PredictiveEncoder
     let invalid_pred_json = r#"{
@@ -240,11 +248,6 @@ fn test_serde_validation_failures() {
 
     let invalid_population_json = r#"{"num_neurons":0,"input_range":[0.0,1.0],"tuning_width":0.1}"#;
     let res: Result<PopulationEncoder, _> = serde_json::from_str(invalid_population_json);
-    assert!(res.is_err());
-
-    let invalid_directional_json = r#"{"num_neurons":8,"tuning_width":0.0}"#;
-    let res: Result<DirectionalPopulationEncoder, _> =
-        serde_json::from_str(invalid_directional_json);
     assert!(res.is_err());
 
     // max_latency == 0 is valid (instantaneous spikes at t=0).
