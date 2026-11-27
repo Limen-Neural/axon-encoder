@@ -1,6 +1,6 @@
 use axon_encoder::prelude::{
-    EmbeddingEncoderConfig, EmbeddingRateEncoder, EncodedOutput, Encoder, PoissonEncoder,
-    PopulationEncoder, RateEncoder,
+    DirectionalPopulationEncoder, EmbeddingEncoderConfig, EmbeddingRateEncoder, EncodedOutput,
+    Encoder, PoissonEncoder, PopulationEncoder, RateEncoder,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -56,6 +56,17 @@ fn seeded_public_apis_replay_all_stochastic_encoders() {
         assert_eq!(
             population_a.encode_step_with_rng(&input, &mut population_rng_a),
             population_b.encode_step_with_rng(&input, &mut population_rng_b)
+        );
+    }
+
+    let mut directional_a = DirectionalPopulationEncoder::new(8, 0.25);
+    let mut directional_b = directional_a.clone();
+    let mut directional_rng_a = StdRng::seed_from_u64(0x12_1390);
+    let mut directional_rng_b = StdRng::seed_from_u64(0x12_1390);
+    for input in inputs {
+        assert_eq!(
+            directional_a.encode_step_with_rng(&input, &mut directional_rng_a),
+            directional_b.encode_step_with_rng(&input, &mut directional_rng_b)
         );
     }
 

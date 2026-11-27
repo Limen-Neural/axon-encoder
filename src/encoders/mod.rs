@@ -1,6 +1,7 @@
 pub mod baseline_hold;
 pub mod delta;
 pub mod derivative;
+pub mod directional_population;
 pub mod latency;
 pub mod phase;
 pub mod population;
@@ -8,12 +9,15 @@ pub mod predictive;
 pub mod rate;
 pub mod temporal;
 
+pub(crate) mod population_core;
+
 #[cfg(test)]
 pub(crate) mod property_support;
 
 pub use baseline_hold::BaselineHoldTernaryEncoder;
 pub use delta::{DeltaEncoder, encode_deltas_to_spikes};
 pub use derivative::DerivativeEncoder;
+pub use directional_population::DirectionalPopulationEncoder;
 pub use latency::LatencyEncoder;
 pub use phase::PhaseEncoder;
 pub use population::PopulationEncoder;

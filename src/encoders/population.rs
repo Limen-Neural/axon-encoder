@@ -1,3 +1,4 @@
+use crate::encoders::population_core::{PopulationCore, impl_population_encoder_api};
 use crate::prelude::*;
 
 /// Encodes each analog input channel across its own population of neurons.
@@ -100,6 +101,20 @@ impl PopulationEncoder {
     pub fn num_neurons(&self) -> usize {
         self.num_neurons
     }
+}
+
+impl PopulationCore for PopulationEncoder {
+    fn num_neurons(&self) -> usize {
+        self.num_neurons
+    }
+
+    fn tuning_width(&self) -> f32 {
+        self.tuning_width
+    }
+
+    fn encoder_kind(&self) -> &'static str {
+        "population"
+    }
 
     fn get_rate_with_tuning_width(
         &self,
@@ -120,112 +135,9 @@ impl PopulationEncoder {
         // Gaussian-like response curve
         (-(distance * distance) / (2.0 * tuning_width * tuning_width)).exp()
     }
-
-    /// Effective tuning width under a sensitivity gain
-    ///
-    /// Scales **≥ 1** narrow the Gaussian (`width / scale`) so high sensitivity is
-    /// more selective. Scales in **(0, 1)** keep the base width and rely on rate
-    /// scaling in `encode_with_sensitivity_scale` so low (but nonzero) gain
-    /// *suppresses* activity instead of widening toward universal firing
-    fn effective_tuning_width(&self, sensitivity_scale: f32) -> f32 {
-        if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
-            return self.tuning_width.max(f32::EPSILON);
-        }
-        if sensitivity_scale >= 1.0 {
-            return (self.tuning_width / sensitivity_scale).max(f32::EPSILON);
-        }
-        // Sub-unity: do not widen; rate scaling handles suppression.
-        self.tuning_width.max(f32::EPSILON)
-    }
-
-    /// Spike-emitting core: writes straight into `sink`, allocating nothing.
-    ///
-    /// Every public encoding path on this encoder routes through here, so the
-    /// returning and sink-based APIs cannot drift apart.
-    fn encode_with_sensitivity_scale_into<S: SpikeSink + ?Sized, R: rand::Rng + ?Sized>(
-        &mut self,
-        input: &[f32],
-        sensitivity_scale: f32,
-        rng: &mut R,
-        sink: &mut S,
-    ) {
-        let spike_channels = input
-            .len()
-            .checked_mul(self.num_neurons)
-            .expect("population channel count overflow");
-        assert!(
-            spike_channels <= crate::error::MAX_SPIKE_CHANNELS,
-            "population channel count exceeds u16 channel-ID space"
-        );
-
-        // Zero/negative/non-finite sensitivity fully suppresses population responses.
-        if !sensitivity_scale.is_finite() || sensitivity_scale <= 0.0 {
-            return;
-        }
-        let tuning_width = self.effective_tuning_width(sensitivity_scale);
-        // Rate gain: scales > 1 also narrow width; scales in (0, 1) only reduce rate
-        // so small positive gains never produce near-universal firing.
-        let rate_gain = sensitivity_scale.min(1.0);
-
-        for (input_channel, &value) in input.iter().enumerate() {
-            let channel_base = input_channel * self.num_neurons;
-            for i in 0..self.num_neurons {
-                let channel = u16::try_from(channel_base + i)
-                    .expect("population channel count was validated above");
-                let rate = self.get_rate_with_tuning_width(value, i, tuning_width) * rate_gain;
-                if crate::rng::gen_unit_f32_with_rng(rng) < rate {
-                    sink.push(SpikeEvent::at_step_start(channel, true));
-                }
-            }
-        }
-    }
-
-    fn encode_with_sensitivity_scale(
-        &mut self,
-        input: &[f32],
-        sensitivity_scale: f32,
-    ) -> EncodedOutput {
-        let mut output = EncodedOutput::new();
-        let mut rng = rand::rng();
-        self.encode_with_sensitivity_scale_into(
-            input,
-            sensitivity_scale,
-            &mut rng,
-            &mut output.spikes,
-        );
-        output
-    }
-
-    /// [`Encoder::encode`] with a caller-supplied RNG.
-    ///
-    /// Pass a seeded generator (for example `StdRng::seed_from_u64`) when the
-    /// spike selection must be reproducible; the draw order is one sample per
-    /// tuned neuron, input channel by input channel.
-    ///
-    /// [`Encoder::encode`]: crate::Encoder::encode
-    pub fn encode_with_rng<R: rand::Rng + ?Sized>(
-        &mut self,
-        input: &[f32],
-        rng: &mut R,
-    ) -> EncodedOutput {
-        let mut output = EncodedOutput::new();
-        self.encode_with_sensitivity_scale_into(input, 1.0, rng, &mut output.spikes);
-        output
-    }
-
-    /// [`Encoder::encode_step`] with a caller-supplied RNG. Identical to
-    /// [`encode_with_rng`](Self::encode_with_rng): batch and streaming share
-    /// one path for this encoder.
-    ///
-    /// [`Encoder::encode_step`]: crate::Encoder::encode_step
-    pub fn encode_step_with_rng<R: rand::Rng + ?Sized>(
-        &mut self,
-        input: &[f32],
-        rng: &mut R,
-    ) -> EncodedOutput {
-        self.encode_with_rng(input, rng)
-    }
 }
+
+impl_population_encoder_api!(PopulationEncoder);
 
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for PopulationEncoder {
@@ -245,112 +157,11 @@ impl<'de> serde::Deserialize<'de> for PopulationEncoder {
     }
 }
 
-impl Encoder for PopulationEncoder {
-    fn encode(&mut self, input: &[f32]) -> EncodedOutput {
-        self.encode_with_sensitivity_scale(input, 1.0)
-    }
-
-    fn encode_step(&mut self, input: &[f32]) -> EncodedOutput {
-        self.encode(input)
-    }
-
-    fn encode_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
-        crate::sink::through_chunks(sink, |sink| {
-            let mut rng = rand::rng();
-            self.encode_with_sensitivity_scale_into(input, 1.0, &mut rng, sink)
-        });
-    }
-
-    fn encode_step_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
-        self.encode_into(input, sink);
-    }
-
-    /// One call is one tick; batch and streaming are identical here.
-    ///
-    /// Each tuned neuron independently emits at most one spike per call, all at
-    /// [`TickOffset::ZERO`](crate::time::TickOffset::ZERO), so the population
-    /// code is carried by *which* channels fire rather than by their offsets.
-    /// Ticks are dimensionless: tuning curves yield a per-call probability, not
-    /// a rate in hertz.
-    fn time_model(&self) -> TimeModel {
-        TimeModel::INSTANT
-    }
-
-    fn reset(&mut self) {
-        // No state to reset
-    }
-}
-
-impl ModulatedEncoder for PopulationEncoder {
-    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
-        self.encode_with_sensitivity_scale(input, gains.sanitize().sensitivity_scale)
-    }
-
-    fn encode_with_gains_into(
-        &mut self,
-        input: &[f32],
-        gains: EncodingGains,
-        sink: &mut dyn SpikeSink,
-    ) {
-        let sensitivity_scale = gains.sanitize().sensitivity_scale;
-        crate::sink::through_chunks(sink, |sink| {
-            let mut rng = rand::rng();
-            self.encode_with_sensitivity_scale_into(input, sensitivity_scale, &mut rng, sink)
-        });
-    }
-
-    /// Mirrors [`encode_step_with_gains`], which this encoder leaves at its
-    /// default of [`encode_with_gains`]. Without this the trait default would
-    /// build and drain an intermediate `EncodedOutput`, so the streaming
-    /// modulated path would allocate on every step.
-    ///
-    /// [`encode_step_with_gains`]: ModulatedEncoder::encode_step_with_gains
-    /// [`encode_with_gains`]: ModulatedEncoder::encode_with_gains
-    fn encode_step_with_gains_into(
-        &mut self,
-        input: &[f32],
-        gains: EncodingGains,
-        sink: &mut dyn SpikeSink,
-    ) {
-        self.encode_with_gains_into(input, gains, sink);
-    }
-
-    /// Skips the intermediate [`EncodedOutput`] the trait default builds.
-    ///
-    /// The default mirrors the returning [`encode_with_modulators`], which
-    /// allocates. This encoder's modulator layer *is* its gains layer, so it
-    /// can evaluate the curves and write straight into `sink`.
-    ///
-    /// [`encode_with_modulators`]: ModulatedEncoder::encode_with_modulators
-    fn encode_with_modulators_into(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-        sink: &mut dyn SpikeSink,
-    ) {
-        self.encode_with_gains_into(input, gain_curves.evaluate(modulators), sink);
-    }
-
-    /// Streaming counterpart of [`encode_with_modulators_into`], allocation-free
-    /// for the same reason.
-    ///
-    /// [`encode_with_modulators_into`]: ModulatedEncoder::encode_with_modulators_into
-    fn encode_step_with_modulators_into(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-        sink: &mut dyn SpikeSink,
-    ) {
-        self.encode_step_with_gains_into(input, gain_curves.evaluate(modulators), sink);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ModulatedEncoder;
+    use crate::encoders::population_core::PopulationCore;
 
     #[test]
     fn seeded_encode_with_rng_is_reproducible() {

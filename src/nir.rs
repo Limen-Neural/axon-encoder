@@ -33,6 +33,7 @@
 //! | `LatencyEncoder` | No | Input-dependent spike *time* is not NIR's fixed `Delay`. |
 //! | `PhaseEncoder` | No | `cycle_steps` has no NIR counterpart. |
 //! | `PopulationEncoder` | No | Analytic Gaussian tuning curves carry no weight matrix to export. |
+//! | `DirectionalPopulationEncoder` | No | Von Mises direction tuning carries no weight matrix to export. |
 //! | `TemporalEncoder` | No | Pattern detection over history has no NIR node. |
 //! | `PredictiveEncoder` | No | Prediction error has no NIR node. |
 //! | `DerivativeEncoder` | No | Rate-of-change detection has no NIR node. |

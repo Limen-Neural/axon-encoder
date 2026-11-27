@@ -46,6 +46,11 @@ const MODULATED_FACTORIES: &[(&str, ModulatedFactory)] = &[
     ("PopulationEncoder", || {
         Box::new(PopulationEncoder::try_new(8, (0.0, 1.0), 0.2).expect("valid population"))
     }),
+    ("DirectionalPopulationEncoder", || {
+        Box::new(
+            DirectionalPopulationEncoder::try_new(8, 0.2).expect("valid directional population"),
+        )
+    }),
     ("DeltaEncoder", || {
         Box::new(DeltaEncoder::try_new(0.1, 8).expect("valid delta"))
     }),

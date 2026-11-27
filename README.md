@@ -63,9 +63,10 @@ finite samples cannot overflow state to `inf`. JSON cannot represent NaN/Inf
 checkpoint, hand-built or otherwise.
 
 It does **not** cover stochastic paths: `RateEncoder::encode` (batch), and
-both batch and streaming `PopulationEncoder` / `PoissonEncoder`. Those methods
-build a thread-local generator internally; serde does not capture it, and they
-do not take caller-owned RNG state.
+both batch and streaming `PopulationEncoder` / `DirectionalPopulationEncoder` /
+`PoissonEncoder`. Those unseeded methods build a thread-local generator
+internally and do not accept caller-owned RNG state. The seeded `*_with_rng` forms replay only when the caller checkpoints
+that generator separately; serde does not capture it.
 
 ## Quick start
 
@@ -234,7 +235,7 @@ Per encoder:
 | `RateEncoder` | 1 | 1 | `dt_seconds` |
 | `LatencyEncoder` | `max_latency + 1` | `max_latency + 1` | none |
 | `PhaseEncoder` | 1 | `cycle_steps` | none |
-| `PopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `BaselineHoldTernaryEncoder`, `TemporalEncoder`, `PredictiveEncoder`, `EmbeddingRateEncoder` | 1 | 1 | none |
+| `PopulationEncoder`, `DirectionalPopulationEncoder`, `DeltaEncoder`, `DerivativeEncoder`, `BaselineHoldTernaryEncoder`, `TemporalEncoder`, `PredictiveEncoder`, `EmbeddingRateEncoder` | 1 | 1 | none |
 
 **Batch versus streaming.** Both modes follow the same rule, once per call —
 `encode` is not a longer window than `encode_step`. `PhaseEncoder` advances its
@@ -280,6 +281,19 @@ with the per-encoder inverse formulas and their collision points in
   contribution is lost to rounding against the endpoint's `1.0` or underflows
   outright, and the CoM collapses onto the endpoint exactly (see
   `tests/reference_decoders/population.rs`).
+- `DirectionalPopulationEncoder`: population-vector decode over pooled counts.
+  Sum the unit vectors at each neuron's exported preferred angle, weighting by
+  spike count. Decode the resultant angle with `atan2` only when its magnitude
+  is well above zero: with no spikes, or with cancelling counts, the heading is
+  undefined rather than evidence for any particular direction. The circular mean
+  wraps across 0/2π instead of averaging angles linearly (see
+  `tests/reference_decoders/directional_population.rs`).
+
+`DirectionalPopulationEncoder` inputs and exported preferred angles are radians
+in `[0, 2π)`: zero points east and positive angles rotate counterclockwise.
+The angles are evenly spaced, and `preferred_angles_radians()` returns them in
+neuron-index order. When several input channels fan out, the same angle sequence
+repeats for each channel, so exporters index it by `spike_channel % num_neurons`.
 
 ## Buffered streaming
 
@@ -501,7 +515,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Only encoders with a defensible NIR representation are mapped. `EmbeddingRateEncoder`
 is an integrate-and-fire neuron, so it exports as a NIR `IF` node whose
-`v_threshold` is `config.v_th`. Rate, latency, phase, population, temporal,
+`v_threshold` is `config.v_th`. Rate, latency, phase, population, directional
+population, temporal,
 predictive, derivative, delta, baseline-hold, and Poisson encoding all depend on
 analog-to-spike semantics that NIR has no node for; they are deliberately not
 mapped rather than approximated. See the `nir` module docs for the per-encoder
@@ -556,6 +571,8 @@ preserved by the HDF5 round-trip, so look nodes up by name.
   - **`DerivativeEncoder`** — fires on *change* (jumps / drops)
   - **`TemporalEncoder`** — dual-window *change detector* (recent 3-sample mean vs the 3 before); not a timing code
   - **`PopulationEncoder`** — value distributed across a *population* of units
+  - **`DirectionalPopulationEncoder`** — angle in radians distributed across a
+    ring of direction-tuned units, with exportable preferred angles
   - **`DeltaEncoder`** — spike when the signal moves by a threshold
   - **`BaselineHoldTernaryEncoder`** — signed baseline-hold ternary events
     (Corinth telemetry semantics; baseline updates only on crossings)
@@ -572,13 +589,15 @@ preserved by the HDF5 round-trip, so look nodes up by name.
 
 ## Randomness (stochastic encoders)
 
-`RateEncoder`, `PopulationEncoder`, and `PoissonEncoder` sample unit floats in
-`[0, 1)` via `axon_encoder::rng`:
+`RateEncoder`, `PopulationEncoder`, `DirectionalPopulationEncoder`, and
+`PoissonEncoder` sample unit floats in `[0, 1)` via `axon_encoder::rng`:
 
-- **Default:** `gen_unit_f32()` uses a thread-local `rand` generator (not
-  reproducible across runs).
-- **Reproducible runs:** `gen_unit_f32_with_rng(&mut rng)` with a seeded RNG
-  (for example `rand::rngs::StdRng`).
+- **Default:** their unseeded encoding methods use a thread-local `rand`
+  generator (not reproducible across runs).
+- **Reproducible runs:** use each encoder's seeded `encode_with_rng` /
+  `encode_step_with_rng` method where available, with a seeded RNG (for example
+  `rand::rngs::StdRng`); internally they sample through
+  `gen_unit_f32_with_rng(&mut rng)`.
 - For **encoding only** — not cryptographic use.
 
 ## WebAssembly

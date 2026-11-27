@@ -8,14 +8,14 @@
 //! depends on the draws of the trials before it in the same stream); the
 //! failure message names the trial index so the run can be replayed.
 //!
-//! Replay scope for the stochastic encoders (`Rate`, `Population`): the
-//! *batch* legs go through `encode_with_rng` with the trial's `StdRng`
-//! (`Traits::seeded_batch`) and replay from the seed. The step and sink legs
-//! (`encode_step`, `encode_into`, `encode_step_into`) have no caller-RNG entry
-//! point for every encoder — `RateEncoder` has only `encode_with_rng`, and
-//! `PopulationEncoder`'s sink paths draw from the thread-local generator — so
-//! on those legs the *input* replays from the seed but the spike draw does
-//! not; a failure there is reproduced from the input summary in the failure
+//! Replay scope for the stochastic encoders (`Rate`, `Population`,
+//! `DirectionalPopulation`): the *batch* legs go through `encode_with_rng`
+//! with the trial's `StdRng`
+//! (`Traits::seeded_batch`) and replay from the seed. The sink legs have no
+//! caller-RNG entry point, and this suite drives the step legs through the
+//! RNG-less trait object API even where a type-specific `encode_step_with_rng`
+//! exists — so on those legs the *input* replays from the seed but the spike
+//! draw does not; a failure there is reproduced from the input summary in the failure
 //! label, not bit-for-bit. (`RateEncoder::encode_step` is deterministic and
 //! needs no RNG.) No library API was added for this. There is no `proptest`
 //! dependency: the sampler
@@ -136,6 +136,13 @@ fn population_seeded(input: &[f32], rng: &mut StdRng) -> Vec<SpikeEvent> {
         .spikes
 }
 
+fn directional_population_seeded(input: &[f32], rng: &mut StdRng) -> Vec<SpikeEvent> {
+    DirectionalPopulationEncoder::try_new(CHANNELS, 0.2)
+        .unwrap()
+        .encode_with_rng(input, rng)
+        .spikes
+}
+
 const STATELESS: Traits = Traits {
     channel_cap: input_width,
     deterministic: true,
@@ -185,6 +192,16 @@ fn timing_and_rate_subjects() -> Vec<Subject> {
             Traits {
                 channel_cap: population_width,
                 seeded_batch: Some(population_seeded),
+                ..STOCHASTIC
+            },
+        ),
+        Subject::new(
+            "DirectionalPopulationEncoder",
+            directional_population,
+            Some(directional_population_m),
+            Traits {
+                channel_cap: population_width,
+                seeded_batch: Some(directional_population_seeded),
                 ..STOCHASTIC
             },
         ),
@@ -270,6 +287,11 @@ boxed!(
     population,
     population_m,
     PopulationEncoder::try_new(CHANNELS, RANGE, 0.2).unwrap()
+);
+boxed!(
+    directional_population,
+    directional_population_m,
+    DirectionalPopulationEncoder::try_new(CHANNELS, 0.2).unwrap()
 );
 boxed!(
     delta,

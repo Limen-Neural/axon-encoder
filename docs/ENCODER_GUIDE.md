@@ -1,7 +1,7 @@
 # Encoder guide
 
-This guide chooses and operates the public `axon-encoder` 0.5 API for a
-real-time pipeline. Start with `try_new`, keep the encoder alive for the life
+This guide chooses and operates the public `axon-encoder` API for a real-time
+pipeline. Start with `try_new`, keep the encoder alive for the life
 of a stream, and call `encode_step` once per incoming frame.
 
 ## Choose an encoder
@@ -15,6 +15,7 @@ of a stream, and call `encode_step` once per incoming frame.
 | Earlier event for stronger input | `LatencyEncoder` | Stateless; one call can span `max_latency + 1` ticks. |
 | Periodic phase code | `PhaseEncoder` | Calls overlap its cycle window; use its reported time model. |
 | Tuning-curve population code | `PopulationEncoder` | Batch and streaming paths are stochastic. |
+| Direction/heading on a circle | `DirectionalPopulationEncoder` | Batch and streaming paths are stochastic; inputs and preferred angles are radians, zero east and counterclockwise positive. |
 | Smoothed change detection (3-vs-3 sample means) | `TemporalEncoder` | Keep state across frames. `history_depth` beyond 6 is buffer-only; not a timing code — use Latency/Phase for those. |
 | Prediction-error anomalies | `PredictiveEncoder` | Keep state across frames. |
 | Thresholded embedding drive | `EmbeddingRateEncoder` | Keeps per-channel membrane potentials. |
@@ -119,9 +120,13 @@ affect it. Do not reset between frames of one continuous stream.
 With the `serde` feature, encoder configuration and live state are serializable.
 Restoring a finite JSON checkpoint continues deterministic `encode_step` paths
 exactly. It does **not** make a stochastic path replayable: batch
-`RateEncoder::encode` and both `PopulationEncoder` and `PoissonEncoder` modes
-create thread-local RNG state internally, and the public API does not accept a
-caller-owned RNG. Treat their outputs as fresh draws after restore.
+`RateEncoder::encode` and the thread-local `PopulationEncoder`,
+`DirectionalPopulationEncoder`, and `PoissonEncoder` modes create RNG state
+internally. Their seeded `*_with_rng` forms replay for a fixed crate/RNG
+version, platform, configuration, seed, and input-call sequence, but serde
+checkpoints do not capture that caller-owned generator.
+Treat restored stochastic outputs as fresh draws unless the RNG is checkpointed
+separately.
 
 Run the examples with the default feature set:
 

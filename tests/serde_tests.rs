@@ -52,6 +52,13 @@ fn test_serde_encoders_and_state() {
     let deserialized_pop: PopulationEncoder = serde_json::from_str(&serialized_pop).unwrap();
     assert_eq!(pop_encoder, deserialized_pop);
 
+    // 8b. Test DirectionalPopulationEncoder
+    let directional_encoder = DirectionalPopulationEncoder::new(8, 0.35);
+    let serialized_directional = serde_json::to_string(&directional_encoder).unwrap();
+    let deserialized_directional: DirectionalPopulationEncoder =
+        serde_json::from_str(&serialized_directional).unwrap();
+    assert_eq!(directional_encoder, deserialized_directional);
+
     // 9. Test PredictiveEncoder
     let pred_encoder =
         PredictiveEncoder::new(10, vec![(1.0, 1), (2.0, 2)], 2).expect("valid PredictiveEncoder");
@@ -126,6 +133,14 @@ fn test_serde_encoders_and_state() {
     let serialized_phase = serde_json::to_string(&phase_encoder).unwrap();
     let deserialized_phase: PhaseEncoder = serde_json::from_str(&serialized_phase).unwrap();
     assert_eq!(phase_encoder, deserialized_phase);
+}
+
+#[test]
+fn test_directional_population_serde_validation_failures() {
+    let invalid_directional_json = r#"{"num_neurons":8,"tuning_width":0.0}"#;
+    let res: Result<DirectionalPopulationEncoder, _> =
+        serde_json::from_str(invalid_directional_json);
+    assert!(res.is_err());
 }
 
 #[test]
