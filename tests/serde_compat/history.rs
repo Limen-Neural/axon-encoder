@@ -182,6 +182,16 @@ fn serde_compat_rate_first_step_keeps_zero_filled_pending_vector() {
 }
 
 #[test]
+fn serde_compat_head_directional_population_locks_wire_schema() {
+    let file = "head/directional_population.json";
+    let pair = "HEAD writer -> HEAD golden/reader";
+    let expected = DirectionalPopulationEncoder::new(8, 0.35);
+    assert_json(&expected, file, pair);
+    let restored: DirectionalPopulationEncoder = read_fixture(file, pair);
+    assert_eq!(restored, expected, "{file} ({pair})");
+}
+
+#[test]
 fn serde_compat_v04_output_discards_removed_metadata() {
     let file = "v0.4/encoded_output.json";
     let pair = "v0.4 writer -> HEAD reader";

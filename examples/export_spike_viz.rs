@@ -7,8 +7,8 @@
 //! ```
 //!
 //! `<encoder>` is one of `rate`, `poisson`, `latency`, `population`,
-//! `temporal`, `predictive`. `<out_dir>` receives `t.npy`, `neuron_id.npy`,
-//! `amp.npy`, `stimulus.npy`, and `meta.json`.
+//! `directional_population`, `temporal`, `predictive`. `<out_dir>` receives
+//! `t.npy`, `neuron_id.npy`, `amp.npy`, `stimulus.npy`, and `meta.json`.
 //!
 //! Provenance: `AXON_ENCODER_GIT_SHA` (set by the generation script) is recorded
 //! verbatim in `meta.json`. Stochastic encoders draw from a seeded `StdRng`
@@ -42,8 +42,8 @@ const SEED: u64 = 0x5EED_0001;
 /// generation script).
 const GIT_SHA_ENV: &str = "AXON_ENCODER_GIT_SHA";
 
-/// Shared stimulus: `stimulus[call][channel]`, a deterministic mixed
-/// sine/ramp so every encoder consumes the same signal.
+/// Shared normalized stimulus: `stimulus[call][channel]`, a deterministic
+/// mixed sine/ramp. Directional encoding scales these samples by 2π before use.
 fn stimulus() -> Vec<Vec<f32>> {
     (0..CALLS)
         .map(|t| {
@@ -104,6 +104,32 @@ struct Case {
     n_neurons: usize,
     n_steps: u64,
     config: serde_json::Value,
+    stimulus: Vec<Vec<f32>>,
+    preferred_angles_radians: Option<Vec<f32>>,
+}
+
+impl Case {
+    fn new(
+        events: Events,
+        n_neurons: usize,
+        n_steps: u64,
+        config: serde_json::Value,
+        stimulus: &[Vec<f32>],
+    ) -> Self {
+        Self {
+            events,
+            n_neurons,
+            n_steps,
+            config,
+            stimulus: stimulus.to_vec(),
+            preferred_angles_radians: None,
+        }
+    }
+
+    fn with_preferred_angles(mut self, preferred_angles_radians: Vec<f32>) -> Self {
+        self.preferred_angles_radians = Some(preferred_angles_radians);
+        self
+    }
 }
 
 /// Encodes `name` over the shared stimulus and returns the case to export.
@@ -115,36 +141,40 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
             let mut enc = RateEncoder::try_new(50.0, 400.0, (0.0, 1.0), DT_SECONDS as f32)
                 .expect("rate config");
             let (events, n_steps) = drive(&mut enc, stim);
-            Case {
+            Case::new(
                 events,
-                n_neurons: CHANNELS,
+                CHANNELS,
                 n_steps,
-                config: serde_json::json!({"base_rate_hz": 50.0, "max_rate_hz": 400.0, "range": [0.0, 1.0]}),
-            }
+                serde_json::json!({"base_rate_hz": 50.0, "max_rate_hz": 400.0, "range": [0.0, 1.0]}),
+                stim,
+            )
         }
         "poisson" => poisson_case(stim, rng),
         // Deterministic; window model — absolute ticks advance by span per call.
         "latency" => {
             let mut enc = LatencyEncoder::new(10, (0.0, 1.0));
             let (events, n_steps) = drive(&mut enc, stim);
-            Case {
+            Case::new(
                 events,
-                n_neurons: CHANNELS,
+                CHANNELS,
                 n_steps,
-                config: serde_json::json!({"max_latency": 10, "range": [0.0, 1.0]}),
-            }
+                serde_json::json!({"max_latency": 10, "range": [0.0, 1.0]}),
+                stim,
+            )
         }
         "population" => population_case(stim, rng),
+        "directional_population" => directional_population_case(stim, rng),
         // Deterministic threshold crossings over a rolling window.
         "temporal" => {
             let mut enc = TemporalEncoder::new(8, vec![0.05, 0.15, 0.30], CHANNELS);
             let (events, n_steps) = drive(&mut enc, stim);
-            Case {
+            Case::new(
                 events,
-                n_neurons: CHANNELS,
+                CHANNELS,
                 n_steps,
-                config: serde_json::json!({"history_depth": 8, "change_thresholds": [0.05, 0.15, 0.30]}),
-            }
+                serde_json::json!({"history_depth": 8, "change_thresholds": [0.05, 0.15, 0.30]}),
+                stim,
+            )
         }
         // Deterministic deviation predictions over a rolling window.
         "predictive" => {
@@ -152,12 +182,13 @@ fn generate(name: &str, stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
                 PredictiveEncoder::new(8, vec![(0.05, 1), (0.15, 2), (0.30, 3)], CHANNELS)
                     .expect("predictive config");
             let (events, n_steps) = drive(&mut enc, stim);
-            Case {
+            Case::new(
                 events,
-                n_neurons: CHANNELS,
+                CHANNELS,
                 n_steps,
-                config: serde_json::json!({"history_depth": 8, "deviation_thresholds": [[0.05, 1], [0.15, 2], [0.30, 3]]}),
-            }
+                serde_json::json!({"history_depth": 8, "deviation_thresholds": [[0.05, 1], [0.15, 2], [0.30, 3]]}),
+                stim,
+            )
         }
         other => {
             eprintln!("unknown encoder {other:?}");
@@ -182,12 +213,13 @@ fn poisson_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
             }
         }
     }
-    Case {
+    Case::new(
         events,
-        n_neurons: CHANNELS,
-        n_steps: CALLS as u64,
-        config: serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus[t][ch]"}),
-    }
+        CHANNELS,
+        CALLS as u64,
+        serde_json::json!({"channel_rates_hz": "50 + 300 * stimulus[t][ch]"}),
+        stim,
+    )
 }
 
 /// Seeded RNG through the public surface; output channels fan out to
@@ -202,15 +234,59 @@ fn population_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
         events.extend(&enc.encode_step_with_rng(step, rng), cursor);
         cursor.advance();
     }
-    Case {
+    Case::new(
         events,
-        n_neurons: CHANNELS * NEURONS_PER_INPUT,
-        n_steps: cursor.origin().max(model.span_ticks()),
-        config: serde_json::json!({"num_neurons": NEURONS_PER_INPUT, "input_range": [0.0, 1.0], "tuning_width": 0.15}),
-    }
+        CHANNELS * NEURONS_PER_INPUT,
+        cursor.origin().max(model.span_ticks()),
+        serde_json::json!({"num_neurons": NEURONS_PER_INPUT, "input_range": [0.0, 1.0], "tuning_width": 0.15}),
+        stim,
+    )
 }
 
-fn write_outputs(out_dir: &Path, stim: &[Vec<f32>], case: &Case) {
+/// Directional angles are the shared normalized stimulus scaled by 2π. The
+/// exported angles repeat per input channel because neuron IDs fan out as
+/// `input_channel * NEURONS_PER_INPUT + preferred_angle_index`.
+fn directional_population_case(stim: &[Vec<f32>], rng: &mut StdRng) -> Case {
+    const NEURONS_PER_INPUT: usize = 8;
+    let angular_stim: Vec<Vec<f32>> = stim
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|value| value * std::f32::consts::TAU)
+                .collect()
+        })
+        .collect();
+
+    let mut enc = DirectionalPopulationEncoder::new(NEURONS_PER_INPUT, 0.35);
+    let model = enc.time_model();
+    let mut cursor = TimeCursor::new(model);
+    let mut events = Events::new();
+    for step in &angular_stim {
+        events.extend(&enc.encode_step_with_rng(step, rng), cursor);
+        cursor.advance();
+    }
+
+    let one_population = enc.preferred_angles_radians();
+    let preferred_angles: Vec<f32> = (0..CHANNELS)
+        .flat_map(|_| one_population.iter().copied())
+        .collect();
+    Case::new(
+        events,
+        CHANNELS * NEURONS_PER_INPUT,
+        cursor.origin().max(model.span_ticks()),
+        serde_json::json!({
+            "num_neurons": NEURONS_PER_INPUT,
+            "tuning_width_radians": 0.35,
+            "input_units": "radians",
+            "angle_convention": "zero east, counterclockwise positive; input is the shared normalized stimulus scaled by 2π"
+        }),
+        &angular_stim,
+    )
+    .with_preferred_angles(preferred_angles)
+}
+
+fn write_outputs(out_dir: &Path, case: &Case) {
+    let stim = case.stimulus.as_slice();
     write_npy(&out_dir.join("t.npy"), &NpyArray::I64(&case.events.t));
     write_npy(
         &out_dir.join("neuron_id.npy"),
@@ -233,7 +309,7 @@ fn write_outputs(out_dir: &Path, stim: &[Vec<f32>], case: &Case) {
 }
 
 fn write_meta(out_dir: &Path, name: &str, case: &Case) {
-    let meta = serde_json::json!({
+    let mut meta = serde_json::json!({
         "schema_version": "1.0",
         "encoder": name,
         "dt_seconds": DT_SECONDS,
@@ -244,9 +320,12 @@ fn write_meta(out_dir: &Path, name: &str, case: &Case) {
         "axon_encoder_version": env!("CARGO_PKG_VERSION"),
         "synthetic": false,
         "encoder_config": case.config,
-        "stimulus_notes": "Shared deterministic sine/ramp stimulus, 8 input channels.",
+        "stimulus_notes": "Shared deterministic sine/ramp stimulus, 8 input channels; for directional_population the exported stimulus is scaled by 2π into radians.",
         "notes": "Generated by axon-encoder `export_spike_viz` example; dt_seconds is the export sampling convention when the encoder reports no Timebase.",
     });
+    if let Some(angles) = &case.preferred_angles_radians {
+        meta["preferred_angles_radians"] = serde_json::json!(angles);
+    }
     fs::write(
         out_dir.join("meta.json"),
         serde_json::to_string_pretty(&meta).expect("meta serialization"),
@@ -258,10 +337,15 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
         eprintln!("usage: export_spike_viz <encoder> <out_dir>");
-        eprintln!("encoders: rate poisson latency population temporal predictive");
+        eprintln!(
+            "encoders: rate poisson latency population directional_population temporal predictive"
+        );
         std::process::exit(2);
     }
-    let name = args[1].as_str();
+    let name = match args[1].as_str() {
+        "directional" => "directional_population",
+        other => other,
+    };
     let out_dir = Path::new(&args[2]);
     fs::create_dir_all(out_dir).expect("create output directory"); // skipcq: RS-E1015
 
@@ -269,7 +353,7 @@ fn main() {
     let mut rng = StdRng::seed_from_u64(SEED);
     let case = generate(name, &stim, &mut rng);
 
-    write_outputs(out_dir, &stim, &case); // skipcq: RS-E1015
+    write_outputs(out_dir, &case); // skipcq: RS-E1015
     write_meta(out_dir, name, &case); // skipcq: RS-E1015
 
     println!(

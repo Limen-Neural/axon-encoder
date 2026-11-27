@@ -3,7 +3,7 @@
 These hand-checked payloads anchor field layouts from the `v0.3.0`, `v0.4.0`,
 and `v0.5.0` Git tags. They were reconstructed from those tags' serde derives,
 helper structs, and validation, not automatically regenerated from HEAD.
-`v0.5/` covers **all 20 current public serde types**; the current reader loads
+`v0.5/` covers the **20 public serde types that existed in that historical matrix**; the current reader loads
 each and the current writer is checked against the same JSON. `head/` adds
 partial, extended, invalid, and rate-state edge cases. Tests compare JSON values
 (ignoring whitespace/key order), except the historical `SpikeEvent` test also
@@ -49,6 +49,7 @@ reader/writer, not a promise that future incompatible versions must load.
 | `head/encoding_gains_unsanitized.json` | HEAD | Negative threshold becomes 0, sensitivity caps at 10,000, missing rate becomes 1, explicit zero latency stays zero. |
 | `head/neuromodulators_empty.json` | HEAD | Reject missing required fields; Rust `Default` does not imply serde defaults. |
 | `head/rate_first_step.json` | HEAD | First `encode_step(&[0.25])` at dt 0.125 writes phase `[0.3125]` and **`pending_spikes: [0]`**, not an omitted field. |
+| `head/directional_population.json` | HEAD | New HEAD-only schema for `DirectionalPopulationEncoder`; no historical payload exists because the encoder first appears after the v0.5 matrix. |
 | Every `v0.5/*.json` | HEAD | Load into independently constructed values; HEAD serialization matches golden JSON (`timebase.json` excepted — see its row). |
 
 The v0.5 inventory is `SpikeEvent`, `EncodedOutput`, `TickOffset`, `Timebase`,
@@ -56,7 +57,9 @@ The v0.5 inventory is `SpikeEvent`, `EncodedOutput`, `TickOffset`, `Timebase`,
 `DerivativeEncoder`, `LatencyEncoder`, `PhaseEncoder`, `PopulationEncoder`,
 `PoissonEncoder`, `PredictiveEncoder`, `TemporalEncoder`, `NeuroModulators`,
 `GainCurve`, `EncodingGains`, `ModulatorGainCurves`, and `NeuromodulatorGainCurves`.
-There is no current serde API for removed `EncoderState`, `EncoderConfig`, or
+`DirectionalPopulationEncoder` is a later additive serde type and is locked by
+`head/directional_population.json`, not by the historical v0.5 set. There is no
+current serde API for removed `EncoderState`, `EncoderConfig`, or
 `EncodingMetadata`; the old output fixture captures metadata's removal.
 
 ## Scope and maintenance

@@ -1,5 +1,5 @@
 //! In-tree inverse oracles for the latency, phase, rate, and population
-//! encoders (LIM-1340, parent LIM-1265).
+//! encoders, plus the directional population-vector oracle added for LIM-1589.
 //!
 //! The crate ships **no production decoder**. Downstream count-rate, TTFS
 //! (time-to-first-spike), and center-of-mass consumers therefore have no shared
@@ -48,6 +48,7 @@
 #[path = "../common/oracles.rs"]
 mod oracles;
 
+mod directional_population;
 mod latency;
 mod phase;
 mod population;
