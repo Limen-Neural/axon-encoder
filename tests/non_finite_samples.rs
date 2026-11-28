@@ -11,7 +11,8 @@ fn history_encoders() -> Vec<Box<dyn Encoder>> {
         Box::new(DerivativeEncoder::new(vec![0.5; 3])),
         Box::new(EmbeddingRateEncoder::new(
             3,
-            EmbeddingEncoderConfig { v_th: 0.5 },
+            // The 4.0 probe fires only if warm-up accumulation survives.
+            EmbeddingEncoderConfig { v_th: 4.5 },
         )),
         Box::new(PredictiveEncoder::try_new(6, vec![(0.5, 1)], 3).unwrap()),
         Box::new(TemporalEncoder::new(6, vec![0.5], 3)),
