@@ -77,8 +77,10 @@ use crate::prelude::*;
 /// # Serialization
 ///
 /// With the `serde` feature, a checkpoint of a live `RateEncoder` resumes the
-/// deterministic [`encode_step`](Encoder::encode_step) path exactly, including
-/// fractional phase and any queued `pending_spikes` backlog. The fractional
+/// deterministic [`encode_step`](Encoder::encode_step) path exactly when the
+/// format round-trips its numeric state, including each channel's `f64` phase
+/// and queued `pending_spikes`. For JSON, enable `serde_json`'s
+/// `float_roundtrip` feature when exact `f64` parsing is required. Fractional
 /// phases use the legacy `accumulators` field name; older checkpoints with
 /// combined values are split back into phase and backlog on read. Batch
 /// [`encode`](Encoder::encode) draws from a thread-local generator this crate
