@@ -56,8 +56,10 @@
 //!
 //! JSON is the supported checkpoint format. Binary formats such as bincode
 //! are not a supported portable interchange. Named-field JSON readers ignore
-//! unknown fields and do not preserve them on reserialization; required
-//! fields are still required unless the type documents a default.
+//! unknown fields and do not preserve them on reserialization. Omitted optional
+//! fields such as [`EncodedOutput::embeddings`] and the four
+//! [`ModulatorGainCurves`](modulators::ModulatorGainCurves) fields deserialize as
+//! `None`; fields without a default remain required.
 //!
 //! [`CHECKPOINT_SCHEMA_VERSION`] is a best-effort marker that applications can
 //! record alongside their payloads. It is not written or checked by an

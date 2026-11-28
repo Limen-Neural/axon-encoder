@@ -19,6 +19,17 @@ fn spike_event_accepts_unknown_json_fields_without_changing_the_wire_shape() {
     }
 }
 
+#[test]
+fn optional_json_fields_may_be_omitted_without_making_required_fields_optional() {
+    let output: EncodedOutput = serde_json::from_str(r#"{"spikes":[]}"#).unwrap();
+    assert!(output.spikes.is_empty());
+    assert!(output.embeddings.is_none());
+    assert!(serde_json::from_str::<EncodedOutput>("{}").is_err());
+
+    let curves: ModulatorGainCurves = serde_json::from_str("{}").unwrap();
+    assert_eq!(curves, ModulatorGainCurves::default());
+}
+
 #[derive(serde::Deserialize)]
 struct AppCheckpoint {
     schema_version: u32,
