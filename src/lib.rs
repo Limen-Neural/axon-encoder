@@ -54,6 +54,20 @@
 //! used for checkpoint continuation and compatibility tests. RON is exercised
 //! only for non-finite rejection, not for replay or wire compatibility.
 //!
+//! JSON is the supported checkpoint format. Binary formats such as bincode
+//! are not a supported portable interchange. Named-field JSON readers ignore
+//! unknown fields and do not preserve them on reserialization. Omitted optional
+//! fields such as [`EncodedOutput::embeddings`] and the four
+//! [`ModulatorGainCurves`](modulators::ModulatorGainCurves) fields deserialize as
+//! `None`; fields without a default remain required.
+//!
+//! [`CHECKPOINT_SCHEMA_VERSION`] is a best-effort marker that applications can
+//! record alongside their payloads. It is not written or checked by an
+//! encoder's serde implementation, and individual types can evolve
+//! independently. Unwrapped historical JSON follows the same per-type
+//! compatibility rules. The marker does not include RNG state or expand the
+//! stochastic replay guarantees described below.
+//!
 //! Save the caller's [`TimeCursor`] separately to restore absolute time.
 //! For example, save a deterministic encoder and its cursor after one call:
 //!
@@ -148,6 +162,14 @@ pub use error::StreamingError;
 #[cfg(feature = "ndarray")]
 pub use ndarray_ext::NdarrayEncoderExt;
 pub use sink::SpikeSink;
+
+/// Best-effort schema marker for the named JSON checkpoint policy.
+///
+/// Applications can store the marker in their own checkpoint envelope or
+/// alongside the payload. Axon Encoder never inserts or validates it during
+/// serialization, and each persisted type has its own compatibility rules.
+/// This marker is independent of the crate's package version.
+pub const CHECKPOINT_SCHEMA_VERSION: u32 = 1;
 
 pub mod prelude {
     pub use crate::Encoder;

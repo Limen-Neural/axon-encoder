@@ -97,6 +97,18 @@ separately to restore the caller's clock; saved spike timestamps still contain
 call-relative offsets. The old generic `EncoderConfig` was removed; configure
 each concrete encoder directly.
 
+**JSON checkpoint versioning.** `axon_encoder::CHECKPOINT_SCHEMA_VERSION`
+is a best-effort marker for applications to record alongside their payloads.
+It is not an automatic envelope or a compatibility guarantee; each type
+evolves independently. Readers accept older unwrapped payloads according to
+each type's compatibility rules. They ignore unknown JSON object fields and
+drop them on reserialization. Omitted optional fields such as
+`EncodedOutput.embeddings` and the four `ModulatorGainCurves` fields deserialize
+as `None`; fields without a default remain required. JSON is the supported
+checkpoint format; binary formats such as bincode are not supported for portable
+interchange. Keep any caller-owned RNG state separate when replaying stochastic
+paths.
+
 ### Non-finite samples
 
 Built-in encoders do not store NaN or infinity as live state. History and
