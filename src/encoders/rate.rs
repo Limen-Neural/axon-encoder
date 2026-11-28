@@ -78,7 +78,9 @@ use crate::prelude::*;
 ///
 /// With the `serde` feature, a checkpoint of a live `RateEncoder` resumes the
 /// deterministic [`encode_step`](Encoder::encode_step) path exactly, including
-/// fractional phase and any queued `pending_spikes` backlog. Batch
+/// fractional phase and any queued `pending_spikes` backlog. The fractional
+/// phases use the legacy `accumulators` field name; older checkpoints with
+/// combined values are split back into phase and backlog on read. Batch
 /// [`encode`](Encoder::encode) draws from a thread-local generator this crate
 /// constructs internally; serde does not capture that generator. Use
 /// [`encode_with_rng`](Self::encode_with_rng) and checkpoint the caller-owned

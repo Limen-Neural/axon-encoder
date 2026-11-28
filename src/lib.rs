@@ -38,16 +38,53 @@
 //! ## Serde checkpoints
 //!
 //! The optional `serde` feature round-trips encoder **configuration and live
-//! mutable state**. A JSON checkpoint taken mid-stream resumes deterministic
-//! [`encode_step`] paths exactly: the restored encoder emits the same spikes on
-//! the remaining inputs and finishes in the same state. Live state is always
-//! finite because stateful encoders ([`DeltaEncoder`], [`DerivativeEncoder`],
+//! mutable state** where applicable. A lossless checkpoint taken mid-stream
+//! resumes deterministic [`encode_step`] paths exactly: the restored encoder
+//! emits the same spikes on the remaining inputs and finishes in the same
+//! state. Live state is always finite because stateful encoders
+//! ([`DeltaEncoder`], [`DerivativeEncoder`],
 //! [`TemporalEncoder`], [`PredictiveEncoder`], [`BaselineHoldTernaryEncoder`],
 //! [`EmbeddingRateEncoder`]) skip a
 //! `NaN`/`±inf` sample at encode time: nothing is stored, no spike fires, and
 //! the next finite sample behaves as if the non-finite step never happened.
 //! JSON has no NaN/Inf (`serde_json` writes `null`), and deserialize rejects a
 //! hand-built payload containing one.
+//!
+//! The crate has no runtime format dependency. `serde_json` is a dev-dependency
+//! used for checkpoint continuation and compatibility tests. RON is exercised
+//! only for non-finite rejection, not for replay or wire compatibility.
+//!
+//! Save the caller's [`TimeCursor`] separately to restore absolute time.
+//! For example, save a deterministic encoder and its cursor after one call:
+//!
+//! ```rust
+//! # #[cfg(feature = "serde")]
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use axon_encoder::prelude::*;
+//!
+//! let mut live = DeltaEncoder::try_new(0.25, 1)?;
+//! let mut cursor = TimeCursor::new(live.time_model());
+//! live.encode_step(&[0.5]);
+//! cursor.advance();
+//!
+//! let checkpoint = serde_json::to_string(&(&live, &cursor))?;
+//! let (mut restored, restored_cursor): (DeltaEncoder, TimeCursor) =
+//!     serde_json::from_str(&checkpoint)?;
+//! let next = restored.encode_step(&[0.0]);
+//! assert_eq!(next, live.encode_step(&[0.0]));
+//! assert_eq!(restored_cursor.absolute(next.spikes[0].timestamp), 1);
+//! # Ok(())
+//! # }
+//! # #[cfg(not(feature = "serde"))]
+//! # fn main() {}
+//! ```
+//!
+//! Checkpoints are Rust type state, not a stable cross-version or cross-language
+//! interchange format. The optional `nir` feature exports static parameters,
+//! not live state. The old generic `EncoderConfig` was removed; configure the
+//! concrete encoder instead. Built-in encoders leave [`EncodedOutput::embeddings`]
+//! as `None` (`null` in JSON), and `metadata` is no longer a field. Spikes stay
+//! in channel-major order; sort by timestamp if you need chronological order.
 //!
 //! ## Reproducible stochastic encoding
 //!

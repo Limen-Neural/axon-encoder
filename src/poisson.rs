@@ -38,6 +38,13 @@
 /// train and push its own [`SpikeEvent`](crate::types::SpikeEvent)s into a
 /// sink; a caller that wants to reuse storage should reuse the `Vec<u8>`.
 ///
+/// # Serialization
+/// With the `serde` feature, only `num_steps` is serialized. Extra JSON fields
+/// such as `seed` are ignored on read. The thread-local RNG used by the default
+/// encoding methods is not saved, so deserializing does not replay the train.
+/// For replay, use [`encode_with_rng`](Self::encode_with_rng) (or the seeded
+/// step/rate forms) and save the caller-owned RNG state separately.
+///
 /// # Examples
 ///
 /// ```rust
