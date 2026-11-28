@@ -77,7 +77,9 @@ build a thread-local generator internally; serde does not capture it, and they
 do not take caller-owned RNG state.
 
 For seeded replay, use the separate `*_with_rng` methods and preserve the RNG
-state outside the encoder checkpoint.
+state outside the encoder checkpoint. Replay assumes the same input-call
+sequence and fixed crate and RNG versions on the same platform. Bit-for-bit
+output is not guaranteed across version or platform changes.
 `PopulationEncoder` saves only its tuning configuration; `PoissonEncoder`
 saves only `num_steps` and ignores extra JSON fields such as `seed`.
 
