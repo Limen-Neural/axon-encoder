@@ -363,15 +363,23 @@ for spec in \
   'encoders/temporal.rs:TemporalEncoder'; do
   file="src/${spec%%:*}"
   encoder="${spec#*:}"
-  rg -q "impl ModulatedEncoder for ${encoder}\b" "$file" || {
+  impl_body=$(awk -v header="impl ModulatedEncoder for ${encoder} {" '
+    $0 == header { in_impl = 1; next }
+    in_impl && /^}/ { exit }
+    in_impl { print }
+  ' "$file")
+  test -n "$impl_body" || {
     echo "missing ModulatedEncoder impl: $encoder"; exit 1
   }
-  rg -q '^\s*fn encode_with_modulators_into\(' "$file" || {
-    echo "missing allocation-free modulator sink path: $encoder"; exit 1
-  }
-  rg -q '^\s*fn encode_step_with_modulators_into\(' "$file" || {
-    echo "missing allocation-free modulator sink step: $encoder"; exit 1
-  }
+  # This private adapter expands to both modulator sink overrides.
+  if rg -q '^\s*super::impl_same_step_modulated_sinks!\(\);' <<< "$impl_body"; then
+    continue
+  fi
+  for method in encode_with_modulators_into encode_step_with_modulators_into; do
+    rg -q "^\s*fn ${method}\(" <<< "$impl_body" || {
+      echo "missing allocation-free $method override: $encoder"; exit 1
+    }
+  done
 done
 # The returning encode_*_with_modulators stay trait methods: no inherent
 # wrappers back on the encoder types

@@ -897,37 +897,16 @@ fn assert_batch_modulated_paths_agree<E: ModulatedEncoder>(
 }
 
 #[test]
-fn every_encoder_overrides_both_modulated_sink_paths_consistently() {
+fn streaming_modulator_sinks_match_returning_paths() {
     // The trait defaults route through the returning modulator methods and so
-    // allocate; each encoder overrides them to reach its gains layer directly.
-    // Those overrides have to stay spike-for-spike identical to the defaults.
-    let modulators = NeuroModulators {
-        acetylcholine: 1.0,
-        ..Default::default()
-    };
-    let curves = NeuromodulatorGainCurves {
-        acetylcholine: ModulatorGainCurves {
-            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
-            latency: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
-            sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    // allocate. Compare observable spikes; REVIEW.md guards override presence.
+    let (modulators, curves) = modulator_sink_fixture();
     let steps: [&[f32]; 3] = [&[0.2, 0.05, 0.5], &[0.2, 0.05, 1.0], &[0.9, 0.9, 0.0]];
 
     assert_modulated_paths_agree(
         "DeltaEncoder",
         DeltaEncoder::new(0.1, 3),
         DeltaEncoder::new(0.1, 3),
-        &modulators,
-        &curves,
-        &steps,
-    );
-    assert_modulated_paths_agree(
-        "DerivativeEncoder",
-        DerivativeEncoder::new(vec![0.1; 3]),
-        DerivativeEncoder::new(vec![0.1; 3]),
         &modulators,
         &curves,
         &steps,
@@ -974,10 +953,7 @@ fn every_encoder_overrides_both_modulated_sink_paths_consistently() {
     );
 }
 
-#[test]
-fn batch_modulated_sink_paths_cover_every_encoder() {
-    // Batch counterpart of the step check above. The two stochastic encoders
-    // draw fresh entropy per call, so they get bounds rather than equality.
+fn modulator_sink_fixture() -> (NeuroModulators, NeuromodulatorGainCurves) {
     let modulators = NeuroModulators {
         acetylcholine: 1.0,
         dopamine: 1.0,
@@ -996,21 +972,18 @@ fn batch_modulated_sink_paths_cover_every_encoder() {
         },
         ..Default::default()
     };
+    (modulators, curves)
+}
+
+#[test]
+fn deterministic_batch_modulator_sinks_match_returning_paths() {
+    let (modulators, curves) = modulator_sink_fixture();
     let input = [0.2_f32, 0.05, 0.5];
-    let mut buffer: Vec<SpikeEvent> = Vec::new();
 
     assert_batch_modulated_paths_agree(
         "DeltaEncoder",
         DeltaEncoder::new(0.1, 3),
         DeltaEncoder::new(0.1, 3),
-        &modulators,
-        &curves,
-        &input,
-    );
-    assert_batch_modulated_paths_agree(
-        "DerivativeEncoder",
-        DerivativeEncoder::new(vec![0.1; 3]),
-        DerivativeEncoder::new(vec![0.1; 3]),
         &modulators,
         &curves,
         &input,
@@ -1055,8 +1028,12 @@ fn batch_modulated_sink_paths_cover_every_encoder() {
         &curves,
         &input,
     );
+}
 
-    // Stochastic: the sink path must stay within the same channel bounds.
+#[test]
+fn stochastic_modulator_sinks_stay_within_channel_bounds() {
+    let (modulators, curves) = modulator_sink_fixture();
+    let mut buffer: Vec<SpikeEvent> = Vec::new();
     let mut rate = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010).expect("valid");
     buffer.clear();
     rate.encode_with_modulators_into(&[0.5; 16], &modulators, &curves, &mut buffer);
@@ -1074,6 +1051,48 @@ fn batch_modulated_sink_paths_cover_every_encoder() {
     buffer.clear();
     population.encode_step_with_modulators_into(&[50.0], &modulators, &curves, &mut buffer);
     assert!(buffer.len() <= 32);
+}
+
+#[test]
+fn derivative_modulator_curve_changes_batch_and_streaming_sink_output() {
+    let mut returning = DerivativeEncoder::new(vec![1.0; 2]);
+    let mut sink_based = returning.clone();
+    let mut ordinary = returning.clone();
+    let modulators = NeuroModulators {
+        dopamine: 1.0,
+        ..Default::default()
+    };
+    let curves = NeuromodulatorGainCurves {
+        dopamine: ModulatorGainCurves {
+            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let inputs = [[0.75, -0.75], [0.0, 0.0]];
+    let mut buffer = Vec::new();
+
+    for (step, input) in inputs.iter().enumerate() {
+        buffer.clear();
+        let spikes = if step == 0 {
+            sink_based.encode_with_modulators_into(input, &modulators, &curves, &mut buffer);
+            returning
+                .encode_with_modulators(input, &modulators, &curves)
+                .spikes
+        } else {
+            sink_based.encode_step_with_modulators_into(input, &modulators, &curves, &mut buffer);
+            returning
+                .encode_step_with_modulators(input, &modulators, &curves)
+                .spikes
+        };
+        let expected = [
+            SpikeEvent::at_step_start(0, step == 0),
+            SpikeEvent::at_step_start(1, step != 0),
+        ];
+        assert!(ordinary.encode_step(input).spikes.is_empty());
+        assert_eq!(spikes, expected);
+        assert_eq!(buffer, expected);
+    }
 }
 
 #[test]

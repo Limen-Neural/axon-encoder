@@ -107,12 +107,13 @@ impl DerivativeEncoder {
     ///
     /// Every public encoding path on this encoder routes through here, so the
     /// returning and sink-based APIs cannot drift apart.
-    fn encode_with_threshold_scale_into<S: SpikeSink + ?Sized>(
+    fn encode_with_selected_gains_into<S: SpikeSink + ?Sized>(
         &mut self,
         current_values: &[f32],
-        threshold_scale: f32,
+        gains: EncodingGains,
         sink: &mut S,
     ) {
+        let threshold_scale = gains.sanitize().threshold_scale;
         sink.reserve(current_values.len().min(self.thresholds.len()));
 
         for (i, (&current_val, &threshold)) in
@@ -127,25 +128,21 @@ impl DerivativeEncoder {
                 continue;
             }
 
-            let delta = current_val - self.last_values[i];
-            let effective_threshold = threshold * threshold_scale;
-
-            if delta.abs() > effective_threshold {
-                sink.push(SpikeEvent::at_step_start(channel, delta > 0.0));
+            let previous = self.last_values[i];
+            let crossed = if threshold_scale == 1.0 {
+                // Keep the pre-modulation f32 comparison for identity gains.
+                (current_val - previous).abs() > threshold
+            } else {
+                // Both expressions can overflow f32 even with finite inputs.
+                let change = (f64::from(current_val) - f64::from(previous)).abs();
+                change > f64::from(threshold) * f64::from(threshold_scale)
+            };
+            if crossed {
+                sink.push(SpikeEvent::at_step_start(channel, current_val > previous));
             }
 
             self.last_values[i] = current_val;
         }
-    }
-
-    fn encode_with_threshold_scale(
-        &mut self,
-        input: &[f32],
-        threshold_scale: f32,
-    ) -> EncodedOutput {
-        let mut output = EncodedOutput::new();
-        self.encode_with_threshold_scale_into(input, threshold_scale, &mut output.spikes);
-        output
     }
 }
 
@@ -155,13 +152,11 @@ impl Encoder for DerivativeEncoder {
     }
 
     fn encode_step(&mut self, current_values: &[f32]) -> EncodedOutput {
-        self.encode_with_threshold_scale(current_values, 1.0)
+        self.encode_with_gains(current_values, EncodingGains::identity())
     }
 
     fn encode_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
-        crate::sink::through_chunks(sink, |sink| {
-            self.encode_with_threshold_scale_into(input, 1.0, sink)
-        });
+        self.encode_with_gains_into(input, EncodingGains::identity(), sink);
     }
 
     fn encode_step_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
@@ -188,7 +183,9 @@ impl Encoder for DerivativeEncoder {
 
 impl ModulatedEncoder for DerivativeEncoder {
     fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
-        self.encode_with_threshold_scale(input, gains.sanitize().threshold_scale)
+        let mut output = EncodedOutput::new();
+        self.encode_with_selected_gains_into(input, gains, &mut output.spikes);
+        output
     }
 
     fn encode_with_gains_into(
@@ -197,40 +194,12 @@ impl ModulatedEncoder for DerivativeEncoder {
         gains: EncodingGains,
         sink: &mut dyn SpikeSink,
     ) {
-        let threshold_scale = gains.sanitize().threshold_scale;
         crate::sink::through_chunks(sink, |sink| {
-            self.encode_with_threshold_scale_into(input, threshold_scale, sink)
+            self.encode_with_selected_gains_into(input, gains, sink)
         });
     }
 
-    fn encode_step_with_gains_into(
-        &mut self,
-        input: &[f32],
-        gains: EncodingGains,
-        sink: &mut dyn SpikeSink,
-    ) {
-        self.encode_with_gains_into(input, gains, sink);
-    }
-
-    fn encode_with_modulators_into(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-        sink: &mut dyn SpikeSink,
-    ) {
-        self.encode_with_gains_into(input, gain_curves.evaluate(modulators), sink);
-    }
-
-    fn encode_step_with_modulators_into(
-        &mut self,
-        input: &[f32],
-        modulators: &NeuroModulators,
-        gain_curves: &NeuromodulatorGainCurves,
-        sink: &mut dyn SpikeSink,
-    ) {
-        self.encode_step_with_gains_into(input, gain_curves.evaluate(modulators), sink);
-    }
+    super::impl_same_step_modulated_sinks!();
 }
 
 #[cfg(test)]

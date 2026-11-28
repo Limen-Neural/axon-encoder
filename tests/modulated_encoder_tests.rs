@@ -153,3 +153,43 @@ fn derivative_identity_gain_matches_ordinary_encoding_at_channel_limit() {
     );
     assert_eq!(modulated, ordinary);
 }
+
+#[test]
+fn derivative_large_finite_changes_use_wider_gain_arithmetic() {
+    let max = f32::MAX;
+    let mut encoder = DerivativeEncoder::new(vec![max; 2]);
+    let gains = |threshold_scale| EncodingGains {
+        threshold_scale,
+        ..EncodingGains::identity()
+    };
+
+    assert!(encoder.encode_step(&[-max, max]).spikes.is_empty());
+    assert_eq!(
+        encoder
+            .encode_step_with_gains(&[max, -max], gains(1.5))
+            .spikes,
+        [
+            SpikeEvent::at_step_start(0, true),
+            SpikeEvent::at_step_start(1, false)
+        ]
+    );
+    // The reverse jump equals exactly twice the threshold, so it is silent.
+    assert!(
+        encoder
+            .encode_step_with_gains(&[-max, max], gains(2.0))
+            .spikes
+            .is_empty()
+    );
+}
+
+#[test]
+fn derivative_identity_keeps_original_rounding_at_strict_threshold() {
+    let mut encoder = DerivativeEncoder::new(vec![1.0]);
+    assert!(encoder.encode_step(&[-2.0_f32.powi(-25)]).spikes.is_empty());
+    assert!(
+        encoder
+            .encode_step_with_gains(&[1.0], EncodingGains::identity())
+            .spikes
+            .is_empty()
+    );
+}
