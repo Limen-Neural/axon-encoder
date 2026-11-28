@@ -8,6 +8,9 @@
 
 use axon_encoder::prelude::*;
 
+#[path = "encode_into_tests/derivative.rs"]
+mod derivative;
+
 /// Encodes twice from identical starting states and compares the two paths.
 ///
 /// Each call passes two separately built encoders, so stateful ones start from

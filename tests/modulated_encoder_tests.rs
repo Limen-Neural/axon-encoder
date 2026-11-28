@@ -85,3 +85,111 @@ fn embedding_rate_encoder_supports_trait_object_dispatch() {
     );
     assert_eq!(output.spikes, vec![SpikeEvent::at_step_start(0, true)]);
 }
+
+#[test]
+fn derivative_gain_scales_signed_crossings_and_keeps_sample_history() {
+    let mut derivative = DerivativeEncoder::new(vec![1.0, 2.0]);
+    let encoder: &mut dyn ModulatedEncoder = &mut derivative;
+    let gains = |threshold_scale| EncodingGains {
+        threshold_scale,
+        // The other scales do not affect derivative encoding.
+        sensitivity_scale: 0.0,
+        firing_rate_scale: 0.0,
+        latency_scale: 0.0,
+    };
+    let step = |channel, polarity| SpikeEvent::at_step_start(channel, polarity);
+
+    let first = encoder.encode_with_gains(&[0.75, -1.75], gains(0.5));
+    assert_eq!(first.spikes, [step(0, true), step(1, false)]);
+    assert!(
+        encoder
+            .encode_step_with_gains(&[3.0, -3.0], gains(4.0))
+            .spikes
+            .is_empty()
+    );
+    assert!(
+        encoder
+            .encode_step_with_gains(&[f32::NAN, f32::INFINITY], gains(0.0))
+            .spikes
+            .is_empty()
+    );
+    // NaN gain becomes identity; the prior suppressed finite step still
+    // updated the history, and the non-finite step did not.
+    assert!(
+        encoder
+            .encode_step_with_gains(&[3.75, -2.0], gains(f32::NAN))
+            .spikes
+            .is_empty()
+    );
+    let crossing = encoder.encode_step_with_gains(&[2.5, 0.25], gains(1.0));
+    assert_eq!(crossing.spikes, [step(0, false), step(1, true)]);
+    assert!(
+        encoder
+            .encode_step_with_gains(&[2.5, 0.25], gains(0.0))
+            .spikes
+            .is_empty()
+    );
+    let zero_threshold = encoder.encode_step_with_gains(&[2.75, 0.0], gains(0.0));
+    assert_eq!(zero_threshold.spikes, [step(0, true), step(1, false)]);
+}
+
+#[test]
+fn derivative_identity_gain_matches_ordinary_encoding_at_channel_limit() {
+    let channels = usize::from(u16::MAX) + 1;
+    let mut ordinary = DerivativeEncoder::new(vec![0.5; channels]);
+    let mut modulated = ordinary.clone();
+    let mut input = vec![0.0; channels + 1];
+    input[channels - 1] = -1.0;
+    input[channels] = 2.0;
+
+    let expected = ordinary.encode_step(&input);
+    assert_eq!(
+        expected.spikes,
+        [SpikeEvent::at_step_start(u16::MAX, false)]
+    );
+    assert_eq!(
+        modulated.encode_step_with_gains(&input, EncodingGains::identity()),
+        expected
+    );
+    assert_eq!(modulated, ordinary);
+}
+
+#[test]
+fn derivative_large_finite_changes_use_wider_gain_arithmetic() {
+    let max = f32::MAX;
+    let mut encoder = DerivativeEncoder::new(vec![max; 2]);
+    let gains = |threshold_scale| EncodingGains {
+        threshold_scale,
+        ..EncodingGains::identity()
+    };
+
+    assert!(encoder.encode_step(&[-max, max]).spikes.is_empty());
+    assert_eq!(
+        encoder
+            .encode_step_with_gains(&[max, -max], gains(1.5))
+            .spikes,
+        [
+            SpikeEvent::at_step_start(0, true),
+            SpikeEvent::at_step_start(1, false)
+        ]
+    );
+    // The reverse jump equals exactly twice the threshold, so it is silent.
+    assert!(
+        encoder
+            .encode_step_with_gains(&[-max, max], gains(2.0))
+            .spikes
+            .is_empty()
+    );
+}
+
+#[test]
+fn derivative_identity_keeps_original_rounding_at_strict_threshold() {
+    let mut encoder = DerivativeEncoder::new(vec![1.0]);
+    assert!(encoder.encode_step(&[-2.0_f32.powi(-25)]).spikes.is_empty());
+    assert!(
+        encoder
+            .encode_step_with_gains(&[1.0], EncodingGains::identity())
+            .spikes
+            .is_empty()
+    );
+}
