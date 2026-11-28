@@ -359,6 +359,22 @@ pub trait ModulatedEncoder: Encoder {
 /// caller-owned [`SpikeSink`]. They emit identical spikes; pick the second when
 /// a per-call allocation matters.
 ///
+/// # Non-finite input
+///
+/// Built-in encoders never store a non-finite sample. A skipped channel emits
+/// no spike and does not consume a history slot. A call still represents a
+/// step in time; the caller should advance its clock as usual.
+///
+/// | Encoder | Handling of a NaN, +∞ or −∞ sample |
+/// | --- | --- |
+/// | [`BaselineHoldTernaryEncoder`](encoders::BaselineHoldTernaryEncoder), [`DeltaEncoder`](prelude::DeltaEncoder), [`DerivativeEncoder`](prelude::DerivativeEncoder) | Skip; do not seed or update the channel’s baseline or previous value. |
+/// | [`EmbeddingRateEncoder`](prelude::EmbeddingRateEncoder), [`PredictiveEncoder`](prelude::PredictiveEncoder), [`TemporalEncoder`](prelude::TemporalEncoder) | Skip; do not integrate, warm up, or update history or prediction. |
+/// | [`PhaseEncoder`](encoders::PhaseEncoder) | Skip the channel; the shared background phase still advances. |
+/// | [`PopulationEncoder`](encoders::PopulationEncoder) | No spikes from that input channel’s population. |
+/// | [`RateEncoder`](encoders::RateEncoder) | Zero new rate drive. A streaming channel can still emit previously queued spikes. |
+/// | [`LatencyEncoder`](encoders::LatencyEncoder) | Keep one spike per channel: NaN and −∞ map to the latest tick, +∞ to the earliest. |
+/// | [`PoissonEncoder`](poisson::PoissonEncoder) (separate dense API) | Probability input: NaN and −∞ produce zeroes, +∞ produces ones. Non-finite physical rate or step duration produces zeroes. |
+///
 /// # Time semantics
 ///
 /// Both modes emit call-relative timestamps: a [`SpikeEvent::timestamp`] counts
