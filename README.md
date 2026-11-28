@@ -97,6 +97,18 @@ separately to restore the caller's clock; saved spike timestamps still contain
 call-relative offsets. The old generic `EncoderConfig` was removed; configure
 each concrete encoder directly.
 
+### Non-finite samples
+
+Built-in encoders do not store NaN or infinity as live state. History and
+integration encoders skip affected channels without advancing their history.
+`PhaseEncoder` still advances its shared phase, and `RateEncoder` can emit
+spikes queued before the invalid sample. `PopulationEncoder` is silent on the
+affected input; `LatencyEncoder` keeps one spike and maps NaN and negative
+infinity to the latest tick and positive infinity to the earliest.
+`PoissonEncoder` saturates positive infinity to probability one and is silent
+for NaN or negative infinity. Its physical-rate API is silent for any
+non-finite rate or step duration.
+
 ## Quick start
 
 ```rust
