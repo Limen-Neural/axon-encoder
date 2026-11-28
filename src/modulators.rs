@@ -34,6 +34,10 @@ fn sanitize_gain_scale(scale: f32) -> f32 {
 /// range before interpolation. Call [`NeuroModulators::decay`] between steps
 /// for the fixed exponential decay schedule (decay floors at 0).
 ///
+/// # Serialization
+/// With the `serde` feature, all four fields are required on deserialize.
+/// Rust's `Default` implementation does not make fields optional in a payload.
+///
 /// # Examples
 ///
 /// ```rust
@@ -203,6 +207,12 @@ pub struct ModulatorGainCurves {
 /// - `latency_scale = 0.0` → max_latency is 0 → all spikes at timestamp 0 (instant response)
 ///
 /// This asymmetry is intentional and reflects the physical semantics of each component.
+///
+/// # Serialization
+/// With the `serde` feature, missing fields default to `1.0`. Deserialization
+/// silently clamps finite numbers to `[0, 10_000]` and replaces non-finite
+/// numbers with `1.0` in formats that can supply them. It still rejects values
+/// that cannot be deserialized as numbers (for example, JSON `null`).
 ///
 /// # Examples
 ///

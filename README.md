@@ -46,13 +46,22 @@ Requires **Rust 1.88.0+** (edition 2024). See `rust-version` in `Cargo.toml`.
 ### Serde checkpoints
 
 With `features = ["serde"]`, encoder structs serialize **configuration plus
-live mutable state** (history, membrane, phase, rate accumulators, pending
-spike backlog). Restore a **JSON-serializable** checkpoint and keep calling
-`encode_step` with the remaining inputs: deterministic encoders emit the same
-spikes and finish in the same state as the original.
+live mutable state** where applicable (history, membrane, phase, rate
+accumulators, pending spike backlog). Other types, such as encoder configs and
+gain controls, serialize their own data only. The crate does not depend on a
+format library: `serde_json` is a dev-dependency and JSON is the format tested
+for checkpoint continuation and historical compatibility. RON is used only
+to exercise rejection of non-finite state and is not tested for replay.
 
-That contract covers Delta, Derivative, Temporal, Predictive, Phase,
-`EmbeddingRateEncoder`, and `RateEncoder::encode_step`. Live floats are
+Restore a checkpoint and keep calling `encode_step` with the same remaining
+inputs: deterministic encoders emit the same spikes and finish in the same
+state when the format preserves the stored numeric values. See the
+[checkpoint continuation tests](https://github.com/Limen-Neural/axon-encoder/blob/main/tests/checkpoint_continuation.rs)
+for the covered stateful paths.
+
+Deterministic step paths include Delta, Derivative, Temporal, Predictive,
+Phase, `BaselineHoldTernaryEncoder`, `EmbeddingRateEncoder`, and
+`RateEncoder::encode_step`. Live floats are
 always finite: stateful encoders (Delta, Derivative, Temporal, Predictive,
 `BaselineHoldTernaryEncoder`, `EmbeddingRateEncoder`) **skip** a `NaN`/`±inf`
 sample at encode time (nothing stored, no spike, no adaptive state advanced),
@@ -66,6 +75,27 @@ It does **not** cover stochastic paths: `RateEncoder::encode` (batch), and
 both batch and streaming `PopulationEncoder` / `PoissonEncoder`. Those methods
 build a thread-local generator internally; serde does not capture it, and they
 do not take caller-owned RNG state.
+
+For seeded replay, use the separate `*_with_rng` methods and preserve the RNG
+state outside the encoder checkpoint. Replay assumes the same input-call
+sequence and fixed crate and RNG versions on the same platform. Bit-for-bit
+output is not guaranteed across version or platform changes.
+`PopulationEncoder` saves only its tuning configuration; `PoissonEncoder`
+saves only `num_steps` and ignores extra JSON fields such as `seed`.
+
+`EncodingGains` defaults missing fields to `1.0` and silently clamps finite
+values to `[0, 10_000]` on deserialize; non-finite numbers supplied by a format
+that supports them become `1.0`. `NeuroModulators` requires all four fields.
+With built-in encoders, `EncodedOutput.embeddings` stays `None` (`null` in
+JSON), and the old `metadata` field is no longer written. Spikes are in
+channel-major order, so sort by timestamp if your consumer needs chronology.
+
+**Interchange limits.** Encoder checkpoints are Rust type state, not a stable
+cross-version or cross-language format. The optional `nir` export represents
+static parameters, not a live checkpoint. On the 0.7 line, save `TimeCursor`
+separately to restore the caller's clock; saved spike timestamps still contain
+call-relative offsets. The old generic `EncoderConfig` was removed; configure
+each concrete encoder directly.
 
 ## Quick start
 

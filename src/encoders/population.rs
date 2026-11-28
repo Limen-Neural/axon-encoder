@@ -42,6 +42,12 @@ use crate::prelude::*;
 /// - `input_range`: Tuple of (min, max) input values
 /// - `tuning_width`: Controls how broadly neurons respond (larger = wider spread)
 ///
+/// # Serialization
+/// With the `serde` feature, only tuning configuration is saved. The default
+/// batch and step methods sample a thread-local RNG that is not serialized;
+/// restoring the encoder alone does not replay spikes. Use the seeded batch
+/// or step APIs and save the caller-owned RNG state separately for replay.
+///
 /// # Examples
 ///
 /// ```rust
