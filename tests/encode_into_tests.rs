@@ -8,6 +8,9 @@
 
 use axon_encoder::prelude::*;
 
+#[path = "encode_into_tests/derivative.rs"]
+mod derivative;
+
 /// Encodes twice from identical starting states and compares the two paths.
 ///
 /// Each call passes two separately built encoders, so stateful ones start from
@@ -897,10 +900,23 @@ fn assert_batch_modulated_paths_agree<E: ModulatedEncoder>(
 }
 
 #[test]
-fn streaming_modulator_sinks_match_returning_paths() {
+fn every_encoder_overrides_both_modulated_sink_paths_consistently() {
     // The trait defaults route through the returning modulator methods and so
-    // allocate. Compare observable spikes; REVIEW.md guards override presence.
-    let (modulators, curves) = modulator_sink_fixture();
+    // allocate; each encoder overrides them to reach its gains layer directly.
+    // Those overrides have to stay spike-for-spike identical to the defaults.
+    let modulators = NeuroModulators {
+        acetylcholine: 1.0,
+        ..Default::default()
+    };
+    let curves = NeuromodulatorGainCurves {
+        acetylcholine: ModulatorGainCurves {
+            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            latency: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
+            sensitivity: Some(GainCurve::new((0.0, 1.0), (1.0, 2.0))),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let steps: [&[f32]; 3] = [&[0.2, 0.05, 0.5], &[0.2, 0.05, 1.0], &[0.9, 0.9, 0.0]];
 
     assert_modulated_paths_agree(
@@ -953,7 +969,10 @@ fn streaming_modulator_sinks_match_returning_paths() {
     );
 }
 
-fn modulator_sink_fixture() -> (NeuroModulators, NeuromodulatorGainCurves) {
+#[test]
+fn batch_modulated_sink_paths_cover_every_encoder() {
+    // Batch counterpart of the step check above. The two stochastic encoders
+    // draw fresh entropy per call, so they get bounds rather than equality.
     let modulators = NeuroModulators {
         acetylcholine: 1.0,
         dopamine: 1.0,
@@ -972,13 +991,8 @@ fn modulator_sink_fixture() -> (NeuroModulators, NeuromodulatorGainCurves) {
         },
         ..Default::default()
     };
-    (modulators, curves)
-}
-
-#[test]
-fn deterministic_batch_modulator_sinks_match_returning_paths() {
-    let (modulators, curves) = modulator_sink_fixture();
     let input = [0.2_f32, 0.05, 0.5];
+    let mut buffer: Vec<SpikeEvent> = Vec::new();
 
     assert_batch_modulated_paths_agree(
         "DeltaEncoder",
@@ -1028,12 +1042,8 @@ fn deterministic_batch_modulator_sinks_match_returning_paths() {
         &curves,
         &input,
     );
-}
 
-#[test]
-fn stochastic_modulator_sinks_stay_within_channel_bounds() {
-    let (modulators, curves) = modulator_sink_fixture();
-    let mut buffer: Vec<SpikeEvent> = Vec::new();
+    // Stochastic: the sink path must stay within the same channel bounds.
     let mut rate = RateEncoder::try_new(5.0, 100.0, (0.0, 1.0), 0.010).expect("valid");
     buffer.clear();
     rate.encode_with_modulators_into(&[0.5; 16], &modulators, &curves, &mut buffer);
@@ -1051,78 +1061,6 @@ fn stochastic_modulator_sinks_stay_within_channel_bounds() {
     buffer.clear();
     population.encode_step_with_modulators_into(&[50.0], &modulators, &curves, &mut buffer);
     assert!(buffer.len() <= 32);
-}
-
-#[test]
-fn derivative_modulator_curve_changes_batch_and_streaming_sink_output() {
-    let mut returning = DerivativeEncoder::new(vec![1.0; 2]);
-    let mut sink_based = returning.clone();
-    let mut ordinary = returning.clone();
-    let modulators = NeuroModulators {
-        dopamine: 1.0,
-        ..Default::default()
-    };
-    let curves = NeuromodulatorGainCurves {
-        dopamine: ModulatorGainCurves {
-            threshold: Some(GainCurve::new((0.0, 1.0), (1.0, 0.5))),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let inputs = [[0.75, -0.75], [0.0, 0.0]];
-    let mut buffer = Vec::new();
-
-    for (step, input) in inputs.iter().enumerate() {
-        buffer.clear();
-        let spikes = if step == 0 {
-            sink_based.encode_with_modulators_into(input, &modulators, &curves, &mut buffer);
-            returning
-                .encode_with_modulators(input, &modulators, &curves)
-                .spikes
-        } else {
-            sink_based.encode_step_with_modulators_into(input, &modulators, &curves, &mut buffer);
-            returning
-                .encode_step_with_modulators(input, &modulators, &curves)
-                .spikes
-        };
-        let expected = [
-            SpikeEvent::at_step_start(0, step == 0),
-            SpikeEvent::at_step_start(1, step != 0),
-        ];
-        assert!(ordinary.encode_step(input).spikes.is_empty());
-        assert_eq!(spikes, expected);
-        assert_eq!(buffer, expected);
-    }
-}
-
-#[test]
-fn derivative_direct_gain_sinks_match_returning_paths_and_append() {
-    let channels = 70; // More than one sink chunk.
-    let mut returning = DerivativeEncoder::new(vec![1.0; channels]);
-    let mut sink_based = returning.clone();
-    let gains = EncodingGains {
-        threshold_scale: 0.5,
-        ..EncodingGains::identity()
-    };
-    let prefix = SpikeEvent::at_step_start(99, true);
-    let mut buffer = vec![prefix];
-
-    let initial = vec![0.75; channels + 1];
-    let batch = returning.encode_with_gains(&initial, gains);
-    assert_eq!(batch.spikes.len(), channels);
-    sink_based.encode_with_gains_into(&initial, gains, &mut buffer);
-    assert_eq!(&buffer[1..], &batch.spikes);
-
-    let mut next = vec![0.0; channels - 1];
-    next[0] = f32::NAN; // Skip one channel without losing its history.
-    let step = returning.encode_step_with_gains(&next, gains);
-    assert_eq!(step.spikes.len(), channels - 2);
-    let appended_at = buffer.len();
-    sink_based.encode_step_with_gains_into(&next, gains, &mut buffer);
-    assert_eq!(&buffer[appended_at..], &step.spikes);
-    assert_eq!(buffer[0], prefix);
-    assert_eq!(&buffer[1..appended_at], &batch.spikes);
-    assert_eq!(sink_based, returning);
 }
 
 /// An out-of-crate modulated encoder that overrides no sink method.
