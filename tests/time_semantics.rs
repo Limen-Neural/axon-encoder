@@ -49,6 +49,9 @@ const MODULATED_FACTORIES: &[(&str, ModulatedFactory)] = &[
     ("DeltaEncoder", || {
         Box::new(DeltaEncoder::try_new(0.1, 8).expect("valid delta"))
     }),
+    ("DerivativeEncoder", || {
+        Box::new(DerivativeEncoder::try_new(vec![0.1; 8]).expect("valid derivative"))
+    }),
     ("TemporalEncoder", || {
         Box::new(TemporalEncoder::try_new(8, vec![0.2], 8).expect("valid temporal"))
     }),
@@ -64,16 +67,12 @@ const MODULATED_FACTORIES: &[(&str, ModulatedFactory)] = &[
 ];
 
 /// Every public `Encoder` implementation: the gain-aware ones upcast to
-/// `dyn Encoder`, plus `DerivativeEncoder`, which has no modulated path.
+/// `dyn Encoder`, plus the unmodulated `BaselineHoldTernaryEncoder`.
 fn encoders() -> Vec<(&'static str, Box<dyn Encoder>)> {
     let mut all: Vec<(&'static str, Box<dyn Encoder>)> = MODULATED_FACTORIES
         .iter()
         .map(|(label, build)| (*label, build() as Box<dyn Encoder>))
         .collect();
-    all.push((
-        "DerivativeEncoder",
-        Box::new(DerivativeEncoder::try_new(vec![0.1; 8]).expect("valid derivative")),
-    ));
     all.push((
         "BaselineHoldTernaryEncoder",
         Box::new(BaselineHoldTernaryEncoder::try_new(vec![0.1; 8]).expect("valid baseline hold")),

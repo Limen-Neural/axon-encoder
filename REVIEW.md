@@ -351,14 +351,17 @@ test "$(wc -l < src/modulators.rs)" -gt 400
 rg -n 'pub struct GainCurve|NeuromodulatorGainCurves|EncodingGains' \
   src/modulators.rs
 
-# encode_*_with_modulators lives on ModulatedEncoder, and every encoder
-# implements it and overrides the allocation-free sink path
+# Gain-aware encoders implement ModulatedEncoder and override both sink paths.
+# BaselineHoldTernaryEncoder intentionally uses its fixed baseline-hold
+# thresholds. PoissonEncoder implements neither trait (dense output).
 rg -n 'fn encode_with_modulators\(' src/lib.rs
 for spec in \
-  'delta.rs:DeltaEncoder' 'latency.rs:LatencyEncoder' 'phase.rs:PhaseEncoder' \
-  'population.rs:PopulationEncoder' 'predictive.rs:PredictiveEncoder' \
-  'rate.rs:RateEncoder' 'temporal.rs:TemporalEncoder'; do
-  file="src/encoders/${spec%%:*}"
+  'encoders/delta.rs:DeltaEncoder' 'encoders/derivative.rs:DerivativeEncoder' \
+  'encoder.rs:EmbeddingRateEncoder' 'encoders/latency.rs:LatencyEncoder' \
+  'encoders/phase.rs:PhaseEncoder' 'encoders/population.rs:PopulationEncoder' \
+  'encoders/predictive.rs:PredictiveEncoder' 'encoders/rate.rs:RateEncoder' \
+  'encoders/temporal.rs:TemporalEncoder'; do
+  file="src/${spec%%:*}"
   encoder="${spec#*:}"
   rg -q "impl ModulatedEncoder for ${encoder}\b" "$file" || {
     echo "missing ModulatedEncoder impl: $encoder"; exit 1
@@ -373,7 +376,7 @@ done
 # The returning encode_*_with_modulators stay trait methods: no inherent
 # wrappers back on the encoder types
 test -z "$(rg -n 'fn encode_with_modulators\(|fn encode_step_with_modulators\(' \
-  src/encoders/*.rs || true)"
+  src/encoder.rs src/encoders/*.rs || true)"
 
 # PhaseEncoder published
 rg -n 'pub mod phase|pub use phase::PhaseEncoder' \

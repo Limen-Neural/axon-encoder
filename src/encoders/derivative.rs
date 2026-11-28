@@ -5,6 +5,13 @@ use crate::prelude::*;
 /// Fires an excitatory spike when the positive change exceeds a threshold,
 /// and an inhibitory spike when the negative change exceeds the threshold.
 ///
+/// # Modulation
+/// Implements [`ModulatedEncoder`] using [`EncodingGains::threshold_scale`],
+/// which multiplies each channel's threshold for the current call. A zero
+/// scale fires on any nonzero change; an identity scale matches unmodulated
+/// encoding. Every finite sample still updates the previous value, even when
+/// it does not emit a spike.
+///
 /// # Non-finite input
 ///
 /// A `NaN` or `±inf` sample is **skipped**: it is not stored in `last_values`,
@@ -100,41 +107,45 @@ impl DerivativeEncoder {
     ///
     /// Every public encoding path on this encoder routes through here, so the
     /// returning and sink-based APIs cannot drift apart.
-    fn encode_step_into_sink<S: SpikeSink + ?Sized>(
+    fn encode_with_threshold_scale_into<S: SpikeSink + ?Sized>(
         &mut self,
         current_values: &[f32],
+        threshold_scale: f32,
         sink: &mut S,
     ) {
         sink.reserve(current_values.len().min(self.thresholds.len()));
 
-        for (i, &current_val) in current_values.iter().enumerate() {
-            if i >= self.thresholds.len() {
+        for (i, (&current_val, &threshold)) in
+            current_values.iter().zip(&self.thresholds).enumerate()
+        {
+            let Ok(channel) = u16::try_from(i) else {
+                // Match the channel truncation rule used by the other encoders.
                 break;
-            }
+            };
             // Skip rule: a non-finite sample is neither stored nor compared.
             if !current_val.is_finite() {
                 continue;
             }
 
             let delta = current_val - self.last_values[i];
+            let effective_threshold = threshold * threshold_scale;
 
-            // Excitatory spike on positive jump exceeding threshold
-            if delta > self.thresholds[i] {
-                sink.push(SpikeEvent::at_step_start(
-                    u16::try_from(i).expect("channel index exceeds u16::MAX"),
-                    true,
-                ));
-            }
-            // Inhibitory/Negative spike on sudden drop
-            else if delta < -self.thresholds[i] {
-                sink.push(SpikeEvent::at_step_start(
-                    u16::try_from(i).expect("channel index exceeds u16::MAX"),
-                    false,
-                ));
+            if delta.abs() > effective_threshold {
+                sink.push(SpikeEvent::at_step_start(channel, delta > 0.0));
             }
 
             self.last_values[i] = current_val;
         }
+    }
+
+    fn encode_with_threshold_scale(
+        &mut self,
+        input: &[f32],
+        threshold_scale: f32,
+    ) -> EncodedOutput {
+        let mut output = EncodedOutput::new();
+        self.encode_with_threshold_scale_into(input, threshold_scale, &mut output.spikes);
+        output
     }
 }
 
@@ -144,13 +155,13 @@ impl Encoder for DerivativeEncoder {
     }
 
     fn encode_step(&mut self, current_values: &[f32]) -> EncodedOutput {
-        let mut output = EncodedOutput::new();
-        self.encode_step_into_sink(current_values, &mut output.spikes);
-        output
+        self.encode_with_threshold_scale(current_values, 1.0)
     }
 
     fn encode_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
-        crate::sink::through_chunks(sink, |sink| self.encode_step_into_sink(input, sink));
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(input, 1.0, sink)
+        });
     }
 
     fn encode_step_into(&mut self, input: &[f32], sink: &mut dyn SpikeSink) {
@@ -172,6 +183,53 @@ impl Encoder for DerivativeEncoder {
         for val in self.last_values.iter_mut() {
             *val = 0.0;
         }
+    }
+}
+
+impl ModulatedEncoder for DerivativeEncoder {
+    fn encode_with_gains(&mut self, input: &[f32], gains: EncodingGains) -> EncodedOutput {
+        self.encode_with_threshold_scale(input, gains.sanitize().threshold_scale)
+    }
+
+    fn encode_with_gains_into(
+        &mut self,
+        input: &[f32],
+        gains: EncodingGains,
+        sink: &mut dyn SpikeSink,
+    ) {
+        let threshold_scale = gains.sanitize().threshold_scale;
+        crate::sink::through_chunks(sink, |sink| {
+            self.encode_with_threshold_scale_into(input, threshold_scale, sink)
+        });
+    }
+
+    fn encode_step_with_gains_into(
+        &mut self,
+        input: &[f32],
+        gains: EncodingGains,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_with_gains_into(input, gains, sink);
+    }
+
+    fn encode_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_with_gains_into(input, gain_curves.evaluate(modulators), sink);
+    }
+
+    fn encode_step_with_modulators_into(
+        &mut self,
+        input: &[f32],
+        modulators: &NeuroModulators,
+        gain_curves: &NeuromodulatorGainCurves,
+        sink: &mut dyn SpikeSink,
+    ) {
+        self.encode_step_with_gains_into(input, gain_curves.evaluate(modulators), sink);
     }
 }
 
